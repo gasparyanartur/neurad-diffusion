@@ -29,6 +29,9 @@ from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.utils.math import masked_reduction, normalized_depth_scale_and_shift
 
+from pathlib import Path
+from diffusers import StableDiffusionPipeline
+
 L1Loss = nn.L1Loss
 MSELoss = nn.MSELoss
 
@@ -353,6 +356,20 @@ def monosdf_normal_loss(
     return l1 + cos
 
 
+def diffusion_loss(rgb: Tensor, diffusion_model_path: Path, pipeline: StableDiffusionPipeline, diffusion_model_name: str) -> float:
+
+    """TODO"""
+    pipe = pipeline.from_pretrained(diffusion_model_name, torch_dtype=torch.float16)
+
+    pipe.unet.load_attn_procs(diffusion_model_path)
+    pipe.to("cuda")
+
+    img = pipe().image[0]
+    diffusion_loss = MSELoss(img, rgb)
+    
+
+    return diffusion_loss
+
 class MiDaSMSELoss(nn.Module):
     """
     data term from MiDaS paper
@@ -385,6 +402,7 @@ class MiDaSMSELoss(nn.Module):
         image_loss = masked_reduction(image_loss, 2 * summed_mask, self.reduction_type)
 
         return image_loss
+    
 
 
 # losses based on https://github.com/autonomousvision/monosdf/blob/main/code/model/loss.py
