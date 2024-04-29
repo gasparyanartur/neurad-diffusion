@@ -1,0 +1,3 @@
+[submodule "nerf-thesis"]
+	path = nerf-thesis
+	url = git@github.com:gasparyanartur/nerf-thesis.git
