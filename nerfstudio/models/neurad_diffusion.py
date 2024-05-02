@@ -268,7 +268,7 @@ class NeuRADDiffusionModel(NeuRADModel):
         self.ray_drop_loss = BCEWithLogitsLoss()
         self.interlevel_loss = zipnerf_interlevel_loss
         
-        self.diffusion_lost = diffusion_loss()
+        self.diffusion_loss = diffusion_loss()
 
         # metrics
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
@@ -547,8 +547,8 @@ class NeuRADDiffusionModel(NeuRADModel):
                 loss_dict["vgg_loss"] = self.vgg_loss(rgb, image) * conf.vgg_mult
 
             #compute the diffusion loss
-            loss_dict["diffusion_loss"] = self.diffusion_lost(rgb)
-            
+            loss_dict["diffusion_loss"] = self.diffusion_loss(rgb) * conf.diffusion_loss_mult
+
         if self.training:
             if "weights_list" in outputs:
                 loss_dict["interlevel_loss"] = self.config.loss.interlevel_loss_mult * self.interlevel_loss(

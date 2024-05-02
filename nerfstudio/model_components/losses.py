@@ -30,7 +30,14 @@ from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.utils.math import masked_reduction, normalized_depth_scale_and_shift
 
 from pathlib import Path
-from diffusers import StableDiffusionPipeline
+
+from imaginedriving.src.diffusion import load_img2img_model
+from imaginedriving.src.data import read_yaml
+
+import importlib
+imaginedriving = importlib.import_module("imagingdriving")
+imaginedriving.src
+
 
 L1Loss = nn.L1Loss
 MSELoss = nn.MSELoss
@@ -356,16 +363,16 @@ def monosdf_normal_loss(
     return l1 + cos
 
 
-def diffusion_loss(rgb: Tensor, diffusion_model_path: Path, pipeline: StableDiffusionPipeline, diffusion_model_name: str) -> float:
+def diffusion_loss(rgb: Tensor, diffusion_model_config_path: Path, lora_weight_path: Path) -> float:
 
-    """TODO"""
-    pipe = pipeline.from_pretrained(diffusion_model_name, torch_dtype=torch.float16)
+    configs = read_yaml(diffusion_model_config_path)
+    pipe = load_img2img_model(configs["model"]["model_config_params"])
 
-    pipe.unet.load_attn_procs(diffusion_model_path)
-    pipe.to("cuda")
+    pipe.base_pipe.load_lora_weights(lora_weight_path)
 
-    img = pipe().image[0]
-    diffusion_loss = MSELoss(img, rgb)
+    diffusd_img = pipe.diffuse_sample(rgb)
+
+    diffusion_loss = MSELoss(diffusd_img, rgb)
     
 
     return diffusion_loss
