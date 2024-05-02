@@ -31,12 +31,8 @@ from nerfstudio.utils.math import masked_reduction, normalized_depth_scale_and_s
 
 from pathlib import Path
 
-from imaginedriving.src.diffusion import load_img2img_model
-from imaginedriving.src.data import read_yaml
+from nerfstudio.models.diffusion import load_img2img_model, read_yaml
 
-import importlib
-imaginedriving = importlib.import_module("imagingdriving")
-imaginedriving.src
 
 
 L1Loss = nn.L1Loss
@@ -368,13 +364,15 @@ def diffusion_loss(rgb: Tensor, diffusion_model_config_path: Path, lora_weight_p
     configs = read_yaml(diffusion_model_config_path)
     pipe = load_img2img_model(configs["model"]["model_config_params"])
 
-    pipe.base_pipe.load_lora_weights(lora_weight_path)
+    sample = {}
+    sample["rgb"] = rgb
+    """TODO: add lora weight"""
+    #pipe.base_pipe.load_lora_weights(lora_weight_path)
 
-    diffusd_img = pipe.diffuse_sample(rgb)
+    diffused_img = pipe.diffuse_sample(sample)["rgb"]
 
-    diffusion_loss = MSELoss(diffusd_img, rgb)
-    
-
+    diffusion_loss = MSELoss()(diffused_img[0], rgb.to("cuda"))
+  
     return diffusion_loss
 
 class MiDaSMSELoss(nn.Module):
