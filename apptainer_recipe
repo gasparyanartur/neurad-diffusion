@@ -55,7 +55,7 @@ python3.10 -m pip install --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+
 TCNN_CUDA_ARCHITECTURES="90;89;86;80;75" python3.10 -m pip install --no-cache-dir git+https://github.com/NVlabs/tiny-cuda-nn.git@v1.6#subdirectory=bindings/torch
 
 # Install nerfstudio dependencies.
-cd /nerfstudio && python3.10 -m pip install --no-cache-dir -e .
+cd /nerfstudio && python3.10 -m pip install --no-cache-dir -e .[dev,gen,docs]
 
 # Change working directory
 mkdir -p /workspace
