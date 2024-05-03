@@ -371,7 +371,7 @@ def diffusion_loss(rgb: Tensor, diffusion_model_config_path: Path, lora_weight_p
 
     diffused_img = pipe.diffuse_sample(sample)["rgb"]
 
-    diffusion_loss = MSELoss()(diffused_img[0], rgb.to("cuda"))
+    diffusion_loss = MSELoss()(diffused_img, rgb)
   
     return diffusion_loss
 
