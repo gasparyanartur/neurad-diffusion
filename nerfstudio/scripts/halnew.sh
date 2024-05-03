@@ -19,7 +19,7 @@ if [ -z ${wandb_api_key} ]; then
     exit 1;
 fi
 
-method=${METHOD:-neurad}
+method=${METHOD:-neuraddiffusion}
 dataset=${DATASET:-pandaset}
 # Specify the path to the config file
 id_to_seq=nerfstudio/scripts/arrays/${dataset}_id_to_seq${SUFFIX}.txt
