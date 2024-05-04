@@ -359,7 +359,7 @@ def monosdf_normal_loss(
     return l1 + cos
 
 
-def diffusion_loss(rgb: Tensor, diffusion_model_config_path: Path, lora_weight_path: Path) -> float:
+def diffusion_loss(rgb: Tensor, diffusion_model_config_path:"/neurad-studio/nerfstudio/notebooks/diffusion-pandaset-real.yml", lora_weight_path: None) -> float:
 
     configs = read_yaml(diffusion_model_config_path)
     pipe = load_img2img_model(configs["model"]["model_config_params"])
