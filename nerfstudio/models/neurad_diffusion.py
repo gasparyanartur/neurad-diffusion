@@ -268,7 +268,7 @@ class NeuRADDiffusionModel(NeuRADModel):
         self.ray_drop_loss = BCEWithLogitsLoss()
         self.interlevel_loss = zipnerf_interlevel_loss
         
-        self.diffusion_loss = diffusion_loss()
+        self.diffusion_loss = diffusion_loss
 
         # metrics
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
