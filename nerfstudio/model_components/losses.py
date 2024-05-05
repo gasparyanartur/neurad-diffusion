@@ -367,17 +367,17 @@ def diffusion_loss(patch_rgb: Tensor) -> float:
 
     #resize patch image to p, c, h,w 
     patch_rgb = patch_rgb.permute(0,3,1,2)
-
-
-    sample = {}
-    sample["rgb"] = patch_rgb
         
-        """TODO: add lora weight"""
-        #pipe.base_pipe.load_lora_weights(lora_weight_path)
+    """TODO: add lora weight"""
+    #pipe.base_pipe.load_lora_weights(lora_weight_path)
+    diffusion_loss = 0
 
-    diffused_imgs = pipe.diffuse_sample(sample)["rgb"]
+    for rgb in patch_rgb:
+        sample = {}
+        sample["rgb"] = patch_rgb
+        diffused_img = pipe.diffuse_sample(sample)["rgb"]
 
-    diffusion_loss = MSELoss()(diffused_imgs, patch_rgb)
+        diffusion_loss += MSELoss()(diffused_img, patch_rgb)
   
     return diffusion_loss
 
