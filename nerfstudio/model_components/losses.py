@@ -359,21 +359,25 @@ def monosdf_normal_loss(
     return l1 + cos
 
 
-def diffusion_loss(rgb: Tensor) -> float:
+def diffusion_loss(patch_rgb: Tensor) -> float:
     #rgb dimension is: patch_size * h * w * c  
     diffusion_model_config_path = "/home/s0001899/workspace/neurad-studio/nerfstudio/notebooks/diffusion-pandaset-real.yml"
     configs = read_yaml(diffusion_model_config_path)
     pipe = load_img2img_model(configs["model"]["model_config_params"])
 
+    #resize patch image to p, c, h,w 
+    patch_rgb = patch_rgb.permute(0,3,1,2)
+
+
     sample = {}
-    sample["rgb"] = rgb
-    
-    """TODO: add lora weight"""
-    #pipe.base_pipe.load_lora_weights(lora_weight_path)
+    sample["rgb"] = patch_rgb
+        
+        """TODO: add lora weight"""
+        #pipe.base_pipe.load_lora_weights(lora_weight_path)
 
-    diffused_img = pipe.diffuse_sample(sample)["rgb"]
+    diffused_imgs = pipe.diffuse_sample(sample)["rgb"]
 
-    diffusion_loss = MSELoss()(diffused_img, rgb)
+    diffusion_loss = MSELoss()(diffused_imgs, patch_rgb)
   
     return diffusion_loss
 
