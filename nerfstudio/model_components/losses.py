@@ -372,7 +372,7 @@ def diffusion_loss(patch_rgb: Tensor, pipe) -> float:
 
     for rgb in patch_rgb:
         diffused_img = pipe.diffuse_sample({"rgb": rgb})["rgb"]
-        diffusion_loss += loss_fn(diffused_img, patch_rgb)
+        diffusion_loss += loss_fn(diffused_img, rgb)
   
     return diffusion_loss
 
