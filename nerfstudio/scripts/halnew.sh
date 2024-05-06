@@ -32,12 +32,12 @@ seq=$(awk -v ArrayTaskID=$SLURM_ARRAY_TASK_ID '$1==ArrayTaskID {print $2}' $id_t
 echo "Starting training for $name with extra args ${@:2}"
 echo "Sequence $seq"
 
-export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/$DATASET-$METHOD"}
+export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/$dataset-$method"}
 output_dir=${OUTPUT_DIR:="outputs/$dataset-$method"}
 mkdir -p $output_dir
 
 
-image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neurad_25_04_24.sif"}
+image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-03_05_24.sif"}
 
 
 if [ -z ${LOAD_NAME+x} ]; then
@@ -61,6 +61,7 @@ else
 fi
 
 singularity exec --nv \
+    --bind $PWD:/nerfstudio \
     --bind /staging:/staging \
     --bind /workspaces:/workspaces \
     --bind /datasets:/datasets \

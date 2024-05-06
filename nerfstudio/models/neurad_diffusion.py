@@ -164,6 +164,9 @@ class NeuRADDiffusionModelConfig(NeuRADModelConfig):
 
     diffusion_config_path: str = "/home/s0001899/workspace/neurad-studio/nerfstudio/notebooks/diffusion-pandaset-real.yml"
 
+    load_diffusion_lora: bool = False
+    lora_weight_path: str = None
+
     @property
     def num_proposal_rounds(self):
         return len(self.sampling.num_proposal_samples)
@@ -271,11 +274,15 @@ class NeuRADDiffusionModel(NeuRADModel):
         self.vgg_loss = VGGPerceptualLossPix2Pix()
         self.ray_drop_loss = BCEWithLogitsLoss()
         self.interlevel_loss = zipnerf_interlevel_loss
+        self.diffusion_loss = diffusion_loss
 
         self.diffusion_config = read_yaml(self.config.diffusion_config_path)
         self.pipe = load_img2img_model(self.diffusion_config["model"]["model_config_params"])
-
-        self.diffusion_loss = diffusion_loss
+            
+        
+        """TODO: add lora weight"""
+        if self.config.load_diffusion_lora:
+            self.pipe.base_pipe.load_lora_weights(self.config.lora_weight_path)
 
         # metrics
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)

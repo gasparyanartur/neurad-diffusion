@@ -357,51 +357,13 @@ method_configs["neurad"] = TrainerConfig(
     logging=LoggingConfig(steps_per_log=100),
 )
 
-# our method - imagine drving, neurad + diffusion
-method_configs["neuraddiffusion"] = TrainerConfig(
-    method_name="neuraddiffusion",
-    steps_per_eval_batch=500,
-    steps_per_eval_all_images=5000,
-    steps_per_save=2000,
-    max_num_iterations=20001,
-    mixed_precision=True,
-    pipeline=ADPipelineConfig(
-        calc_fid_steps=(99999999,),
-        datamanager=ADDataManagerConfig(dataparser=PandaSetDataParserConfig(add_missing_points=True)),
-        model=NeuRADDiffusionModelConfig(
-            eval_num_rays_per_chunk=1 << 15,
-            camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
-        ),
-    ),
-    optimizers={
-        "trajectory_opt": {
-            "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=20001, warmup_steps=2500),
-        },
-        "cnn": {
-            "optimizer": AdamWOptimizerConfig(lr=1e-3, eps=1e-15, weight_decay=1e-6),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=20001, warmup_steps=2500),
-        },
-        "fields": {
-            "optimizer": AdamWOptimizerConfig(lr=1e-2, eps=1e-15, weight_decay=1e-7),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-3, max_steps=20001, warmup_steps=500),
-        },
-        "hashgrids": {
-            "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-3, max_steps=20001, warmup_steps=500),
-        },
-        "camera_opt": {
-            "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-5, max_steps=20001, warmup_steps=2500),
-        },
-    },
-    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
-    vis="viewer",
-    logging=LoggingConfig(steps_per_log=100),
+# ImagineDriving, NeuRAD + Stable Diffusion
+method_configs["neuraddiffusion"] = deepcopy(method_configs["neurad"])
+method_configs["neuraddiffusion"].method_name = "neuraddiffusion"
+method_configs["neuraddiffusion"].pipeline.model = NeuRADDiffusionModelConfig(
+    eval_num_rays_per_chunk=1 << 15,
+    camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
 )
-
-
-
 
 
 # With scaled camera optimizer (tuned for nuscenes)

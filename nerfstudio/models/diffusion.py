@@ -165,6 +165,8 @@ class SDPipe(DiffusionModel):
             use_safetensors=True,
         )
         self.base_pipe = prep_model(self.base_pipe, low_mem_mode=low_mem_mode, device=device, compile=compile_model)
+        self.base_pipe.safety_checker = None
+        self.base_pipe.requires_safety_checker = False
         
 
         if self.use_refiner:
