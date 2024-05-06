@@ -71,6 +71,8 @@ from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.utils import comms, profiler
 from nerfstudio.utils.rich_utils import CONSOLE
 
+
+
 DEFAULT_TIMEOUT = timedelta(minutes=30)
 
 # speedup for when input size to model doesn't change (much)

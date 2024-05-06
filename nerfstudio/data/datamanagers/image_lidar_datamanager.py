@@ -80,7 +80,7 @@ class ImageLidarDataManagerConfig(ParallelDataManagerConfig):
 
     _target: Type = field(default_factory=lambda: ImageLidarDataManager)
     """Target class to instantiate."""
-    num_processes: int = 8
+    num_processes: int = 0
     """Number of processes to use for train data loading. More than 1 doesn't result in that much better performance"""
     queue_size: int = 8
     """Size of shared data queue containing generated ray bundles and batches."""

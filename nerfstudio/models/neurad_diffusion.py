@@ -62,6 +62,8 @@ from nerfstudio.viewer.server.viewer_elements import ViewerSlider
 
 
 from nerfstudio.models.neurad import NeuRADModel, NeuRADModelConfig
+from nerfstudio.models.diffusion import load_img2img_model, read_yaml
+
 
 EPS = 1e-7
 
@@ -159,6 +161,8 @@ class NeuRADDiffusionModelConfig(NeuRADModelConfig):
     """Whether to normalize depth by dividing by accumulation."""
     verbose: bool = False
     """Whether to log additional images and out the model configuration."""
+
+    diffusion_config_path: str = "/home/s0001899/workspace/neurad-studio/nerfstudio/notebooks/diffusion-pandaset-real.yml"
 
     @property
     def num_proposal_rounds(self):
@@ -267,7 +271,10 @@ class NeuRADDiffusionModel(NeuRADModel):
         self.vgg_loss = VGGPerceptualLossPix2Pix()
         self.ray_drop_loss = BCEWithLogitsLoss()
         self.interlevel_loss = zipnerf_interlevel_loss
-        
+
+        self.diffusion_config = read_yaml(self.config.diffusion_config_path)
+        self.pipe = load_img2img_model(self.diffusion_config["model"]["model_config_params"])
+
         self.diffusion_loss = diffusion_loss
 
         # metrics
@@ -547,7 +554,7 @@ class NeuRADDiffusionModel(NeuRADModel):
                 loss_dict["vgg_loss"] = self.vgg_loss(rgb, image) * conf.vgg_mult
 
             #compute the diffusion loss
-            loss_dict["diffusion_loss"] = self.diffusion_loss(rgb) * conf.diffusion_loss_mult
+            loss_dict["diffusion_loss"] = self.diffusion_loss(rgb, self.pipe) * conf.diffusion_loss_mult
 
         if self.training:
             if "weights_list" in outputs:
