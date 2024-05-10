@@ -49,10 +49,18 @@ from nerfstudio.model_components.losses import (
     VGGPerceptualLossPix2Pix,
     distortion_loss,
     zipnerf_interlevel_loss,
-    diffusion_loss,
+    get_diffusion_loss,
 )
-from nerfstudio.model_components.ray_samplers import PowerSampler, ProposalNetworkSampler
-from nerfstudio.model_components.renderers import AccumulationRenderer, DepthRenderer, FeatureRenderer, NormalsRenderer
+from nerfstudio.model_components.ray_samplers import (
+    PowerSampler,
+    ProposalNetworkSampler,
+)
+from nerfstudio.model_components.renderers import (
+    AccumulationRenderer,
+    DepthRenderer,
+    FeatureRenderer,
+    NormalsRenderer,
+)
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.utils import colormaps
 from nerfstudio.utils.external import TCNN_EXISTS
@@ -110,9 +118,13 @@ class SamplingSettings:
     single_jitter: bool = True
     """Use the same random jitter for all samples in the same ray (in training)."""
 
-    proposal_field_1: NeuRADProposalFieldConfig = field(default_factory=NeuRADProposalFieldConfig)
+    proposal_field_1: NeuRADProposalFieldConfig = field(
+        default_factory=NeuRADProposalFieldConfig
+    )
     """First proposal field configuration."""
-    proposal_field_2: NeuRADProposalFieldConfig = field(default_factory=NeuRADProposalFieldConfig)
+    proposal_field_2: NeuRADProposalFieldConfig = field(
+        default_factory=NeuRADProposalFieldConfig
+    )
     """Second proposal field configuration."""
     num_proposal_samples: Tuple[int, ...] = (128, 64)
     """Number of proposal samples per ray."""
@@ -162,7 +174,9 @@ class NeuRADDiffusionModelConfig(NeuRADModelConfig):
     verbose: bool = False
     """Whether to log additional images and out the model configuration."""
 
-    diffusion_config_path: str = "/home/s0001899/workspace/neurad-studio/nerfstudio/notebooks/diffusion-pandaset-real.yml"
+    diffusion_config_path: str = (
+        "/home/s0001899/workspace/neurad-studio/nerfstudio/notebooks/diffusion-pandaset-real.yml"
+    )
 
     load_diffusion_lora: bool = False
     lora_weight_path: str = None
@@ -173,7 +187,11 @@ class NeuRADDiffusionModelConfig(NeuRADModelConfig):
 
     @property
     def fields(self) -> list[Union[NeuRADFieldConfig, NeuRADProposalFieldConfig]]:
-        return [self.field, self.sampling.proposal_field_1, self.sampling.proposal_field_2]
+        return [
+            self.field,
+            self.sampling.proposal_field_1,
+            self.sampling.proposal_field_2,
+        ]
 
 
 class NeuRADDiffusionModel(NeuRADModel):
@@ -202,12 +220,18 @@ class NeuRADDiffusionModel(NeuRADModel):
         self._duration = dataset_metadata["duration"]
         num_sensors = len(dataset_metadata["sensor_idx_to_name"])
         if self.config.use_temporal_appearance:
-            self._num_embeds_per_sensor = math.ceil(self._duration * self.config.temporal_appearance_freq)
+            self._num_embeds_per_sensor = math.ceil(
+                self._duration * self.config.temporal_appearance_freq
+            )
             num_embeds = num_sensors * self._num_embeds_per_sensor
         else:
             num_embeds = num_sensors
-        self.appearance_embedding = torch.nn.Embedding(num_embeds, self.config.appearance_dim)
-        self.fallback_sensor_idx = ViewerSlider("fallback sensor idx", 0, 0, num_sensors - 1, step=1)
+        self.appearance_embedding = torch.nn.Embedding(
+            num_embeds, self.config.appearance_dim
+        )
+        self.fallback_sensor_idx = ViewerSlider(
+            "fallback sensor idx", 0, 0, num_sensors - 1, step=1
+        )
 
         # Modality decoders
         hidden_dim = self.config.rgb_hidden_dim
@@ -256,15 +280,25 @@ class NeuRADDiffusionModel(NeuRADModel):
                     static_scale=self.scene_box.aabb.max(),
                     implementation=self.config.implementation,
                 )
-                for conf in (self.config.sampling.proposal_field_1, self.config.sampling.proposal_field_2)
+                for conf in (
+                    self.config.sampling.proposal_field_1,
+                    self.config.sampling.proposal_field_2,
+                )
             ]
         )
-        self.density_fns = [lambda x: prop_field.get_density(x)[0] for prop_field in self.proposal_fields]
+        self.density_fns = [
+            lambda x: prop_field.get_density(x)[0]
+            for prop_field in self.proposal_fields
+        ]
 
         # renderers
         self.renderer_feat = FeatureRenderer()
         self.renderer_accumulation = AccumulationRenderer()
-        self.renderer_depth = DepthRenderer(method="expected") if self.config.normalize_depth else render_depth_simple
+        self.renderer_depth = (
+            DepthRenderer(method="expected")
+            if self.config.normalize_depth
+            else render_depth_simple
+        )
         self.renderer_normals = NormalsRenderer()
 
         # losses
@@ -274,12 +308,13 @@ class NeuRADDiffusionModel(NeuRADModel):
         self.vgg_loss = VGGPerceptualLossPix2Pix()
         self.ray_drop_loss = BCEWithLogitsLoss()
         self.interlevel_loss = zipnerf_interlevel_loss
-        self.diffusion_loss = diffusion_loss
+        self.diffusion_loss = get_diffusion_loss
 
         self.diffusion_config = read_yaml(self.config.diffusion_config_path)
-        self.pipe = load_img2img_model(self.diffusion_config["model"]["model_config_params"])
-            
-        
+        self.pipe = load_img2img_model(
+            self.diffusion_config["model"]["model_config_params"]
+        )
+
         """TODO: add lora weight"""
         if self.config.load_diffusion_lora:
             self.pipe.base_pipe.load_lora_weights(self.config.lora_weight_path)
@@ -329,7 +364,9 @@ class NeuRADDiffusionModel(NeuRADModel):
         intensity_for_cam: bool = False,
         calc_lidar_losses: bool = True,
     ):
-        return self.get_outputs(ray_bundle, patch_size, intensity_for_cam, calc_lidar_losses)
+        return self.get_outputs(
+            ray_bundle, patch_size, intensity_for_cam, calc_lidar_losses
+        )
 
     def get_outputs(
         self,
@@ -368,13 +405,20 @@ class NeuRADDiffusionModel(NeuRADModel):
         if is_lidar is None:
             lidar_features, cam_features = torch.empty(0), features
         else:
-            lidar_features, cam_features = features[is_lidar[..., 0]], features[~is_lidar[..., 0]]
+            lidar_features, cam_features = (
+                features[is_lidar[..., 0]],
+                features[~is_lidar[..., 0]],
+            )
 
         # Decode lidar features
         if intensity_for_cam:  # Useful for visualization
-            intensity, ray_drop_logit = self.lidar_decoder(features).float().split(1, dim=-1)  # TODO: hmm
+            intensity, ray_drop_logit = (
+                self.lidar_decoder(features).float().split(1, dim=-1)
+            )  # TODO: hmm
         elif lidar_features.numel() > 0:
-            intensity, ray_drop_logit = self.lidar_decoder(lidar_features).split(1, dim=-1)
+            intensity, ray_drop_logit = self.lidar_decoder(lidar_features).split(
+                1, dim=-1
+            )
         else:
             intensity, ray_drop_logit = None, None
         intensity = intensity.sigmoid() if intensity is not None else None
@@ -382,16 +426,22 @@ class NeuRADDiffusionModel(NeuRADModel):
         if cam_features.numel() == 0:
             rgb = None
         # need to reshape the ray features to apply the cnn decoder
-        cam_feature_patches = cam_features.view(-1, *patch_size, cam_features.shape[-1])  # B x D x D x C
+        cam_feature_patches = cam_features.view(
+            -1, *patch_size, cam_features.shape[-1]
+        )  # B x D x D x C
         cam_feature_patches = cam_feature_patches.permute(0, 3, 1, 2)  # B x C x D x D
         rgb = self.rgb_decoder(cam_feature_patches)  # B x 3 x upsample x upsample
         rgb = rgb.permute(0, 2, 3, 1)  # B x upsample x upsample x 3
         return rgb, intensity, ray_drop_logit
 
-    def get_nff_outputs(self, ray_bundle: RayBundle, calc_lidar_losses: bool = False) -> Dict[str, Tensor]:
+    def get_nff_outputs(
+        self, ray_bundle: RayBundle, calc_lidar_losses: bool = False
+    ) -> Dict[str, Tensor]:
         """Run the neural feature field, and return the rendered outputs."""
         self._scale_pixel_area(ray_bundle)
-        ray_samples, proposal_ray_samples, proposal_weights = self._get_ray_samples(ray_bundle)
+        ray_samples, proposal_ray_samples, proposal_weights = self._get_ray_samples(
+            ray_bundle
+        )
 
         outputs = self.field(ray_samples)
 
@@ -401,8 +451,12 @@ class NeuRADDiffusionModel(NeuRADModel):
         accumulation = self.renderer_accumulation(weights=weights[..., None])
 
         # Put remaining accumulation on last (sky) sample and render features
-        weights = torch.cat((weights[..., :-1], weights[..., -1:] + 1 - accumulation), dim=-1).unsqueeze(-1)
-        features = self.renderer_feat(features=outputs[FieldHeadNames.FEATURE], weights=weights)
+        weights = torch.cat(
+            (weights[..., :-1], weights[..., -1:] + 1 - accumulation), dim=-1
+        ).unsqueeze(-1)
+        features = self.renderer_feat(
+            features=outputs[FieldHeadNames.FEATURE], weights=weights
+        )
         if self.config.appearance_dim > 0:  # add appearance embedding
             appearance = self._get_appearance_embedding(ray_bundle, features)
             features = torch.cat([features, appearance], dim=-1)
@@ -417,14 +471,22 @@ class NeuRADDiffusionModel(NeuRADModel):
             "accumulation": accumulation,
         }
         if not self.training and FieldHeadNames.NORMALS in outputs:
-            nff_outputs["normals"] = self.renderer_normals(normals=outputs[FieldHeadNames.NORMALS], weights=weights)
+            nff_outputs["normals"] = self.renderer_normals(
+                normals=outputs[FieldHeadNames.NORMALS], weights=weights
+            )
 
         # Handle proposal outputs
-        for i, (prop_w, prop_rs) in enumerate(zip(proposal_weights, proposal_ray_samples)):
+        for i, (prop_w, prop_rs) in enumerate(
+            zip(proposal_weights, proposal_ray_samples)
+        ):
             nff_outputs[f"prop_depth_{i}"] = self.renderer_depth(prop_w, prop_rs)
             if self.training and calc_lidar_losses:
-                weights_mask = (~prop_rs.metadata["is_close_to_lidar"]) & prop_rs.metadata["is_lidar"]
-                nff_outputs[f"prop_weights_loss_{i}"] = ((prop_w * weights_mask) ** 2).sum()
+                weights_mask = (
+                    ~prop_rs.metadata["is_close_to_lidar"]
+                ) & prop_rs.metadata["is_lidar"]
+                nff_outputs[f"prop_weights_loss_{i}"] = (
+                    (prop_w * weights_mask) ** 2
+                ).sum()
         if self.training:
             # Need to render the static samples separately for proposal supervision
             nff_outputs["weights_list"] = proposal_weights + [weights]
@@ -432,30 +494,48 @@ class NeuRADDiffusionModel(NeuRADModel):
 
         if self.training and calc_lidar_losses:
             assert (metadata := ray_samples.metadata) is not None
-            weights_mask = ((~metadata["is_close_to_lidar"]) & metadata["is_lidar"]).squeeze(-1)
+            weights_mask = (
+                (~metadata["is_close_to_lidar"]) & metadata["is_lidar"]
+            ).squeeze(-1)
             weights_idx = weights_mask.nonzero(as_tuple=True)
             nff_outputs["non_nearby_weights"] = weights[weights_idx]
             # TODO: get rid of this
-            ray_indices = torch.arange(weights.shape[0], device=weights.device).unsqueeze(-1)
+            ray_indices = torch.arange(
+                weights.shape[0], device=weights.device
+            ).unsqueeze(-1)
             ray_indices = ray_indices.repeat(1, *weights.shape[1:-1])
-            lidar_start_ray = ray_bundle.metadata["is_lidar"].int().argmax()  # argmax gives first True
-            nff_outputs["non_nearby_lidar_ray_indices"] = ray_indices[weights_idx] - lidar_start_ray
+            lidar_start_ray = (
+                ray_bundle.metadata["is_lidar"].int().argmax()
+            )  # argmax gives first True
+            nff_outputs["non_nearby_lidar_ray_indices"] = (
+                ray_indices[weights_idx] - lidar_start_ray
+            )
 
         return nff_outputs
 
     def _get_appearance_embedding(self, ray_bundle, features):
         sensor_idx = ray_bundle.metadata.get("sensor_idxs")
         if sensor_idx is None:
-            assert not self.training, "Sensor sensor_idx must be present in metadata during training"
-            sensor_idx = torch.full_like(features[..., :1], self.fallback_sensor_idx.value, dtype=torch.long)
+            assert (
+                not self.training
+            ), "Sensor sensor_idx must be present in metadata during training"
+            sensor_idx = torch.full_like(
+                features[..., :1], self.fallback_sensor_idx.value, dtype=torch.long
+            )
 
         if self.config.use_temporal_appearance:
-            time_idx = ray_bundle.times / self._duration * (embd_per_sensor := self._num_embeds_per_sensor)
+            time_idx = (
+                ray_bundle.times
+                / self._duration
+                * (embd_per_sensor := self._num_embeds_per_sensor)
+            )
             before_idx = time_idx.floor().clamp(0, embd_per_sensor - 1)
             after_idx = (before_idx + 1).clamp(0, embd_per_sensor - 1)
             ratio = time_idx - before_idx
             # unwrap to true embedding indices, which also account for the sensor index, not just the time index
-            before_idx, after_idx = (x + sensor_idx * embd_per_sensor for x in (before_idx, after_idx))
+            before_idx, after_idx = (
+                x + sensor_idx * embd_per_sensor for x in (before_idx, after_idx)
+            )
             before_embed = self.appearance_embedding(before_idx.squeeze(-1).long())
             after_embed = self.appearance_embedding(after_idx.squeeze(-1).long())
             embed = before_embed * (1 - ratio) + after_embed * ratio
@@ -463,19 +543,33 @@ class NeuRADDiffusionModel(NeuRADModel):
             embed = self.appearance_embedding(sensor_idx.squeeze(-1))
         return embed
 
-    def _get_ray_samples(self, ray_bundle: RayBundle) -> tuple[RaySamples, List[RaySamples], List[Tensor]]:
+    def _get_ray_samples(
+        self, ray_bundle: RayBundle
+    ) -> tuple[RaySamples, List[RaySamples], List[Tensor]]:
         # Sampling
         if ray_bundle.fars is not None:
-            ray_bundle.fars.clamp_max_(sky_distance := self.config.sampling.sky_distance)
+            ray_bundle.fars.clamp_max_(
+                sky_distance := self.config.sampling.sky_distance
+            )
         else:
-            ray_bundle.fars = torch.full_like(ray_bundle.pixel_area, sky_distance := self.config.sampling.sky_distance)
-        ray_bundle.nears = ray_bundle.nears if ray_bundle.nears is not None else torch.zeros_like(ray_bundle.fars)
-        ray_samples, prop_weights, prop_ray_samples = self.sampler(ray_bundle, self.density_fns, pass_ray_samples=True)
+            ray_bundle.fars = torch.full_like(
+                ray_bundle.pixel_area, sky_distance := self.config.sampling.sky_distance
+            )
+        ray_bundle.nears = (
+            ray_bundle.nears
+            if ray_bundle.nears is not None
+            else torch.zeros_like(ray_bundle.fars)
+        )
+        ray_samples, prop_weights, prop_ray_samples = self.sampler(
+            ray_bundle, self.density_fns, pass_ray_samples=True
+        )
         # Efficient "sky-field" by setting last sample to end extremely far away
         dist_to_sky = sky_distance - ray_samples.frustums.ends[..., -1, 0]
         ray_samples.frustums.ends[..., -1, 0] += dist_to_sky
         ray_samples.deltas[..., -1, 0] += dist_to_sky
-        ray_samples.spacing_ends[..., -1, 0] = 1 - EPS  # Hacky, but sky is ish at infinity
+        ray_samples.spacing_ends[..., -1, 0] = (
+            1 - EPS
+        )  # Hacky, but sky is ish at infinity
 
         if self.training and "is_lidar" in ray_bundle.metadata:
             self._compute_is_close_to_lidar(ray_samples, *prop_ray_samples)
@@ -489,7 +583,11 @@ class NeuRADDiffusionModel(NeuRADModel):
         if "lidar" in batch:
             is_lidar = batch["is_lidar"][:, 0].to(self.device)
             n_lidar_rays = is_lidar.sum()
-            did_return = batch["did_return"][batch["is_lidar"].squeeze(-1)].squeeze(-1).to(self.device)
+            did_return = (
+                batch["did_return"][batch["is_lidar"].squeeze(-1)]
+                .squeeze(-1)
+                .to(self.device)
+            )
             points_intensities = batch["lidar"][..., 3:4].to(self.device)
             termination_depth = batch["distance"].to(self.device)
 
@@ -498,32 +596,50 @@ class NeuRADDiffusionModel(NeuRADModel):
             pred_intensity = outputs["intensity"]
 
             # eval metrics
-            metrics_dict["depth_median_l2"] = self.median_l2(pred_depth[did_return], termination_depth[did_return])
-            metrics_dict["depth_mean_rel_l2"] = self.mean_rel_l2(pred_depth[did_return], termination_depth[did_return])
-            metrics_dict["intensity_rmse"] = self.rmse(pred_intensity[did_return], points_intensities[did_return])
+            metrics_dict["depth_median_l2"] = self.median_l2(
+                pred_depth[did_return], termination_depth[did_return]
+            )
+            metrics_dict["depth_mean_rel_l2"] = self.mean_rel_l2(
+                pred_depth[did_return], termination_depth[did_return]
+            )
+            metrics_dict["intensity_rmse"] = self.rmse(
+                pred_intensity[did_return], points_intensities[did_return]
+            )
             metrics_dict["ray_drop_accuracy"] = (
-                ((ray_drop_logits.sigmoid() > 0.5).squeeze(-1) == ~did_return).float().mean()
+                ((ray_drop_logits.sigmoid() > 0.5).squeeze(-1) == ~did_return)
+                .float()
+                .mean()
             )
 
             # train metrics / losses
             if self.training:
                 # Adjust target depth for non-returning rays
                 nonret_lid_dist = torch.tensor(
-                    self.config.loss.non_return_lidar_distance, device=termination_depth.device
+                    self.config.loss.non_return_lidar_distance,
+                    device=termination_depth.device,
                 )
                 target_depth = termination_depth.clone()
-                target_depth[~did_return] = pred_depth.detach()[~did_return].maximum(nonret_lid_dist)
+                target_depth[~did_return] = pred_depth.detach()[~did_return].maximum(
+                    nonret_lid_dist
+                )
                 unreduced_depth_loss = self.depth_loss(target_depth, pred_depth)
-                unreduced_depth_loss[~did_return] *= self.config.loss.non_return_loss_mult
+                unreduced_depth_loss[
+                    ~did_return
+                ] *= self.config.loss.non_return_loss_mult
                 # TODO: get rid of quantile mask
-                quantile = torch.quantile(unreduced_depth_loss, self.config.loss.quantile_threshold)
+                quantile = torch.quantile(
+                    unreduced_depth_loss, self.config.loss.quantile_threshold
+                )
                 quantile_mask = (unreduced_depth_loss < quantile).squeeze(-1)
 
-                metrics_dict["depth_loss"] = torch.mean(unreduced_depth_loss[quantile_mask])
+                metrics_dict["depth_loss"] = torch.mean(
+                    unreduced_depth_loss[quantile_mask]
+                )
 
                 quant_and_return = quantile_mask & did_return
                 metrics_dict["intensity_loss"] = self.intensity_loss(
-                    points_intensities[quant_and_return], outputs["intensity"][quant_and_return]
+                    points_intensities[quant_and_return],
+                    outputs["intensity"][quant_and_return],
                 ).mean()
 
                 metrics_dict["ray_drop_loss"] = self.ray_drop_loss(
@@ -531,20 +647,32 @@ class NeuRADDiffusionModel(NeuRADModel):
                 )
                 # quantile_weights_mask = quantile_mask[outputs["non_nearby_lidar_ray_indices"]].squeeze(-1)
                 weights_loss = (outputs["non_nearby_weights"] ** 2).sum()
-                metrics_dict["carving_loss"] = weights_loss / n_lidar_rays  # avg per ray
+                metrics_dict["carving_loss"] = (
+                    weights_loss / n_lidar_rays
+                )  # avg per ray
 
                 # Lidar proposal losses
                 for prop_i in range(self.config.num_proposal_rounds):
                     pred_depth = outputs[f"prop_depth_{prop_i}"][is_lidar]
                     target_depth = termination_depth.clone()
-                    target_depth[~did_return] = pred_depth.detach()[~did_return].maximum(nonret_lid_dist)
+                    target_depth[~did_return] = pred_depth.detach()[
+                        ~did_return
+                    ].maximum(nonret_lid_dist)
                     unreduced_depth_loss = self.depth_loss(target_depth, pred_depth)
-                    unreduced_depth_loss[~did_return] *= self.config.loss.non_return_loss_mult
-                    metrics_dict[f"depth_loss_{prop_i}"] = torch.mean(unreduced_depth_loss)
-                    metrics_dict[f"carving_loss_{prop_i}"] = outputs[f"prop_weights_loss_{prop_i}"] / n_lidar_rays
+                    unreduced_depth_loss[
+                        ~did_return
+                    ] *= self.config.loss.non_return_loss_mult
+                    metrics_dict[f"depth_loss_{prop_i}"] = torch.mean(
+                        unreduced_depth_loss
+                    )
+                    metrics_dict[f"carving_loss_{prop_i}"] = (
+                        outputs[f"prop_weights_loss_{prop_i}"] / n_lidar_rays
+                    )
 
         if self.training and "weights_list" in outputs:
-            metrics_dict["distortion"] = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
+            metrics_dict["distortion"] = distortion_loss(
+                outputs["weights_list"], outputs["ray_samples_list"]
+            )
 
         if self.config.field.use_sdf:
             metrics_dict["sdf_to_density"] = float(self.field.sdf_to_density.beta)
@@ -560,30 +688,47 @@ class NeuRADDiffusionModel(NeuRADModel):
             if conf.vgg_mult > 0.0:
                 loss_dict["vgg_loss"] = self.vgg_loss(rgb, image) * conf.vgg_mult
 
-            #compute the diffusion loss
-            loss_dict["diffusion_loss"] = self.diffusion_loss(rgb, self.pipe) * conf.diffusion_loss_mult
+            # compute the diffusion loss
+            loss_dict["diffusion_loss"] = (
+                self.diffusion_loss(rgb, self.pipe) * conf.diffusion_loss_mult
+            )
 
         if self.training:
             if "weights_list" in outputs:
-                loss_dict["interlevel_loss"] = self.config.loss.interlevel_loss_mult * self.interlevel_loss(
-                    outputs["weights_list"], outputs["ray_samples_list"]
+                loss_dict["interlevel_loss"] = (
+                    self.config.loss.interlevel_loss_mult
+                    * self.interlevel_loss(
+                        outputs["weights_list"], outputs["ray_samples_list"]
+                    )
                 )
                 assert metrics_dict is not None and "distortion" in metrics_dict
-                loss_dict["distortion_loss"] = self.config.loss.distortion_loss_mult * metrics_dict["distortion"]
+                loss_dict["distortion_loss"] = (
+                    self.config.loss.distortion_loss_mult * metrics_dict["distortion"]
+                )
                 prop_depth_mult = conf.prop_lidar_loss_mult * conf.depth_mult
                 prop_carv_mult = conf.prop_lidar_loss_mult * conf.carving_mult
                 for i_prop in range(self.config.num_proposal_rounds):
-                    loss_dict[f"depth_loss_{i_prop}"] = prop_depth_mult * metrics_dict[f"depth_loss_{i_prop}"]
-                    loss_dict[f"carving_loss_{i_prop}"] = prop_carv_mult * metrics_dict[f"carving_loss_{i_prop}"]
+                    loss_dict[f"depth_loss_{i_prop}"] = (
+                        prop_depth_mult * metrics_dict[f"depth_loss_{i_prop}"]
+                    )
+                    loss_dict[f"carving_loss_{i_prop}"] = (
+                        prop_carv_mult * metrics_dict[f"carving_loss_{i_prop}"]
+                    )
             assert metrics_dict
             if "depth_loss" in metrics_dict:
                 loss_dict["depth_loss"] = conf.depth_mult * metrics_dict["depth_loss"]
             if "intensity_loss" in metrics_dict:
-                loss_dict["intensity_loss"] = conf.intensity_mult * metrics_dict["intensity_loss"]
+                loss_dict["intensity_loss"] = (
+                    conf.intensity_mult * metrics_dict["intensity_loss"]
+                )
             if "carving_loss" in metrics_dict:
-                loss_dict["carving_loss"] = conf.carving_mult * metrics_dict["carving_loss"]
+                loss_dict["carving_loss"] = (
+                    conf.carving_mult * metrics_dict["carving_loss"]
+                )
             if "ray_drop_loss" in metrics_dict:
-                loss_dict["ray_drop_loss"] = conf.ray_drop_loss_mult * metrics_dict["ray_drop_loss"]
+                loss_dict["ray_drop_loss"] = (
+                    conf.ray_drop_loss_mult * metrics_dict["ray_drop_loss"]
+                )
             self.camera_optimizer.get_loss_dict(loss_dict)
         return loss_dict
 
@@ -597,7 +742,9 @@ class NeuRADDiffusionModel(NeuRADModel):
             images_dict["img"] = torch.cat([image, rgb], dim=1)
             images_dict["depth"] = colormaps.apply_depth_colormap(outputs["depth"])
             if self.config.verbose:
-                images_dict["accumulation"] = colormaps.apply_colormap(outputs["accumulation"])
+                images_dict["accumulation"] = colormaps.apply_colormap(
+                    outputs["accumulation"]
+                )
                 # Add proposal depthmaps
                 for i in range(self.config.num_proposal_rounds):
                     key = f"prop_depth_{i}"
@@ -616,39 +763,61 @@ class NeuRADDiffusionModel(NeuRADModel):
         if "lidar" in batch:
             points = batch["lidar"].to(self.device)
             if "is_lidar" not in batch:
-                batch["is_lidar"] = torch.ones(*batch["lidar"].shape[:-1], 1, dtype=torch.bool, device=self.device)
+                batch["is_lidar"] = torch.ones(
+                    *batch["lidar"].shape[:-1], 1, dtype=torch.bool, device=self.device
+                )
             if "did_return" not in batch:
-                batch["did_return"] = torch.ones(*batch["lidar"].shape[:-1], 1, dtype=torch.bool, device=self.device)
+                batch["did_return"] = torch.ones(
+                    *batch["lidar"].shape[:-1], 1, dtype=torch.bool, device=self.device
+                )
 
             ray_drop_logits = outputs["ray_drop_logits"]
             pred_depth = outputs["depth"]
             did_return = batch["did_return"][:, 0].to(self.device)
             is_lidar = batch["is_lidar"][:, 0].to(self.device)
             metrics_dict["depth_median_l2"] = float(
-                self.median_l2(pred_depth[is_lidar][did_return], batch["distance"][did_return])
+                self.median_l2(
+                    pred_depth[is_lidar][did_return], batch["distance"][did_return]
+                )
             )
             metrics_dict["depth_mean_rel_l2"] = float(
-                self.mean_rel_l2(pred_depth[is_lidar][did_return], batch["distance"][did_return])
+                self.mean_rel_l2(
+                    pred_depth[is_lidar][did_return], batch["distance"][did_return]
+                )
             )
-            metrics_dict["intensity_rmse"] = float(self.rmse(outputs["intensity"][did_return], points[did_return, 3:4]))
+            metrics_dict["intensity_rmse"] = float(
+                self.rmse(outputs["intensity"][did_return], points[did_return, 3:4])
+            )
             metrics_dict["ray_drop_accuracy"] = float(
-                ((ray_drop_logits.sigmoid() > 0.5).squeeze(-1) == ~did_return).float().mean()
+                ((ray_drop_logits.sigmoid() > 0.5).squeeze(-1) == ~did_return)
+                .float()
+                .mean()
             )
             if self.config.loss.ray_drop_loss_mult > 0.0:
                 pred_points_did_return = (ray_drop_logits.sigmoid() < 0.5).squeeze(-1)
             else:
-                pred_points_did_return = (pred_depth < self.config.loss.non_return_lidar_distance).squeeze(-1)
-            if pred_points_did_return.any() and points.shape[0] > 0 and did_return.any():
+                pred_points_did_return = (
+                    pred_depth < self.config.loss.non_return_lidar_distance
+                ).squeeze(-1)
+            if (
+                pred_points_did_return.any()
+                and points.shape[0] > 0
+                and did_return.any()
+            ):
                 pred_points = outputs["points"][is_lidar][pred_points_did_return]
                 metrics_dict["chamfer_distance"] = float(
                     self.chamfer_distance(pred_points[..., :3], points[did_return, :3])
                 )
             else:
-                metrics_dict["chamfer_distance"] = points[did_return, :3].norm(dim=-1).mean()
+                metrics_dict["chamfer_distance"] = (
+                    points[did_return, :3].norm(dim=-1).mean()
+                )
         return metrics_dict, images_dict
 
     @torch.no_grad()
-    def get_outputs_for_camera_ray_bundle(self, camera_ray_bundle: RayBundle) -> Dict[str, torch.Tensor]:
+    def get_outputs_for_camera_ray_bundle(
+        self, camera_ray_bundle: RayBundle
+    ) -> Dict[str, torch.Tensor]:
         """Takes in camera parameters and computes the output of the model.
 
         Args:
@@ -658,12 +827,19 @@ class NeuRADDiffusionModel(NeuRADModel):
             output_size, patch_size = (camera_ray_bundle.shape[0],), (1, 1)
             is_lidar = torch.ones_like(camera_ray_bundle.pixel_area, dtype=torch.bool)
         else:  # camera
-            assert len(camera_ray_bundle.shape) == 2, "Raybundle should be 2d (an image/patch)"
+            assert (
+                len(camera_ray_bundle.shape) == 2
+            ), "Raybundle should be 2d (an image/patch)"
             if self.config.compensate_upsampling_when_rendering:
                 # shoot rays at a lower resolution and upsample the output to the target resolution
                 step = self.config.rgb_upsample_factor
-                camera_ray_bundle = camera_ray_bundle[step // 2 :: step, step // 2 :: step]
-            output_size = patch_size = (camera_ray_bundle.shape[0], camera_ray_bundle.shape[1])
+                camera_ray_bundle = camera_ray_bundle[
+                    step // 2 :: step, step // 2 :: step
+                ]
+            output_size = patch_size = (
+                camera_ray_bundle.shape[0],
+                camera_ray_bundle.shape[1],
+            )
             camera_ray_bundle = camera_ray_bundle.reshape((-1,))
             is_lidar = None
 
@@ -674,7 +850,9 @@ class NeuRADDiffusionModel(NeuRADModel):
         for i in range(0, num_rays, num_rays_per_chunk):
             start_idx = i
             end_idx = i + num_rays_per_chunk
-            ray_bundle = camera_ray_bundle.get_row_major_sliced_ray_bundle(start_idx, end_idx)
+            ray_bundle = camera_ray_bundle.get_row_major_sliced_ray_bundle(
+                start_idx, end_idx
+            )
             outputs = self.get_nff_outputs(ray_bundle, calc_lidar_losses=False)
             for output_name, output in outputs.items():  # type: ignore
                 outputs_lists[output_name].append(output)
@@ -712,7 +890,9 @@ class NeuRADDiffusionModel(NeuRADModel):
             close_to_hit = dist.abs() < self.config.loss.carving_epsilon
             if "did_return" in metadata.keys():
                 did_return = metadata["did_return"][idx]
-                in_lidar_range = sample_distance < self.config.loss.non_return_lidar_distance
+                in_lidar_range = (
+                    sample_distance < self.config.loss.non_return_lidar_distance
+                )
                 mask[idx] = (did_return & close_to_hit) | (
                     (~did_return) & in_lidar_range
                 )  # TODO: should this be in_range or out_of_range?
@@ -730,7 +910,13 @@ class NeuRADDiffusionModel(NeuRADModel):
         ray_bundle.pixel_area = ray_bundle.pixel_area * scaling
 
     def _render_weights(self, outputs, ray_samples):
-        value = outputs[FieldHeadNames.ALPHA if self.config.field.use_sdf else FieldHeadNames.DENSITY].squeeze(-1)
+        value = outputs[
+            (
+                FieldHeadNames.ALPHA
+                if self.config.field.use_sdf
+                else FieldHeadNames.DENSITY
+            )
+        ].squeeze(-1)
         if self.device.type in ("cpu", "mps"):
             # Note: for debugging on devices without cuda
             weights = torch.zeros_like(value) + 0.5
@@ -752,4 +938,6 @@ def render_depth_simple(
     num_rays: Optional[int] = None,
 ) -> Float[Tensor, "*batch 1"]:
     steps = (ray_samples.frustums.starts + ray_samples.frustums.ends) / 2
-    return nerfacc.accumulate_along_rays(weights[..., 0], values=steps, ray_indices=ray_indices, n_rays=num_rays)
+    return nerfacc.accumulate_along_rays(
+        weights[..., 0], values=steps, ray_indices=ray_indices, n_rays=num_rays
+    )

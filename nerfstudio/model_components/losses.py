@@ -34,7 +34,6 @@ from pathlib import Path
 from nerfstudio.models.diffusion import load_img2img_model, read_yaml
 
 
-
 L1Loss = nn.L1Loss
 MSELoss = nn.MSELoss
 
@@ -79,9 +78,14 @@ def outer(
     """
     cy1 = torch.cat([torch.zeros_like(y1[..., :1]), torch.cumsum(y1, dim=-1)], dim=-1)
 
-    idx_lo = torch.searchsorted(t1_starts.contiguous(), t0_starts.contiguous(), side="right") - 1
+    idx_lo = (
+        torch.searchsorted(t1_starts.contiguous(), t0_starts.contiguous(), side="right")
+        - 1
+    )
     idx_lo = torch.clamp(idx_lo, min=0, max=y1.shape[-1] - 1)
-    idx_hi = torch.searchsorted(t1_ends.contiguous(), t0_ends.contiguous(), side="right")
+    idx_hi = torch.searchsorted(
+        t1_ends.contiguous(), t0_ends.contiguous(), side="right"
+    )
     idx_hi = torch.clamp(idx_hi, min=0, max=y1.shape[-1] - 1)
     cy1_lo = torch.take_along_dim(cy1[..., :-1], idx_lo, dim=-1)
     cy1_hi = torch.take_along_dim(cy1[..., 1:], idx_hi, dim=-1)
@@ -114,7 +118,9 @@ def ray_samples_to_sdist(ray_samples):
     """Convert ray samples to s space"""
     starts = ray_samples.spacing_starts
     ends = ray_samples.spacing_ends
-    sdist = torch.cat([starts[..., 0], ends[..., -1:, 0]], dim=-1)  # (num_rays, num_samples + 1)
+    sdist = torch.cat(
+        [starts[..., 0], ends[..., -1:, 0]], dim=-1
+    )  # (num_rays, num_samples + 1)
     return sdist
 
 
@@ -194,11 +200,15 @@ def nerfstudio_distortion_loss(
     starts = ray_samples.spacing_starts
     ends = ray_samples.spacing_ends
 
-    assert starts is not None and ends is not None, "Ray samples must have spacing starts and ends"
+    assert (
+        starts is not None and ends is not None
+    ), "Ray samples must have spacing starts and ends"
     midpoints = (starts + ends) / 2.0  # (..., num_samples, 1)
 
     loss = (
-        weights * weights[..., None, :, 0] * torch.abs(midpoints - midpoints[..., None, :, 0])
+        weights
+        * weights[..., None, :, 0]
+        * torch.abs(midpoints - midpoints[..., None, :, 0])
     )  # (..., num_samples, num_samples)
     loss = torch.sum(loss, dim=(-1, -2))[..., None]  # (..., num_samples)
     loss = loss + 1 / 3.0 * torch.sum(weights**2 * (ends - starts), dim=-2)
@@ -227,7 +237,9 @@ def pred_normal_loss(
     pred_normals: Float[Tensor, "*bs num_samples 3"],
 ):
     """Loss between normals calculated from density and normals from prediction network."""
-    return (weights[..., 0] * (1.0 - torch.sum(normals * pred_normals, dim=-1))).sum(dim=-1)
+    return (weights[..., 0] * (1.0 - torch.sum(normals * pred_normals, dim=-1))).sum(
+        dim=-1
+    )
 
 
 def ds_nerf_depth_loss(
@@ -250,7 +262,11 @@ def ds_nerf_depth_loss(
     """
     depth_mask = termination_depth > 0
 
-    loss = -torch.log(weights + EPS) * torch.exp(-((steps - termination_depth[:, None]) ** 2) / (2 * sigma)) * lengths
+    loss = (
+        -torch.log(weights + EPS)
+        * torch.exp(-((steps - termination_depth[:, None]) ** 2) / (2 * sigma))
+        * lengths
+    )
     loss = loss.sum(-2) * depth_mask
     return torch.mean(loss)
 
@@ -281,17 +297,27 @@ def urban_radiance_field_depth_loss(
     expected_depth_loss = (termination_depth - predicted_depth) ** 2
 
     # Line of sight losses
-    target_distribution = torch.distributions.normal.Normal(0.0, sigma / URF_SIGMA_SCALE_FACTOR)
+    target_distribution = torch.distributions.normal.Normal(
+        0.0, sigma / URF_SIGMA_SCALE_FACTOR
+    )
     termination_depth = termination_depth[:, None]
     line_of_sight_loss_near_mask = torch.logical_and(
         steps <= (termination_depth + sigma), steps >= (termination_depth - sigma)
     )
     line_of_sight_loss_near = (
-        (weights / (bin_sizes) - torch.exp(target_distribution.log_prob(steps - termination_depth))) ** 2
+        (
+            weights / (bin_sizes)
+            - torch.exp(target_distribution.log_prob(steps - termination_depth))
+        )
+        ** 2
     ) * (bin_sizes)
-    line_of_sight_loss_near = (line_of_sight_loss_near_mask * line_of_sight_loss_near).sum(-2)
+    line_of_sight_loss_near = (
+        line_of_sight_loss_near_mask * line_of_sight_loss_near
+    ).sum(-2)
     line_of_sight_loss_empty_mask = steps < (termination_depth - sigma)
-    line_of_sight_loss_empty = (line_of_sight_loss_empty_mask * weights**2 / bin_sizes).sum(-2)
+    line_of_sight_loss_empty = (
+        line_of_sight_loss_empty_mask * weights**2 / bin_sizes
+    ).sum(-2)
     line_of_sight_loss = line_of_sight_loss_near + line_of_sight_loss_empty
 
     loss = (expected_depth_loss + line_of_sight_loss) * depth_mask
@@ -335,14 +361,21 @@ def depth_loss(
     if depth_loss_type == DepthLossType.URF:
         bin_sizes = ray_samples.frustums.ends - ray_samples.frustums.starts
         return urban_radiance_field_depth_loss(
-            weights, termination_depth, predicted_depth, steps, sigma, bin_sizes, scaling_factor
+            weights,
+            termination_depth,
+            predicted_depth,
+            steps,
+            sigma,
+            bin_sizes,
+            scaling_factor,
         )
 
     raise NotImplementedError("Provided depth loss type not implemented.")
 
 
 def monosdf_normal_loss(
-    normal_pred: Float[Tensor, "num_samples 3"], normal_gt: Float[Tensor, "num_samples 3"]
+    normal_pred: Float[Tensor, "num_samples 3"],
+    normal_gt: Float[Tensor, "num_samples 3"],
 ) -> Float[Tensor, "0"]:
     """
     Normal consistency loss proposed in monosdf - https://niujinshuchong.github.io/monosdf/
@@ -358,21 +391,6 @@ def monosdf_normal_loss(
     cos = (1.0 - torch.sum(normal_pred * normal_gt, dim=-1)).mean()
     return l1 + cos
 
-
-def diffusion_loss(patch_rgb: Tensor, pipe) -> float:
-    #rgb dimension is: patch_size * h * w * c  
-    #resize patch image to p, c, h,w 
-    patch_rgb = patch_rgb.permute(0,3,1,2)
-
-    loss_fn = MSELoss()
-    diffusion_loss = 0
-
-    for rgb in patch_rgb:
-        rgb = rgb[None, ...]
-        diffused_img = pipe.diffuse_sample({"rgb": rgb})["rgb"]
-        diffusion_loss += loss_fn(diffused_img, rgb)
-  
-    return diffusion_loss
 
 class MiDaSMSELoss(nn.Module):
     """
@@ -406,7 +424,6 @@ class MiDaSMSELoss(nn.Module):
         image_loss = masked_reduction(image_loss, 2 * summed_mask, self.reduction_type)
 
         return image_loss
-    
 
 
 # losses based on https://github.com/autonomousvision/monosdf/blob/main/code/model/loss.py
@@ -417,7 +434,9 @@ class GradientLoss(nn.Module):
     More info here https://arxiv.org/pdf/1907.01341.pdf Equation 11
     """
 
-    def __init__(self, scales: int = 4, reduction_type: Literal["image", "batch"] = "batch"):
+    def __init__(
+        self, scales: int = 4, reduction_type: Literal["image", "batch"] = "batch"
+    ):
         """
         Args:
             scales: number of scales to use
@@ -499,7 +518,12 @@ class ScaleAndShiftInvariantLoss(nn.Module):
     https://arxiv.org/pdf/1907.01341.pdf
     """
 
-    def __init__(self, alpha: float = 0.5, scales: int = 4, reduction_type: Literal["image", "batch"] = "batch"):
+    def __init__(
+        self,
+        alpha: float = 0.5,
+        scales: int = 4,
+        reduction_type: Literal["image", "batch"] = "batch",
+    ):
         """
         Args:
             alpha: weight of the regularization term
@@ -508,7 +532,9 @@ class ScaleAndShiftInvariantLoss(nn.Module):
         """
         super().__init__()
         self.__data_loss = MiDaSMSELoss(reduction_type=reduction_type)
-        self.__regularization_loss = GradientLoss(scales=scales, reduction_type=reduction_type)
+        self.__regularization_loss = GradientLoss(
+            scales=scales, reduction_type=reduction_type
+        )
         self.__alpha = alpha
 
         self.__prediction_ssi = None
@@ -532,7 +558,9 @@ class ScaleAndShiftInvariantLoss(nn.Module):
 
         total = self.__data_loss(self.__prediction_ssi, target, mask)
         if self.__alpha > 0:
-            total += self.__alpha * self.__regularization_loss(self.__prediction_ssi, target, mask)
+            total += self.__alpha * self.__regularization_loss(
+                self.__prediction_ssi, target, mask
+            )
 
         return total
 
@@ -556,8 +584,16 @@ def tv_loss(grids: Float[Tensor, "grids feature_dim row column"]) -> Float[Tenso
         average total variation loss for neighbor rows and columns.
     """
     number_of_grids = grids.shape[0]
-    h_tv_count = grids[:, :, 1:, :].shape[1] * grids[:, :, 1:, :].shape[2] * grids[:, :, 1:, :].shape[3]
-    w_tv_count = grids[:, :, :, 1:].shape[1] * grids[:, :, :, 1:].shape[2] * grids[:, :, :, 1:].shape[3]
+    h_tv_count = (
+        grids[:, :, 1:, :].shape[1]
+        * grids[:, :, 1:, :].shape[2]
+        * grids[:, :, 1:, :].shape[3]
+    )
+    w_tv_count = (
+        grids[:, :, :, 1:].shape[1]
+        * grids[:, :, :, 1:].shape[2]
+        * grids[:, :, :, 1:].shape[3]
+    )
     h_tv = torch.pow((grids[:, :, 1:, :] - grids[:, :, :-1, :]), 2).sum()
     w_tv = torch.pow((grids[:, :, :, 1:] - grids[:, :, :, :-1]), 2).sum()
     return 2 * (h_tv / h_tv_count + w_tv / w_tv_count) / number_of_grids
@@ -661,16 +697,23 @@ def depth_ranking_loss(rendered_depth, gt_depth):
     dpt_diff = gt_depth[::2, :] - gt_depth[1::2, :]
     out_diff = rendered_depth[::2, :] - rendered_depth[1::2, :] + m
     differing_signs = torch.sign(dpt_diff) != torch.sign(out_diff)
-    return torch.nanmean((out_diff[differing_signs] * torch.sign(out_diff[differing_signs])))
+    return torch.nanmean(
+        (out_diff[differing_signs] * torch.sign(out_diff[differing_signs]))
+    )
 
 
-def _blur_stepfun(x: torch.Tensor, y: torch.Tensor, r: float) -> Tuple[torch.Tensor, torch.Tensor]:
+def _blur_stepfun(
+    x: torch.Tensor, y: torch.Tensor, r: float
+) -> Tuple[torch.Tensor, torch.Tensor]:
     xr, xr_idx = torch.sort(torch.cat([x - r, x + r], dim=-1))
     y1 = (
-        torch.cat([y, torch.zeros_like(y[..., :1])], dim=-1) - torch.cat([torch.zeros_like(y[..., :1]), y], dim=-1)
+        torch.cat([y, torch.zeros_like(y[..., :1])], dim=-1)
+        - torch.cat([torch.zeros_like(y[..., :1]), y], dim=-1)
     ) / (2 * r)
     y2 = torch.cat([y1, -y1], dim=-1).take_along_dim(xr_idx[..., :-1], dim=-1)
-    yr = torch.cumsum((xr[..., 1:] - xr[..., :-1]) * torch.cumsum(y2, dim=-1), dim=-1).clamp_min(0)
+    yr = torch.cumsum(
+        (xr[..., 1:] - xr[..., :-1]) * torch.cumsum(y2, dim=-1), dim=-1
+    ).clamp_min(0)
     yr = torch.cat([torch.zeros_like(yr[..., :1]), yr], dim=-1)
     return xr, yr
 
@@ -704,19 +747,29 @@ def zipnerf_interlevel_loss(weights_list, ray_samples_list):
 
     w_norm = w / (c[..., 1:] - c[..., :-1])
     loss = 0
-    for i, (ray_samples, weights) in enumerate(zip(ray_samples_list[:-1], weights_list[:-1])):
+    for i, (ray_samples, weights) in enumerate(
+        zip(ray_samples_list[:-1], weights_list[:-1])
+    ):
         cp = ray_samples_to_sdist(ray_samples)
         wp = weights[..., 0]  # (num_rays, num_samples)
         c_, w_ = _blur_stepfun(c, w_norm, pulse_widths[i])
 
         # piecewise linear pdf to piecewise quadratic cdf
         area = 0.5 * (w_[..., 1:] + w_[..., :-1]) * (c_[..., 1:] - c_[..., :-1])
-        cdf = torch.cat([torch.zeros_like(area[..., :1]), torch.cumsum(area, dim=-1)], dim=-1)
+        cdf = torch.cat(
+            [torch.zeros_like(area[..., :1]), torch.cumsum(area, dim=-1)], dim=-1
+        )
 
         # prepend 0 weight and append 1 weight
-        c_ = torch.cat([torch.zeros_like(c_[..., :1]), c_, torch.ones_like(c_[..., :1])], dim=-1)
-        w_ = torch.cat([torch.zeros_like(w_[..., :1]), w_, torch.zeros_like(w_[..., :1])], dim=-1)
-        cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf, torch.ones_like(cdf[..., :1])], dim=-1)
+        c_ = torch.cat(
+            [torch.zeros_like(c_[..., :1]), c_, torch.ones_like(c_[..., :1])], dim=-1
+        )
+        w_ = torch.cat(
+            [torch.zeros_like(w_[..., :1]), w_, torch.zeros_like(w_[..., :1])], dim=-1
+        )
+        cdf = torch.cat(
+            [torch.zeros_like(cdf[..., :1]), cdf, torch.ones_like(cdf[..., :1])], dim=-1
+        )
 
         # query piecewise quadratic interpolation
         cdf_interp = _sorted_interp_quad(cp, c_, w_, cdf)

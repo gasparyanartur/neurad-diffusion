@@ -39,7 +39,8 @@ from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManage
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.utils import profiler
-from nerfstudio.model_components.losses import diffusion_loss
+from nerfstudio.model_components.losses import 
+from nerfstudio.models.diffusion import read_yaml, load_img2img_model
 
 
 @dataclass
@@ -63,6 +64,12 @@ class IamgineDrivingPipelineConfig(VanillaPipelineConfig):
     shift_prob: float = 0.2
     rotate_prob: float = 0.2
     diffusion_loss_mult: float = 0.1
+
+    diffusion_config_path: str = (
+        "/home/s0001899/workspace/neurad-studio/nerfstudio/notebooks/diffusion-pandaset-real.yml"
+    )
+    load_diffusion_lora: bool = False
+    lora_weight_path: str = None
 
     def __post_init__(self) -> None:
         assert (
@@ -92,6 +99,12 @@ class ImagineDrivingPipeline(VanillaPipeline):
             self.model.disable_ray_drop()
 
         self.fid = None
+        self.diffusion_config = read_yaml(config.diffusion_config_path)
+        self.pipe = load_img2img_model(
+            self.diffusion_config["model"]["model_config_params"]
+        )
+        if config.load_diffusion_lora:
+            self.pipe.base_pipe.lord_lora_weights(config.lora_weight_path)
 
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
@@ -125,7 +138,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
 
         if self.phase == 1:
-            diffusion_loss = diffusion_loss(model_outputs)
+            diffusion_loss = diffusion_loss(model_outputs, self.pipe)
             loss_dict["diffusion_loss"] = (
                 diffusion_loss * self.config.diffusion_loss_mult
             )
@@ -146,7 +159,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
     def _run_diffusion():
 
-        return diffusion_loss
+        return get_diffusion_loss
 
     @profiler.time_function
     def get_eval_loss_dict(self, step: int):
@@ -532,3 +545,13 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
         self.model.dynamic_actors.actor_editing["rotation"] = 0
         self.model.dynamic_actors.actor_editing["lateral"] = 0
+
+
+def get_diffusion_loss(patch_rgb: Tensor, pipe) -> float:
+    # rgb dimension is: patch_size * h * w * c
+    # resize patch image to p, c, h,w
+    patch_rgb = patch_rgb.permute(0, 3, 1, 2)
+    diffused_img = pipe.diffuse_sample({"rgb": rgb})["rgb"]
+    diffusion_loss = torch.nn.MSELoss()(patch_rgb, diffused_img)
+
+    return diffusion_loss
