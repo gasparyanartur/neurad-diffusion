@@ -42,6 +42,7 @@ from nerfstudio.models.neurad_diffusion import NeuRADDiffusionModelConfig
 from nerfstudio.models.splatfacto import SplatfactoModelConfig
 from nerfstudio.pipelines.ad_pipeline import ADPipelineConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
+from nerfstudio.pipelines.imaginedriving_pipeline import IamgineDrivingPipelineConfig
 from nerfstudio.plugins.registry import discover_methods
 
 method_configs: Dict[str, Union[TrainerConfig, ExternalMethodDummyTrainerConfig]] = {}
@@ -363,6 +364,49 @@ method_configs["neuraddiffusion"].method_name = "neuraddiffusion"
 method_configs["neuraddiffusion"].pipeline.model = NeuRADDiffusionModelConfig(
     eval_num_rays_per_chunk=1 << 15,
     camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
+)
+
+# New version of ImagineDriving, use changing pipeline
+method_configs["imaginedriving"] = TrainerConfig(
+    method_name="imaginedriving",
+    steps_per_eval_batch=500,
+    steps_per_eval_all_images=5000,
+    steps_per_save=2000,
+    max_num_iterations=20001,
+    mixed_precision=True,
+    pipeline=IamgineDrivingPipelineConfig(
+        calc_fid_steps=(99999999,),
+        datamanager=ADDataManagerConfig(dataparser=PandaSetDataParserConfig(add_missing_points=True)),
+        model=NeuRADModelConfig(
+            eval_num_rays_per_chunk=1 << 15,
+            camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
+        ),
+    ),
+    optimizers={
+        "trajectory_opt": {
+            "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=20001, warmup_steps=2500),
+        },
+        "cnn": {
+            "optimizer": AdamWOptimizerConfig(lr=1e-3, eps=1e-15, weight_decay=1e-6),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=20001, warmup_steps=2500),
+        },
+        "fields": {
+            "optimizer": AdamWOptimizerConfig(lr=1e-2, eps=1e-15, weight_decay=1e-7),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-3, max_steps=20001, warmup_steps=500),
+        },
+        "hashgrids": {
+            "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-3, max_steps=20001, warmup_steps=500),
+        },
+        "camera_opt": {
+            "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-5, max_steps=20001, warmup_steps=2500),
+        },
+    },
+    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+    vis="viewer",
+    logging=LoggingConfig(steps_per_log=100),
 )
 
 
