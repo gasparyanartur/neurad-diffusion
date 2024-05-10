@@ -20,35 +20,54 @@ from typing import Dict, List, Optional, Tuple, Type
 
 import torch
 from PIL import Image
-from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision.transforms.functional import to_pil_image, to_tensor
 
-from nerfstudio.data.datamanagers.ad_datamanager import ADDataManager, ADDataManagerConfig
+from nerfstudio.data.datamanagers.ad_datamanager import (
+    ADDataManager,
+    ADDataManagerConfig,
+)
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.utils import profiler
+from nerfstudio.model_components.losses import diffusion_loss
 
 
 @dataclass
 class IamgineDrivingPipelineConfig(VanillaPipelineConfig):
     """Configuration for pipeline instantiation"""
 
-    _target: Type = field(default_factory=lambda: ADPipeline)
+    _target: Type = field(default_factory=lambda: ImagineDrivingPipeline)
     """target class to instantiate"""
     datamanager: ADDataManagerConfig = field(default_factory=ADDataManagerConfig)
     """specifies the datamanager config"""
     model: ADModelConfig = field(default_factory=ADModelConfig)
     """specifies the model config"""
-    calc_fid_steps: Tuple[int, ...] = (20000,)  # NOTE: must also be an eval step for this to work
+    calc_fid_steps: Tuple[int, ...] = (
+        20000,
+    )  # NOTE: must also be an eval step for this to work
     """Whether to calculate FID for lane shifted images."""
     ray_patch_size: Tuple[int, int] = (32, 32)
     """Size of the ray patches to sample from the image during training (for camera rays only)."""
 
+    change_phase_step: int = 200
+    shift_prob: float = 0.2
+    rotate_prob: float = 0.2
+    diffusion_loss_mult: float = 0.1
+
     def __post_init__(self) -> None:
-        assert self.ray_patch_size[0] == self.ray_patch_size[1], "Non-square patches are not supported yet, sorry."
+        assert (
+            self.ray_patch_size[0] == self.ray_patch_size[1]
+        ), "Non-square patches are not supported yet, sorry."
         self.datamanager.image_divisible_by = self.model.rgb_upsample_factor
 
 
@@ -66,6 +85,8 @@ class ImagineDrivingPipeline(VanillaPipeline):
         self.model: ADModel = self.model
         self.config: IamgineDrivingPipelineConfig = self.config
 
+        self.phase = 0
+
         # Disable ray drop classification if we do not add missing points
         if not self.datamanager.dataparser.config.add_missing_points:
             self.model.disable_ray_drop()
@@ -82,20 +103,50 @@ class ImagineDrivingPipeline(VanillaPipeline):
             step: current iteration step to update sampler if using DDP (distributed)
         """
         # Regular forward pass and loss calc
+
+        self._update_phase(step)
+
         ray_bundle, batch = self.datamanager.next_train(step)
         model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
 
         if (actors := self.model.dynamic_actors).config.optimize_trajectories:
             pos_norm = (actors.actor_positions - actors.initial_positions).norm(dim=-1)
-            metrics_dict["traj_opt_translation"] = pos_norm[pos_norm > 0].mean().nan_to_num()
+            metrics_dict["traj_opt_translation"] = (
+                pos_norm[pos_norm > 0].mean().nan_to_num()
+            )
             metrics_dict["traj_opt_rotation"] = (
-                (actors.actor_rotations_6d - actors.initial_rotations_6d)[pos_norm > 0].norm(dim=-1).mean().nan_to_num()
+                (actors.actor_rotations_6d - actors.initial_rotations_6d)[pos_norm > 0]
+                .norm(dim=-1)
+                .mean()
+                .nan_to_num()
             )
 
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
 
+        if self.phase == 1:
+            diffusion_loss = diffusion_loss(model_outputs)
+            loss_dict["diffusion_loss"] = (
+                diffusion_loss * self.config.diffusion_loss_mult
+            )
+
         return model_outputs, loss_dict, metrics_dict
+
+    def _update_phase(self, step: int):
+        """TODO: later changt to use more complicate strategy"""
+        new_phase = 0 if step < self.config.change_phase_step else 1
+
+        if self.phase == new_phase:
+            return
+
+        if new_phase == 1:
+            """TODO need to change data?---datamanager and also the model, loss? need to be decided later"""
+
+        self.phase = new_phase
+
+    def _run_diffusion():
+
+        return diffusion_loss
 
     @profiler.time_function
     def get_eval_loss_dict(self, step: int):
@@ -125,7 +176,9 @@ class ImagineDrivingPipeline(VanillaPipeline):
         # Image eval
         camera, batch = self.datamanager.next_eval_image(step)
         outputs = self.model.get_outputs_for_camera(camera)
-        metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
+        metrics_dict, images_dict = self.model.get_image_metrics_and_images(
+            outputs, batch
+        )
         assert "num_rays" not in metrics_dict
         metrics_dict["num_rays"] = (camera.height * camera.width * camera.size).item()
 
@@ -141,7 +194,10 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
     @profiler.time_function
     def get_average_eval_image_metrics(
-        self, step: Optional[int] = None, output_path: Optional[Path] = None, get_std: bool = False
+        self,
+        step: Optional[int] = None,
+        output_path: Optional[Path] = None,
+        get_std: bool = False,
     ):
         """Iterate over all the images in the eval dataset and get the average.
 
@@ -179,7 +235,10 @@ class ImagineDrivingPipeline(VanillaPipeline):
                 # "both": [(0.5, 2.0), (-0.5, 2.0), (0.5, -2.0), (-0.5, -2.0)],
             }
             actor_fids = (
-                {k: FrechetInceptionDistance().to(self.device) for k in actor_edits.keys()}
+                {
+                    k: FrechetInceptionDistance().to(self.device)
+                    for k in actor_edits.keys()
+                }
                 if step in self.config.calc_fid_steps or step is None
                 else {}
             )
@@ -187,21 +246,32 @@ class ImagineDrivingPipeline(VanillaPipeline):
                 actor_fids["true"] = FrechetInceptionDistance().to(self.device)
 
             num_images = len(self.datamanager.fixed_indices_eval_dataloader)
-            task = progress.add_task("[green]Evaluating all eval images...", total=num_images)
+            task = progress.add_task(
+                "[green]Evaluating all eval images...", total=num_images
+            )
             for camera, batch in self.datamanager.fixed_indices_eval_dataloader:
                 # time this the following line
                 inner_start = time()
                 # Generate images from the original rays
-                camera_ray_bundle = camera.generate_rays(camera_indices=0, keep_shape=True)
-                outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
+                camera_ray_bundle = camera.generate_rays(
+                    camera_indices=0, keep_shape=True
+                )
+                outputs = self.model.get_outputs_for_camera_ray_bundle(
+                    camera_ray_bundle
+                )
                 # Compute metrics for the original image
-                metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
+                metrics_dict, images_dict = self.model.get_image_metrics_and_images(
+                    outputs, batch
+                )
                 if output_path is not None:
                     camera_indices = camera_ray_bundle.camera_indices
                     assert camera_indices is not None
                     for key, val in images_dict.items():
                         Image.fromarray((val * 255).byte().cpu().numpy()).save(
-                            output_path / "{0:06d}-{1}.jpg".format(int(camera_indices[0, 0, 0]), key)
+                            output_path
+                            / "{0:06d}-{1}.jpg".format(
+                                int(camera_indices[0, 0, 0]), key
+                            )
                         )
                 # Add timing stuff
                 assert "num_rays_per_sec" not in metrics_dict
@@ -212,23 +282,38 @@ class ImagineDrivingPipeline(VanillaPipeline):
                 metrics_dict[fps_str] = metrics_dict["num_rays_per_sec"] / num_rays
                 metrics_dict_list.append(metrics_dict)
                 if lane_shift_fids:
-                    self._update_lane_shift_fid(lane_shift_fids, camera_ray_bundle, batch["image"], outputs["rgb"])
+                    self._update_lane_shift_fid(
+                        lane_shift_fids,
+                        camera_ray_bundle,
+                        batch["image"],
+                        outputs["rgb"],
+                    )
                 if vertical_shift_fids:
-                    self._update_vertical_shift_fid(vertical_shift_fids, camera_ray_bundle, batch["image"])
+                    self._update_vertical_shift_fid(
+                        vertical_shift_fids, camera_ray_bundle, batch["image"]
+                    )
                 if actor_fids:
-                    self._update_actor_fids(actor_fids, actor_edits, camera_ray_bundle, batch["image"])
+                    self._update_actor_fids(
+                        actor_fids, actor_edits, camera_ray_bundle, batch["image"]
+                    )
                 progress.advance(task)
             num_lidar = len(self.datamanager.fixed_indices_eval_lidar_dataloader)
-            task = progress.add_task("[green]Evaluating all eval point clouds...", total=num_lidar)
+            task = progress.add_task(
+                "[green]Evaluating all eval point clouds...", total=num_lidar
+            )
             for lidar, batch in self.datamanager.fixed_indices_eval_lidar_dataloader:
                 outputs, batch = self.model.get_outputs_for_lidar(lidar, batch=batch)
-                metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
+                metrics_dict, _ = self.model.get_image_metrics_and_images(
+                    outputs, batch
+                )
                 metrics_dict_list.append(metrics_dict)
                 progress.advance(task)
 
         # average the metrics list
         metrics_dict = {}
-        keys = {key for metrics_dict in metrics_dict_list for key in metrics_dict.keys()}
+        keys = {
+            key for metrics_dict in metrics_dict_list for key in metrics_dict.keys()
+        }
         # remove the keys related to actor metrics as they need to be averaged differently
         actor_keys = {key for key in keys if key.startswith("actor_")}
         keys = keys - actor_keys
@@ -236,21 +321,35 @@ class ImagineDrivingPipeline(VanillaPipeline):
         for key in keys:
             if get_std:
                 key_std, key_mean = torch.std_mean(
-                    torch.tensor([metrics_dict[key] for metrics_dict in metrics_dict_list if key in metrics_dict])
+                    torch.tensor(
+                        [
+                            metrics_dict[key]
+                            for metrics_dict in metrics_dict_list
+                            if key in metrics_dict
+                        ]
+                    )
                 )
                 metrics_dict[key] = float(key_mean)
                 metrics_dict[f"{key}_std"] = float(key_std)
             else:
                 metrics_dict[key] = float(
                     torch.mean(
-                        torch.tensor([metrics_dict[key] for metrics_dict in metrics_dict_list if key in metrics_dict])
+                        torch.tensor(
+                            [
+                                metrics_dict[key]
+                                for metrics_dict in metrics_dict_list
+                                if key in metrics_dict
+                            ]
+                        )
                     )
                 )
         # average the actor metrics. Note that due to the way we compute the actor metrics,
         # we need to weight them by how big portion of the image they cover.
         actor_metrics_dict = [md for md in metrics_dict_list if "actor_coverage" in md]
         if actor_metrics_dict:
-            actor_coverages = torch.tensor([md["actor_coverage"] for md in actor_metrics_dict])
+            actor_coverages = torch.tensor(
+                [md["actor_coverage"] for md in actor_metrics_dict]
+            )
             for key in actor_keys:
                 # we dont want to average the actor coverage in this way.
                 if key == "actor_coverage":
@@ -275,7 +374,9 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
         if actor_fids:
             for edit_type in actor_edits.keys():
-                metrics_dict[f"actor_shift_{edit_type}_fid"] = actor_fids[edit_type].compute().item()
+                metrics_dict[f"actor_shift_{edit_type}_fid"] = (
+                    actor_fids[edit_type].compute().item()
+                )
 
         self.train()
         return metrics_dict
@@ -294,11 +395,16 @@ class ImagineDrivingPipeline(VanillaPipeline):
         img = to_tensor(img)
         return img
 
-    def _update_lane_shift_fid(self, fids: Dict[int, FrechetInceptionDistance], ray_bundle, orig_img, gen_img):
+    def _update_lane_shift_fid(
+        self, fids: Dict[int, FrechetInceptionDistance], ray_bundle, orig_img, gen_img
+    ):
         """Updates the FID metrics (for shifted views) for the given ray bundle and images."""
         # Update "true" FID (with hack to only compute it once)
         img_original = (
-            (self._downsample_img((orig_img).permute(2, 0, 1)) * 255).unsqueeze(0).to(torch.uint8).to(self.device)
+            (self._downsample_img((orig_img).permute(2, 0, 1)) * 255)
+            .unsqueeze(0)
+            .to(torch.uint8)
+            .to(self.device)
         )
         fids_list = list(fids.values())
         fids_list[0].update(img_original, real=True)
@@ -314,26 +420,43 @@ class ImagineDrivingPipeline(VanillaPipeline):
         driving_direction = ray_bundle.metadata["velocities"][0, 0, :]
         driving_direction = driving_direction / driving_direction.norm()
         orth_right_direction = torch.cross(
-            driving_direction, torch.tensor([0.0, 0.0, 1.0], device=driving_direction.device)
+            driving_direction,
+            torch.tensor([0.0, 0.0, 1.0], device=driving_direction.device),
         )
 
         # TODO: Do we need to take z axis into account?
-        shift_sign = self.datamanager.eval_lidar_dataset.metadata.get("lane_shift_sign", 1)
+        shift_sign = self.datamanager.eval_lidar_dataset.metadata.get(
+            "lane_shift_sign", 1
+        )
         original_ray_origins = ray_bundle.origins.clone()
         ray_bundle.origins[..., :2] += 2 * orth_right_direction[:2] * shift_sign
-        imgs_generated[2] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)["rgb"]
+        imgs_generated[2] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)[
+            "rgb"
+        ]
         ray_bundle.origins[..., :2] += 1 * orth_right_direction[:2] * shift_sign
-        imgs_generated[3] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)["rgb"]
+        imgs_generated[3] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)[
+            "rgb"
+        ]
         ray_bundle.origins = original_ray_origins
         for shift, img in imgs_generated.items():
-            img = (self._downsample_img((img).permute(2, 0, 1)) * 255).unsqueeze(0).to(torch.uint8).to(self.device)
+            img = (
+                (self._downsample_img((img).permute(2, 0, 1)) * 255)
+                .unsqueeze(0)
+                .to(torch.uint8)
+                .to(self.device)
+            )
             fids[shift].update(img, real=False)
 
-    def _update_vertical_shift_fid(self, fids: Dict[int, FrechetInceptionDistance], ray_bundle, orig_img):
+    def _update_vertical_shift_fid(
+        self, fids: Dict[int, FrechetInceptionDistance], ray_bundle, orig_img
+    ):
         """Updates the FID metrics (for shifted views) for the given ray bundle and images."""
         # Update "true" FID (with hack to only compute it once)
         img_original = (
-            (self._downsample_img((orig_img).permute(2, 0, 1)) * 255).unsqueeze(0).to(torch.uint8).to(self.device)
+            (self._downsample_img((orig_img).permute(2, 0, 1)) * 255)
+            .unsqueeze(0)
+            .to(torch.uint8)
+            .to(self.device)
         )
         fids_list = list(fids.values())
         fids_list[0].update(img_original, real=True)
@@ -348,11 +471,18 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
         original_ray_origins = ray_bundle.origins.clone()
         ray_bundle.origins[..., 2] += 1.0
-        imgs_generated[1] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)["rgb"]
+        imgs_generated[1] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)[
+            "rgb"
+        ]
         ray_bundle.origins = original_ray_origins
 
         for shift, img in imgs_generated.items():
-            img = (self._downsample_img((img).permute(2, 0, 1)) * 255).unsqueeze(0).to(torch.uint8).to(self.device)
+            img = (
+                (self._downsample_img((img).permute(2, 0, 1)) * 255)
+                .unsqueeze(0)
+                .to(torch.uint8)
+                .to(self.device)
+            )
             fids[shift].update(img, real=False)
 
     def _update_actor_fids(
@@ -365,13 +495,18 @@ class ImagineDrivingPipeline(VanillaPipeline):
         """Updates the FID metrics (for shifted actor views) for the given ray bundle and images."""
         # Update "true" FID (with hack to only compute it once)
         img_original = (
-            (self._downsample_img((orig_img).permute(2, 0, 1)) * 255).unsqueeze(0).to(torch.uint8).to(self.device)
+            (self._downsample_img((orig_img).permute(2, 0, 1)) * 255)
+            .unsqueeze(0)
+            .to(torch.uint8)
+            .to(self.device)
         )
         fids["true"].update(img_original, real=True)
         for edit_type in actor_edits.keys():
             fids[edit_type].real_features_sum = fids["true"].real_features_sum
             fids[edit_type].real_features_cov_sum = fids["true"].real_features_cov_sum
-            fids[edit_type].real_features_num_samples = fids["true"].real_features_num_samples
+            fids[edit_type].real_features_num_samples = fids[
+                "true"
+            ].real_features_num_samples
 
         # Compute FID for actor edits
         imgs_generated_per_edit = {}
@@ -380,12 +515,19 @@ class ImagineDrivingPipeline(VanillaPipeline):
             for rotation, lateral in actor_edits[edit_type]:
                 self.model.dynamic_actors.actor_editing["rotation"] = rotation
                 self.model.dynamic_actors.actor_editing["lateral"] = lateral
-                imgs.append(self.model.get_outputs_for_camera_ray_bundle(ray_bundle)["rgb"])
+                imgs.append(
+                    self.model.get_outputs_for_camera_ray_bundle(ray_bundle)["rgb"]
+                )
             imgs_generated_per_edit[edit_type] = imgs
 
         for edit_type, imgs in imgs_generated_per_edit.items():
             for img in imgs:
-                img = (self._downsample_img((img).permute(2, 0, 1)) * 255).unsqueeze(0).to(torch.uint8).to(self.device)
+                img = (
+                    (self._downsample_img((img).permute(2, 0, 1)) * 255)
+                    .unsqueeze(0)
+                    .to(torch.uint8)
+                    .to(self.device)
+                )
                 fids[edit_type].update(img, real=False)
 
         self.model.dynamic_actors.actor_editing["rotation"] = 0
