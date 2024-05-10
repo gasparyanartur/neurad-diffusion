@@ -138,10 +138,11 @@ class ImagineDrivingPipeline(VanillaPipeline):
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
 
         if self.phase == 1:
-            diffusion_loss = diffusion_loss(model_outputs, self.pipe)
-            loss_dict["diffusion_loss"] = (
-                diffusion_loss * self.config.diffusion_loss_mult
-            )
+
+            self._run_diffusion
+            diffusion_loss = get_diffusion_loss(model_outputs, self.pipe)
+            loss_dict["diffusion_loss"] = diffusion_loss * self.config.diffusion_loss_mult
+            
 
         return model_outputs, loss_dict, metrics_dict
 
@@ -158,8 +159,9 @@ class ImagineDrivingPipeline(VanillaPipeline):
         self.phase = new_phase
 
     def _run_diffusion():
+        """TODO  """
 
-        return get_diffusion_loss
+        return 
 
     @profiler.time_function
     def get_eval_loss_dict(self, step: int):
@@ -550,8 +552,10 @@ class ImagineDrivingPipeline(VanillaPipeline):
 def get_diffusion_loss(patch_rgb: Tensor, pipe) -> float:
     # rgb dimension is: patch_size * h * w * c
     # resize patch image to p, c, h,w
+    
     patch_rgb = patch_rgb.permute(0, 3, 1, 2)
     diffused_img = pipe.diffuse_sample({"rgb": rgb})["rgb"]
     diffusion_loss = torch.nn.MSELoss()(patch_rgb, diffused_img)
 
     return diffusion_loss
+
