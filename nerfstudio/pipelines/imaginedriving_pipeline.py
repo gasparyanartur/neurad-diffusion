@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from time import time
 from typing import Dict, List, Optional, Tuple, Type
+import random
 
 import torch
 from PIL import Image
@@ -39,12 +40,11 @@ from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManage
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.utils import profiler
-from nerfstudio.model_components.losses import 
 from nerfstudio.models.diffusion import read_yaml, load_img2img_model
 
 
 @dataclass
-class IamgineDrivingPipelineConfig(VanillaPipelineConfig):
+class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     """Configuration for pipeline instantiation"""
 
     _target: Type = field(default_factory=lambda: ImagineDrivingPipeline)
@@ -81,7 +81,7 @@ class IamgineDrivingPipelineConfig(VanillaPipelineConfig):
 class ImagineDrivingPipeline(VanillaPipeline):
     """Pipeline for training AD models."""
 
-    def __init__(self, config: IamgineDrivingPipelineConfig, **kwargs):
+    def __init__(self, config: ImagineDrivingPipelineConfig, **kwargs):
         pixel_sampler = config.datamanager.pixel_sampler
         pixel_sampler.patch_size = config.ray_patch_size[0]
         pixel_sampler.patch_scale = config.model.rgb_upsample_factor
@@ -90,7 +90,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
         # Fix type hints
         self.datamanager: ADDataManager = self.datamanager
         self.model: ADModel = self.model
-        self.config: IamgineDrivingPipelineConfig = self.config
+        self.config: ImagineDrivingPipelineConfig = self.config
 
         self.phase = 0
 
@@ -141,8 +141,9 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
             self._run_diffusion
             diffusion_loss = get_diffusion_loss(model_outputs, self.pipe)
-            loss_dict["diffusion_loss"] = diffusion_loss * self.config.diffusion_loss_mult
-            
+            loss_dict["diffusion_loss"] = (
+                diffusion_loss * self.config.diffusion_loss_mult
+            )
 
         return model_outputs, loss_dict, metrics_dict
 
@@ -159,9 +160,18 @@ class ImagineDrivingPipeline(VanillaPipeline):
         self.phase = new_phase
 
     def _run_diffusion():
-        """TODO  """
+        """TODO
+        1. get new pose for the ray buddle
+        2. send the pose to neurad and get output
+        3. get the loss between neurad output and diffusion output
+        """
 
-        return 
+        return
+
+    def _get_new_pose(self, step: int):
+        shift_prob = random.randint(0, 1)
+        if shift_prob > self.config.shift_prob:
+            pose
 
     @profiler.time_function
     def get_eval_loss_dict(self, step: int):
@@ -552,10 +562,9 @@ class ImagineDrivingPipeline(VanillaPipeline):
 def get_diffusion_loss(patch_rgb: Tensor, pipe) -> float:
     # rgb dimension is: patch_size * h * w * c
     # resize patch image to p, c, h,w
-    
+
     patch_rgb = patch_rgb.permute(0, 3, 1, 2)
     diffused_img = pipe.diffuse_sample({"rgb": rgb})["rgb"]
     diffusion_loss = torch.nn.MSELoss()(patch_rgb, diffused_img)
 
     return diffusion_loss
-

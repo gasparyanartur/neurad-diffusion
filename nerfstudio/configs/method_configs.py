@@ -25,14 +25,26 @@ from typing import Dict, Union
 
 import tyro
 
-from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig, ScaledCameraOptimizerConfig
+from nerfstudio.cameras.camera_optimizers import (
+    CameraOptimizerConfig,
+    ScaledCameraOptimizerConfig,
+)
 from nerfstudio.configs.base_config import LoggingConfig, ViewerConfig
-from nerfstudio.configs.external_methods import ExternalMethodDummyTrainerConfig, get_external_methods
+from nerfstudio.configs.external_methods import (
+    ExternalMethodDummyTrainerConfig,
+    get_external_methods,
+)
 from nerfstudio.data.datamanagers.ad_datamanager import ADDataManagerConfig
-from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
+from nerfstudio.data.datamanagers.full_images_datamanager import (
+    FullImageDatamanagerConfig,
+)
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManagerConfig
 from nerfstudio.data.dataparsers.pandaset_dataparser import PandaSetDataParserConfig
-from nerfstudio.engine.optimizers import AdamOptimizerConfig, AdamWOptimizerConfig, RAdamOptimizerConfig
+from nerfstudio.engine.optimizers import (
+    AdamOptimizerConfig,
+    AdamWOptimizerConfig,
+    RAdamOptimizerConfig,
+)
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.models.lidar_nerfacto import LidarNerfactoModelConfig
@@ -42,7 +54,7 @@ from nerfstudio.models.neurad_diffusion import NeuRADDiffusionModelConfig
 from nerfstudio.models.splatfacto import SplatfactoModelConfig
 from nerfstudio.pipelines.ad_pipeline import ADPipelineConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
-from nerfstudio.pipelines.imaginedriving_pipeline import IamgineDrivingPipelineConfig
+from nerfstudio.pipelines.imaginedriving_pipeline import ImagineDrivingPipelineConfig
 from nerfstudio.plugins.registry import discover_methods
 
 method_configs: Dict[str, Union[TrainerConfig, ExternalMethodDummyTrainerConfig]] = {}
@@ -52,7 +64,7 @@ descriptions = {
     "splatfacto": "Gaussian Splatting model",
     "neurad": "Continuously improving version of NeuRAD.",
     "neurad-paper": "NeuRAD with settings matching the paper.",
-    "neuraddiffusion": "NeuRAD with diffusion model", 
+    "neuraddiffusion": "NeuRAD with diffusion model",
 }
 
 method_configs["nerfacto"] = TrainerConfig(
@@ -76,11 +88,15 @@ method_configs["nerfacto"] = TrainerConfig(
     optimizers={
         "proposal_networks": {
             "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.0001, max_steps=200000),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=0.0001, max_steps=200000
+            ),
         },
         "fields": {
             "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.0001, max_steps=200000),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=0.0001, max_steps=200000
+            ),
         },
         "camera_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
@@ -124,7 +140,9 @@ method_configs["nerfacto-big"] = TrainerConfig(
         },
         "fields": {
             "optimizer": RAdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=50000),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-4, max_steps=50000
+            ),
         },
         "camera_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
@@ -152,8 +170,20 @@ method_configs["nerfacto-huge"] = TrainerConfig(
             num_nerf_samples_per_ray=64,
             num_proposal_samples_per_ray=(512, 512),
             proposal_net_args_list=[
-                {"hidden_dim": 16, "log2_hashmap_size": 17, "num_levels": 5, "max_res": 512, "use_linear": False},
-                {"hidden_dim": 16, "log2_hashmap_size": 17, "num_levels": 7, "max_res": 2048, "use_linear": False},
+                {
+                    "hidden_dim": 16,
+                    "log2_hashmap_size": 17,
+                    "num_levels": 5,
+                    "max_res": 512,
+                    "use_linear": False,
+                },
+                {
+                    "hidden_dim": 16,
+                    "log2_hashmap_size": 17,
+                    "num_levels": 7,
+                    "max_res": 2048,
+                    "use_linear": False,
+                },
             ],
             hidden_dim=256,
             hidden_dim_color=256,
@@ -172,7 +202,9 @@ method_configs["nerfacto-huge"] = TrainerConfig(
         },
         "fields": {
             "optimizer": RAdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=50000),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-4, max_steps=50000
+            ),
         },
         "camera_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
@@ -254,10 +286,15 @@ method_configs["splatfacto"] = TrainerConfig(
             "optimizer": AdamOptimizerConfig(lr=0.005, eps=1e-15),
             "scheduler": None,
         },
-        "quats": {"optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15), "scheduler": None},
+        "quats": {
+            "optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15),
+            "scheduler": None,
+        },
         "camera_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=5e-5, max_steps=30000),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=5e-5, max_steps=30000
+            ),
         },
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
@@ -306,10 +343,15 @@ method_configs["splatfacto-big"] = TrainerConfig(
             "optimizer": AdamOptimizerConfig(lr=0.005, eps=1e-15),
             "scheduler": None,
         },
-        "quats": {"optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15), "scheduler": None},
+        "quats": {
+            "optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15),
+            "scheduler": None,
+        },
         "camera_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=5e-5, max_steps=30000),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=5e-5, max_steps=30000
+            ),
         },
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
@@ -325,7 +367,9 @@ method_configs["neurad"] = TrainerConfig(
     mixed_precision=True,
     pipeline=ADPipelineConfig(
         calc_fid_steps=(99999999,),
-        datamanager=ADDataManagerConfig(dataparser=PandaSetDataParserConfig(add_missing_points=True)),
+        datamanager=ADDataManagerConfig(
+            dataparser=PandaSetDataParserConfig(add_missing_points=True)
+        ),
         model=NeuRADModelConfig(
             eval_num_rays_per_chunk=1 << 15,
             camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
@@ -334,23 +378,33 @@ method_configs["neurad"] = TrainerConfig(
     optimizers={
         "trajectory_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=20001, warmup_steps=2500),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-4, max_steps=20001, warmup_steps=2500
+            ),
         },
         "cnn": {
             "optimizer": AdamWOptimizerConfig(lr=1e-3, eps=1e-15, weight_decay=1e-6),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=20001, warmup_steps=2500),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-4, max_steps=20001, warmup_steps=2500
+            ),
         },
         "fields": {
             "optimizer": AdamWOptimizerConfig(lr=1e-2, eps=1e-15, weight_decay=1e-7),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-3, max_steps=20001, warmup_steps=500),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-3, max_steps=20001, warmup_steps=500
+            ),
         },
         "hashgrids": {
             "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-3, max_steps=20001, warmup_steps=500),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-3, max_steps=20001, warmup_steps=500
+            ),
         },
         "camera_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-5, max_steps=20001, warmup_steps=2500),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-5, max_steps=20001, warmup_steps=2500
+            ),
         },
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
@@ -374,9 +428,11 @@ method_configs["imaginedriving"] = TrainerConfig(
     steps_per_save=2000,
     max_num_iterations=20001,
     mixed_precision=True,
-    pipeline=IamgineDrivingPipelineConfig(
+    pipeline=ImagineDrivingPipelineConfig(
         calc_fid_steps=(99999999,),
-        datamanager=ADDataManagerConfig(dataparser=PandaSetDataParserConfig(add_missing_points=True)),
+        datamanager=ADDataManagerConfig(
+            dataparser=PandaSetDataParserConfig(add_missing_points=True)
+        ),
         model=NeuRADModelConfig(
             eval_num_rays_per_chunk=1 << 15,
             camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
@@ -385,23 +441,33 @@ method_configs["imaginedriving"] = TrainerConfig(
     optimizers={
         "trajectory_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=20001, warmup_steps=2500),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-4, max_steps=20001, warmup_steps=2500
+            ),
         },
         "cnn": {
             "optimizer": AdamWOptimizerConfig(lr=1e-3, eps=1e-15, weight_decay=1e-6),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=20001, warmup_steps=2500),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-4, max_steps=20001, warmup_steps=2500
+            ),
         },
         "fields": {
             "optimizer": AdamWOptimizerConfig(lr=1e-2, eps=1e-15, weight_decay=1e-7),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-3, max_steps=20001, warmup_steps=500),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-3, max_steps=20001, warmup_steps=500
+            ),
         },
         "hashgrids": {
             "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-3, max_steps=20001, warmup_steps=500),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-3, max_steps=20001, warmup_steps=500
+            ),
         },
         "camera_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-5, max_steps=20001, warmup_steps=2500),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-5, max_steps=20001, warmup_steps=2500
+            ),
         },
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
@@ -413,13 +479,24 @@ method_configs["imaginedriving"] = TrainerConfig(
 # With scaled camera optimizer (tuned for nuscenes)
 method_configs["neurad-scaleopt"] = deepcopy(method_configs["neurad"])
 method_configs["neurad-scaleopt"].method_name = "neurad-scaleopt"
-method_configs["neurad-scaleopt"].pipeline.model.camera_optimizer = ScaledCameraOptimizerConfig(
-    weights=(1.0, 1.0, 0.01, 0.01, 0.01, 1.0),  # xrot, yrot, zrot, xtrans, ytrans, ztrans
-    trans_l2_penalty=(1e-2, 1e-2, 1e-3),  # x, y, z
+method_configs["neurad-scaleopt"].pipeline.model.camera_optimizer = (
+    ScaledCameraOptimizerConfig(
+        weights=(
+            1.0,
+            1.0,
+            0.01,
+            0.01,
+            0.01,
+            1.0,
+        ),  # xrot, yrot, zrot, xtrans, ytrans, ztrans
+        trans_l2_penalty=(1e-2, 1e-2, 1e-3),  # x, y, z
+    )
 )
 
 
-def _scaled_neurad_training(config: TrainerConfig, scale: float, newname: str) -> TrainerConfig:
+def _scaled_neurad_training(
+    config: TrainerConfig, scale: float, newname: str
+) -> TrainerConfig:
     config = deepcopy(config)
     config.method_name = newname
     config.max_num_iterations = int((config.max_num_iterations - 1) * scale + 1)
@@ -428,21 +505,31 @@ def _scaled_neurad_training(config: TrainerConfig, scale: float, newname: str) -
     config.steps_per_eval_all_images = int(config.steps_per_eval_all_images * scale)
     config.steps_per_save = int(config.steps_per_save * scale)
     assert isinstance(config.pipeline, ADPipelineConfig)
-    config.pipeline.calc_fid_steps = tuple(int(scale * s) for s in config.pipeline.calc_fid_steps)
+    config.pipeline.calc_fid_steps = tuple(
+        int(scale * s) for s in config.pipeline.calc_fid_steps
+    )
     for optimizer in config.optimizers.values():
         optimizer["scheduler"].max_steps = int(optimizer["scheduler"].max_steps * scale)
-        optimizer["scheduler"].warmup_steps = int(optimizer["scheduler"].warmup_steps * scale)
+        optimizer["scheduler"].warmup_steps = int(
+            optimizer["scheduler"].warmup_steps * scale
+        )
     return config
 
 
 # Bigger, better, longer, stronger
-method_configs["neurader"] = _scaled_neurad_training(method_configs["neurad"], 2.5, "neurader")
+method_configs["neurader"] = _scaled_neurad_training(
+    method_configs["neurad"], 2.5, "neurader"
+)
 method_configs["neurader"].method_name = "neurader"
 for optimizer in method_configs["neurader"].optimizers.values():
     optimizer["optimizer"].lr *= 0.5
     optimizer["scheduler"].lr_final *= 0.5
 model: NeuRADModelConfig = method_configs["neurader"].pipeline.model
-for field in (model.field, model.sampling.proposal_field_1, model.sampling.proposal_field_2):
+for field in (
+    model.field,
+    model.sampling.proposal_field_1,
+    model.sampling.proposal_field_2,
+):
     field.grid.static.max_res *= 2
     field.grid.static.base_res *= 2
     field.grid.static.log2_hashmap_size += 1
@@ -450,12 +537,23 @@ for field in (model.field, model.sampling.proposal_field_1, model.sampling.propo
 
 method_configs["neurader-scaleopt"] = deepcopy(method_configs["neurader"])
 method_configs["neurader-scaleopt"].method_name = "neurader-scaleopt"
-method_configs["neurader-scaleopt"].pipeline.model.camera_optimizer = ScaledCameraOptimizerConfig(
-    weights=(1.0, 1.0, 0.01, 0.01, 0.01, 1.0)  # xrot, yrot, -zrot-, -xtrans-, -ytrans-, ztrans
+method_configs["neurader-scaleopt"].pipeline.model.camera_optimizer = (
+    ScaledCameraOptimizerConfig(
+        weights=(
+            1.0,
+            1.0,
+            0.01,
+            0.01,
+            0.01,
+            1.0,
+        )  # xrot, yrot, -zrot-, -xtrans-, -ytrans-, ztrans
+    )
 )
 
 # Even longer training
-method_configs["neuradest"] = _scaled_neurad_training(method_configs["neurader"], 3, "neuradest")
+method_configs["neuradest"] = _scaled_neurad_training(
+    method_configs["neurader"], 3, "neuradest"
+)
 method_configs["neuradest-scaleopt"] = _scaled_neurad_training(
     method_configs["neurader-scaleopt"], 3, "neuradest-scaleopt"
 )
@@ -473,7 +571,9 @@ for f in method_configs["neurad-paper"].pipeline.model.fields:  # type: ignore
     f.flip_prob = 0.0
 
 
-def merge_methods(methods, method_descriptions, new_methods, new_descriptions, overwrite=True):
+def merge_methods(
+    methods, method_descriptions, new_methods, new_descriptions, overwrite=True
+):
     """Merge new methods and descriptions into existing methods and descriptions.
     Args:
         methods: Existing methods.
@@ -495,25 +595,36 @@ def merge_methods(methods, method_descriptions, new_methods, new_descriptions, o
 def sort_methods(methods, method_descriptions):
     """Sort methods and descriptions by method name."""
     methods = OrderedDict(sorted(methods.items(), key=lambda x: x[0]))
-    method_descriptions = OrderedDict(sorted(method_descriptions.items(), key=lambda x: x[0]))
+    method_descriptions = OrderedDict(
+        sorted(method_descriptions.items(), key=lambda x: x[0])
+    )
     return methods, method_descriptions
 
 
 all_methods, all_descriptions = method_configs, descriptions
 # Add discovered external methods
-all_methods, all_descriptions = merge_methods(all_methods, all_descriptions, *discover_methods())
+all_methods, all_descriptions = merge_methods(
+    all_methods, all_descriptions, *discover_methods()
+)
 all_methods, all_descriptions = sort_methods(all_methods, all_descriptions)
 
 # Register all possible external methods which can be installed with Nerfstudio
 all_methods, all_descriptions = merge_methods(
-    all_methods, all_descriptions, *sort_methods(*get_external_methods()), overwrite=False
+    all_methods,
+    all_descriptions,
+    *sort_methods(*get_external_methods()),
+    overwrite=False,
 )
 
-AnnotatedBaseConfigUnion = tyro.conf.SuppressFixed[  # Don't show unparseable (fixed) arguments in helptext.
-    tyro.conf.FlagConversionOff[
-        tyro.extras.subcommand_type_from_defaults(defaults=all_methods, descriptions=all_descriptions)
+AnnotatedBaseConfigUnion = (
+    tyro.conf.SuppressFixed[  # Don't show unparseable (fixed) arguments in helptext.
+        tyro.conf.FlagConversionOff[
+            tyro.extras.subcommand_type_from_defaults(
+                defaults=all_methods, descriptions=all_descriptions
+            )
+        ]
     ]
-]
+)
 """Union[] type over config types, annotated with default instances for use with
 tyro.cli(). Allows the user to pick between one of several base configurations, and
 then override values in it."""
