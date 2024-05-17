@@ -367,8 +367,6 @@ def load_img2img_model(
 
 DiffusionModel.load_model = load_img2img_model
 
-
-@lru_cache(maxsize=4)
 def tokenize_prompt(tokenizer, prompt):
     text_inputs = tokenizer(
         prompt,

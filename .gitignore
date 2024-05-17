@@ -194,3 +194,4 @@ camera_paths/
 masks/
 *.sif
 .vscode*
+neurad-env/*

@@ -18,8 +18,10 @@ from pathlib import Path
 from time import time
 from typing import Dict, List, Optional, Tuple, Type
 import random
+from functools import lru_cache
 
 import torch
+from torch import Tensor
 from PIL import Image
 from rich.progress import (
     BarColumn,
@@ -171,7 +173,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
     def _get_new_pose(self, step: int):
         shift_prob = random.randint(0, 1)
         if shift_prob > self.config.shift_prob:
-            pose
+            pose = None
 
     @profiler.time_function
     def get_eval_loss_dict(self, step: int):
@@ -564,7 +566,7 @@ def get_diffusion_loss(patch_rgb: Tensor, pipe) -> float:
     # resize patch image to p, c, h,w
 
     patch_rgb = patch_rgb.permute(0, 3, 1, 2)
-    diffused_img = pipe.diffuse_sample({"rgb": rgb})["rgb"]
+    diffused_img = pipe.diffuse_sample({"rgb": patch_rgb})["rgb"]
     diffusion_loss = torch.nn.MSELoss()(patch_rgb, diffused_img)
 
     return diffusion_loss
