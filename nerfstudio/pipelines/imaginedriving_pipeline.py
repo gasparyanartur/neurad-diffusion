@@ -68,7 +68,7 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     diffusion_loss_mult: float = 0.1
 
     diffusion_config_path: str = (
-        "/home/s0001899/workspace/neurad-studio/nerfstudio/notebooks/diffusion-pandaset-real.yml"
+        "configs/diffusion_model_configs.yml"
     )
     load_diffusion_lora: bool = False
     lora_weight_path: str = None
