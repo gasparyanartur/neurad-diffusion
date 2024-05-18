@@ -1,0 +1,13 @@
+ad_datamanager:
+    inherits from image_lidar_datamanager
+
+image_lidar_datamanger:
+    calls raybundle by using image_lidar_dataprocesor
+
+image_lidar_dataprocessor:
+    keeps an input_dataset, and a set of cameras
+    When used, 
+
+input_dataset:
+    keeps track of images, and metadata about images, such as cameras.
+    Uses a specific dataparser for each dataset
