@@ -429,7 +429,7 @@ method_configs["imaginedriving"] = TrainerConfig(
     max_num_iterations=20001,
     mixed_precision=True,
     pipeline=ImagineDrivingPipelineConfig(
-        calc_fid_steps=(99999999,),
+        calc_fid_steps=(10000, 20000),
         datamanager=ADDataManagerConfig(
             dataparser=PandaSetDataParserConfig(add_missing_points=True)
         ),

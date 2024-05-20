@@ -49,7 +49,6 @@ from nerfstudio.model_components.losses import (
     VGGPerceptualLossPix2Pix,
     distortion_loss,
     zipnerf_interlevel_loss,
-    get_diffusion_loss,
 )
 from nerfstudio.model_components.ray_samplers import (
     PowerSampler,

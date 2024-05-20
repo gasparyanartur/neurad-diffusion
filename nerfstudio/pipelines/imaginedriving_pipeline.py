@@ -60,7 +60,7 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     model: ADModelConfig = field(default_factory=ADModelConfig)
     """specifies the model config"""
     calc_fid_steps: Tuple[int, ...] = (
-        20000,
+        5000, 10000, 15000, 20000,
     )  # NOTE: must also be an eval step for this to work
     """Whether to calculate FID for lane shifted images."""
     ray_patch_size: Tuple[int, int] = (32, 32)
@@ -105,8 +105,6 @@ class ImagineDrivingPipeline(VanillaPipeline):
         self.model: ADModel = self.model
         self.config: ImagineDrivingPipelineConfig = self.config
 
-        self.phase = 0
-
         # Disable ray drop classification if we do not add missing points
         if not self.datamanager.dataparser.config.add_missing_points:
             self.model.disable_ray_drop()
@@ -134,7 +132,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
         device = ray_bundle.origins.device
 
         if (
-            self.is_augment_phase(step) and 
+            self._is_augment_phase(step) and 
             (augment_event := (torch.rand(6, device=device) < torch.Tensor(self.config.augment_probs, device=device)).any()) 
         ):
             augmented_ray_bundle = self._augment_ray_bundle(

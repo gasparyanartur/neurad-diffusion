@@ -1,10 +1,10 @@
 model:
   model_config_params:
     model_name: sd_base
-    base_model_id: "runwayml/stable-diffusion-v1-5"
+    base_model_id: "stabilityai/stable-diffusion-2-1"
     low_mem_mode: True
     compile_model: False
 
   model_forward_params: 
-    base_strength: 0.1
-    base_num_steps: 50
+    base_strength: 0.2
+    base_num_steps: 20
