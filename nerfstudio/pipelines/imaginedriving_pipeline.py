@@ -133,18 +133,18 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
         if (
             self._is_augment_phase(step) and 
-            (augment_event := (torch.rand(6, device=device) < torch.Tensor(self.config.augment_probs, device=device)).any()) 
+            (augment_event := (torch.rand(6) < torch.tensor(self.config.augment_probs)).any()) 
         ):
-            augmented_ray_bundle = self._augment_ray_bundle(
+            augmented_ray_bundle = augment_ray_bundle(
                 ray_bundle,
-                self._get_augment_strength(step, device) * augment_event,
+                self._get_augment_strength(step, device) * augment_event.to(device=device),
                 self.datamanager.train_dataset.cameras,
             )
             model_outputs = self._model(augmented_ray_bundle, patch_size=self.config.ray_patch_size)
             diffusion_loss = get_diffusion_loss(model_outputs, self.pipe)
-            loss_dict["diffusion_loss"] = (
-                diffusion_loss * self.config.diffusion_loss_mult
-            )
+            loss_dict = {
+                "diffusion_loss": diffusion_loss * self.config.diffusion_loss_mult
+            }
 
         else:
             model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
@@ -170,7 +170,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
     def _get_augment_strength(self, step: int, device: torch.device) -> Tensor:
         # TODO: Implement augment strength scheduling
-        max_strength = torch.Tensor(self.config.augment_max_strength, device=device)
+        max_strength = torch.tensor(self.config.augment_max_strength, device=device)
         strength = max_strength - 2 * torch.rand_like(max_strength, device=device) * max_strength
 
         return 1.0 * strength

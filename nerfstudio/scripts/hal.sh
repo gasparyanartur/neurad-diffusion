@@ -1,20 +1,21 @@
 #!/bin/bash
+#
 #SBATCH --nodes 1
 #SBATCH --gres=gpu:1
 #SBATCH -c 32
 #SBATCH --mem 100G
 #SBATCH --time 0-05:00:00
-#SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/neurad_imaginedriving/%j.out
+#SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/neurad_imaginedriving/slurm/%j.out
 #SBATCH --partition zprodlow
 #SBATCH --array=1-2
 #SBATCH --job-name=neurad_imaginedriving
 
 export METHOD=${METHOD:-neurad}
 export DATASET=${DATASET:-pandaset}
-export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/$DATASET-$METHOD"}
+export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/neurad_imaginedriving/$DATASET-$METHOD/$SLURM_JOB_ID"}
 export WANDB_RUN_GROUP=$name
 export WANDB_ENTITY=${WANDB_ENTITY:-arturruiqi}
-export WANDB_PROJECT=${WANDB_PROJECT:-master-thesis} 
+export WANDB_PROJECT=${WANDB_PROJECT:-neurad_imaginedriving} 
 
 if [ "$DATASET" == "zod" ]; then
     DATASET_ROOT="/staging/dataset_donation/round_2"

@@ -3,7 +3,7 @@
 #SBATCH --gpus 1
 #SBATCH -c 32
 #SBATCH --mem 100G
-#SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/neurad_imaginedriving/%j_%a.out
+#SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/neurad_imaginedriving/slurm/%j_%a.out
 #SBATCH --array=1-10
 #SBATCH --job-name=neurad_imaginedriving
 #SBATCH --partition zprodlow
@@ -19,10 +19,10 @@ if [ -z ${wandb_api_key} ]; then
     exit 1;
 fi
 
-method=${METHOD:-neuraddiffusion}
+method=${METHOD:-imaginedriving}
 dataset=${DATASET:-pandaset}
 # Specify the path to the config file
-id_to_seq=nerfstudio/scripts/arrays/${dataset}_id_to_seq${SUFFIX}.txt
+id_to_seq=nerfstudio/scripts/arrays/${dataset}_id_to_seq${ARRAY_SUFFIX}.txt
 
 # Extract the sample name for the current $SLURM_ARRAY_TASK_ID
 seq=$(awk -v ArrayTaskID=$SLURM_ARRAY_TASK_ID '$1==ArrayTaskID {print $2}' $id_to_seq)
@@ -32,9 +32,8 @@ seq=$(awk -v ArrayTaskID=$SLURM_ARRAY_TASK_ID '$1==ArrayTaskID {print $2}' $id_t
 echo "Starting training for $name with extra args ${@:2}"
 echo "Sequence $seq"
 
-export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/$dataset-$method"}
-output_dir=${OUTPUT_DIR:="outputs/$dataset-$method"}
-mkdir -p $output_dir
+export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/neurad_imaginedriving/$DATASET-$METHOD/$SLURM_JOB_ID"}
+mkdir -p $OUTPUT_DIR
 
 
 image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-03_05_24.sif"}
@@ -69,7 +68,7 @@ singularity exec --nv \
     $image_path \
     python3.10 -u nerfstudio/scripts/train.py \
     $method \
-    --output-dir $output_dir \
+    --output-dir $OUTPUT_DIR \
     --vis wandb \
     --experiment-name $name-$seq \
     $MAYBE_RESUME_CMD \
