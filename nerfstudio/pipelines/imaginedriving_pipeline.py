@@ -43,9 +43,10 @@ from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManage
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.utils import profiler
-from nerfstudio.models.diffusion import read_yaml, load_img2img_model
+from nerfstudio.models.diffusion import read_yaml, load_img2img_model, SDPipe
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.cameras.cameras import Cameras
+
 
 
 @dataclass
@@ -71,8 +72,9 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     max_shift: float = 4.0
     diffusion_loss_mult: float = 0.1
 
-    augment_probs: Tuple[float, float, float, float, float, float] = (0.1, 0, 0, 0, 0, 0)
+    augment_probs: Tuple[float, float, float, float, float, float] = (0.1, 0, 0, 0, 0, 0)  
     """Probability of augmenting each dimension (Px, Py, Pz, Rx, Ry, Rz)"""
+     # Note: rotate left/right is Px, horizontal shift is Ry
 
     augment_max_strength: Tuple[float, float, float, float, float, float] = (5.0, 0, 0, 0, 0, 0)
 
@@ -129,14 +131,15 @@ class ImagineDrivingPipeline(VanillaPipeline):
         # Regular forward pass and loss calc
 
         ray_bundle, batch = self.datamanager.next_train(step)
+        device = ray_bundle.origins.device
 
         if (
             self.is_augment_phase(step) and 
-            (augment_event := (torch.rand(6) < torch.Tensor(self.config.augment_probs)).any()) 
+            (augment_event := (torch.rand(6, device=device) < torch.Tensor(self.config.augment_probs, device=device)).any()) 
         ):
             augmented_ray_bundle = self._augment_ray_bundle(
                 ray_bundle,
-                self._get_augment_strength(step) * augment_event,
+                self._get_augment_strength(step, device) * augment_event,
                 self.datamanager.train_dataset.cameras,
             )
             model_outputs = self._model(augmented_ray_bundle, patch_size=self.config.ray_patch_size)
@@ -167,21 +170,16 @@ class ImagineDrivingPipeline(VanillaPipeline):
         return model_outputs, loss_dict, metrics_dict
 
 
-
-
-    def _get_augment_strength(self, step: int) -> Tensor:
+    def _get_augment_strength(self, step: int, device: torch.device) -> Tensor:
         # TODO: Implement augment strength scheduling
-        return 1.0 * torch.Tensor(self.config.augment_max_strength)
+        max_strength = torch.Tensor(self.config.augment_max_strength, device=device)
+        strength = max_strength - 2 * torch.rand_like(max_strength, device=device) * max_strength
+
+        return 1.0 * strength
 
 
-    def _run_diffusion():
-        """TODO
-        1. get new pose for the ray buddle
-        2. send the pose to neurad and get output
-        3. get the loss between neurad output and diffusion output
-        """
-
-        return
+    def _is_augment_phase(self, step: int) -> bool:
+        return step >= self.config.diffusion_phase_step
 
 
     @profiler.time_function
@@ -570,7 +568,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
         self.model.dynamic_actors.actor_editing["lateral"] = 0
 
 
-def get_diffusion_loss(patch_rgb: Tensor, pipe) -> float:
+def get_diffusion_loss(patch_rgb: Tensor, pipe: SDPipe) -> float:
     # TODO: Refactor this to , split image and loss so that we can log diffusion images
 
     # rgb dimension is: patch_size * h * w * c
@@ -594,14 +592,9 @@ def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: FloatTensor, cam
 
     # TODO: Project cam2world
     is_cam = ~ray_bundle.metadata["is_lidar"].flatten()                   # B, 1
-    print(is_cam.shape)
-    print(ray_bundle.camera_indices.shape)
     cam_idxs = ray_bundle.camera_indices[is_cam, 0].cpu()     # Bc
-    print(cam_idxs.shape)
     c2w = cameras.camera_to_worlds[cam_idxs]                    # Bc, 3, 4
     
-    #translation = c2w[..., :3] @ aug_translation + c2w[..., 3]  # 
-    print(c2w[..., :3].shape)
     translation = torch.einsum("Brw,w->Br", c2w[..., :3], aug_translation) + c2w[..., :3, 3]
     rotation = torch.einsum("Brw,w->Br", c2w[..., :3], aug_rotation)
 
