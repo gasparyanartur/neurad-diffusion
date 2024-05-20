@@ -19,9 +19,10 @@ from time import time
 from typing import Dict, List, Optional, Tuple, Type
 import random
 from functools import lru_cache
+from copy import deepcopy
 
 import torch
-from torch import Tensor
+from torch import Tensor, FloatTensor
 from PIL import Image
 from rich.progress import (
     BarColumn,
@@ -43,6 +44,8 @@ from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.utils import profiler
 from nerfstudio.models.diffusion import read_yaml, load_img2img_model
+from nerfstudio.cameras.rays import RayBundle
+from nerfstudio.cameras.cameras import Cameras
 
 
 @dataclass
@@ -62,10 +65,16 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     ray_patch_size: Tuple[int, int] = (32, 32)
     """Size of the ray patches to sample from the image during training (for camera rays only)."""
 
-    change_phase_step: int = 200
+    diffusion_phase_step: int = 200
     shift_prob: float = 0.2
-    rotate_prob: float = 0.2
+    rotate_prob: float = 0.0
+    max_shift: float = 4.0
     diffusion_loss_mult: float = 0.1
+
+    augment_probs: Tuple[float, float, float, float, float, float] = (0.1, 0, 0, 0, 0, 0)
+    """Probability of augmenting each dimension (Px, Py, Pz, Rx, Ry, Rz)"""
+
+    augment_max_strength: Tuple[float, float, float, float, float, float] = (5.0, 0, 0, 0, 0, 0)
 
     diffusion_config_path: str = (
         "configs/diffusion_model_configs.yml"
@@ -119,47 +128,51 @@ class ImagineDrivingPipeline(VanillaPipeline):
         """
         # Regular forward pass and loss calc
 
-        self._update_phase(step)
-
         ray_bundle, batch = self.datamanager.next_train(step)
-        model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
-        metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
 
-        if (actors := self.model.dynamic_actors).config.optimize_trajectories:
-            pos_norm = (actors.actor_positions - actors.initial_positions).norm(dim=-1)
-            metrics_dict["traj_opt_translation"] = (
-                pos_norm[pos_norm > 0].mean().nan_to_num()
+        if (
+            self.is_augment_phase(step) and 
+            (augment_event := (torch.rand(6) < torch.Tensor(self.config.augment_probs)).any()) 
+        ):
+            augmented_ray_bundle = self._augment_ray_bundle(
+                ray_bundle,
+                self._get_augment_strength(step) * augment_event,
+                self.datamanager.train_dataset.cameras,
             )
-            metrics_dict["traj_opt_rotation"] = (
-                (actors.actor_rotations_6d - actors.initial_rotations_6d)[pos_norm > 0]
-                .norm(dim=-1)
-                .mean()
-                .nan_to_num()
-            )
-
-        loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
-
-        if self.phase == 1:
-
-            self._run_diffusion
+            model_outputs = self._model(augmented_ray_bundle, patch_size=self.config.ray_patch_size)
             diffusion_loss = get_diffusion_loss(model_outputs, self.pipe)
             loss_dict["diffusion_loss"] = (
                 diffusion_loss * self.config.diffusion_loss_mult
             )
 
+        else:
+            model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
+            metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
+
+            if (actors := self.model.dynamic_actors).config.optimize_trajectories:
+                pos_norm = (actors.actor_positions - actors.initial_positions).norm(dim=-1)
+                metrics_dict["traj_opt_translation"] = (
+                    pos_norm[pos_norm > 0].mean().nan_to_num()
+                )
+                metrics_dict["traj_opt_rotation"] = (
+                    (actors.actor_rotations_6d - actors.initial_rotations_6d)[pos_norm > 0]
+                    .norm(dim=-1)
+                    .mean()
+                    .nan_to_num()
+                )
+
+            loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+
+
         return model_outputs, loss_dict, metrics_dict
 
-    def _update_phase(self, step: int):
-        """TODO: later changt to use more complicate strategy"""
-        new_phase = 0 if step < self.config.change_phase_step else 1
 
-        if self.phase == new_phase:
-            return
 
-        if new_phase == 1:
-            """TODO need to change data?---datamanager and also the model, loss? need to be decided later"""
 
-        self.phase = new_phase
+    def _get_augment_strength(self, step: int) -> Tensor:
+        # TODO: Implement augment strength scheduling
+        return 1.0 * torch.Tensor(self.config.augment_max_strength)
+
 
     def _run_diffusion():
         """TODO
@@ -170,10 +183,6 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
         return
 
-    def _get_new_pose(self, step: int):
-        shift_prob = random.randint(0, 1)
-        if shift_prob > self.config.shift_prob:
-            pose = None
 
     @profiler.time_function
     def get_eval_loss_dict(self, step: int):
@@ -562,6 +571,8 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
 
 def get_diffusion_loss(patch_rgb: Tensor, pipe) -> float:
+    # TODO: Refactor this to , split image and loss so that we can log diffusion images
+
     # rgb dimension is: patch_size * h * w * c
     # resize patch image to p, c, h,w
 
@@ -570,3 +581,31 @@ def get_diffusion_loss(patch_rgb: Tensor, pipe) -> float:
     diffusion_loss = torch.nn.MSELoss()(patch_rgb, diffused_img)
 
     return diffusion_loss
+
+
+
+def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: FloatTensor, cameras: Cameras) -> RayBundle:
+    print(cameras.camera_to_worlds.shape)
+    new_ray_bundle = deepcopy(ray_bundle)   # In case ground truth needs original ray_bundle
+
+    # TODO: Considering using a different one for each camera.
+    aug_translation = augment_strength[..., :3]                 # 3
+    aug_rotation = augment_strength[..., 3:]                    # 3
+
+    # TODO: Project cam2world
+    is_cam = ~ray_bundle.metadata["is_lidar"].flatten()                   # B, 1
+    print(is_cam.shape)
+    print(ray_bundle.camera_indices.shape)
+    cam_idxs = ray_bundle.camera_indices[is_cam, 0].cpu()     # Bc
+    print(cam_idxs.shape)
+    c2w = cameras.camera_to_worlds[cam_idxs]                    # Bc, 3, 4
+    
+    #translation = c2w[..., :3] @ aug_translation + c2w[..., 3]  # 
+    print(c2w[..., :3].shape)
+    translation = torch.einsum("Brw,w->Br", c2w[..., :3], aug_translation) + c2w[..., :3, 3]
+    rotation = torch.einsum("Brw,w->Br", c2w[..., :3], aug_rotation)
+
+    new_ray_bundle.origins[is_cam.flatten()] += translation
+    new_ray_bundle.directions[is_cam.flatten()] += rotation
+    
+    return new_ray_bundle
