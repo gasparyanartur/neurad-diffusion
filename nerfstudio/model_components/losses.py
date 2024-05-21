@@ -31,8 +31,6 @@ from nerfstudio.utils.math import masked_reduction, normalized_depth_scale_and_s
 
 from pathlib import Path
 
-from nerfstudio.models.diffusion import load_img2img_model, read_yaml
-
 
 L1Loss = nn.L1Loss
 MSELoss = nn.MSELoss

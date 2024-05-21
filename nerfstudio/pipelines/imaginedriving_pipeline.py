@@ -43,7 +43,7 @@ from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManage
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.utils import profiler
-from nerfstudio.models.diffusion import read_yaml, load_img2img_model, SDPipe
+from nerfstudio.models.diffusion import read_yaml, SDPipe, load_diffusion_model
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.cameras.cameras import Cameras
 
@@ -87,8 +87,6 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     diffusion_config_path: str = (
         "configs/diffusion_model_configs.yml"
     )
-    load_diffusion_lora: bool = False
-    lora_weight_path: str = None
 
     def __post_init__(self) -> None:
         assert (
@@ -117,11 +115,9 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
         self.fid = None
         self.diffusion_config = read_yaml(config.diffusion_config_path)
-        self.pipe = load_img2img_model(
+        self.pipe = load_diffusion_model(
             self.diffusion_config["model"]["model_config_params"]
         )
-        if config.load_diffusion_lora:
-            self.pipe.base_pipe.lord_lora_weights(config.lora_weight_path)
 
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
@@ -147,25 +143,30 @@ class ImagineDrivingPipeline(VanillaPipeline):
                 self.datamanager.train_dataset.cameras,
             )
             model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
+            reduced_model_outputs = {"rgb": model_outputs["rgb"]}   
             batch = get_diffusion_output(model_outputs, self.pipe)
-            
+
+            metrics_dict = self.model.get_metrics_dict(reduced_model_outputs, batch)
+            loss_dict = self.model.get_loss_dict(reduced_model_outputs, batch, metrics_dict)
+
         else:
             model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
+            metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
 
-        metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
-        if (actors := self.model.dynamic_actors).config.optimize_trajectories:
-            pos_norm = (actors.actor_positions - actors.initial_positions).norm(dim=-1)
-            metrics_dict["traj_opt_translation"] = (
-                pos_norm[pos_norm > 0].mean().nan_to_num()
-            )
-            metrics_dict["traj_opt_rotation"] = (
-                (actors.actor_rotations_6d - actors.initial_rotations_6d)[pos_norm > 0]
-                .norm(dim=-1)
-                .mean()
-                .nan_to_num()
-            )
+            if (actors := self.model.dynamic_actors).config.optimize_trajectories:
+                pos_norm = (actors.actor_positions - actors.initial_positions).norm(dim=-1)
+                metrics_dict["traj_opt_translation"] = (
+                    pos_norm[pos_norm > 0].mean().nan_to_num()
+                )
+                metrics_dict["traj_opt_rotation"] = (
+                    (actors.actor_rotations_6d - actors.initial_rotations_6d)[pos_norm > 0]
+                    .norm(dim=-1)
+                    .mean()
+                    .nan_to_num()
+                )
 
-        loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+            loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+
         return model_outputs, loss_dict, metrics_dict
 
 
@@ -574,21 +575,10 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
 
 def get_diffusion_output(model_outputs, pipe: SDPipe) -> Dict[str, Any]:
-    # TODO: Refactor this to , split image and loss so that we can log diffusion images
-
-    # rgb dimension is: patch_size * h * w * c
-    # resize patch image to p, c, h,w
-
-    patch_rgb = model_outputs["rgb"]
-    patch_rgb = patch_rgb.permute(0, 3, 1, 2)
-    diffused_img = pipe.diffuse_sample({"rgb": patch_rgb})["rgb"]
-    diffused_img = diffused_img.permute(0, 2, 3, 1)
-    diffusion_outputs = {
-        "image": diffused_img
+    diffusion_outputs = pipe.diffuse_sample(model_outputs)
+    return {
+        "image": diffusion_outputs["rgb"]
     }
-    
-    return diffusion_outputs
-
 
 
 def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: FloatTensor, cameras: Cameras) -> RayBundle:

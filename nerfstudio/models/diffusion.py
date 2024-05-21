@@ -1,6 +1,6 @@
-from typing import Any
+from typing import Any, Dict,Tuple
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable 
 from dataclasses import dataclass
 from pathlib import Path
 import logging
@@ -36,7 +36,7 @@ def get_device():
         return torch.device("cpu")
 
 
-def batch_if_not_iterable(item: any, single_dim: int = 3) -> Iterable[any]:
+def batch_if_not_iterable(item: any, single_dim: int = 3) -> Iterable[Any]:
     if item is None:
         return item
 
@@ -85,12 +85,30 @@ def read_image(
     return img
 
 
+
+def load_diffusion_model(
+    model_config_params: Dict[str, Any], device=get_device()
+) -> "DiffusionModel":
+    logging.info(f"Loading diffusion model...")
+
+    model_name = model_config_params.get("model_name")
+    constructor = model_name_to_constructor.get(model_name)
+    if not constructor:
+        raise NotImplementedError
+
+    model = constructor(configs=model_config_params, device=device)
+    logging.info(f"Finished loading diffusion model")
+    return model
+
+
 @dataclass
 class ModelId:
     sd_v1_5 = "runwayml/stable-diffusion-v1-5"
+    sd_v2_1 = "stabilityai/stable-diffusion-2-1"
     sdxl_base_v1_0 = "stabilityai/stable-diffusion-xl-base-1.0"
     sdxl_refiner_v1_0 = "stabilityai/stable-diffusion-xl-refiner-1.0"
     sdxl_turbo_v1_0 = "stabilityai/sdxl-turbo"
+    mock = "mock"
 
 
 sdxl_models = {
@@ -98,7 +116,7 @@ sdxl_models = {
     ModelId.sdxl_refiner_v1_0,
     ModelId.sdxl_turbo_v1_0,
 }
-sd_models = {ModelId.sd_v1_5}
+sd_models = {ModelId.sd_v1_5, ModelId.mock}
 
 
 def is_sdxl_model(model_id: str) -> bool:
@@ -127,176 +145,141 @@ def prep_model(
 
 
 class DiffusionModel(ABC):
-    load_model = None
-
     @abstractmethod
-    def diffuse_sample(self, sample: dict[str, Any], *args, **kwargs) -> dict[str, Any]:
+    def diffuse_sample(self, sample: Dict[str, Any], *args, **kwargs) -> Dict[str, Any]:
         raise NotImplementedError
 
-    @property
-    @abstractmethod
-    def vae(self):
-        raise NotImplementedError
 
-    @property
-    @abstractmethod
-    def image_processor(self):
-        raise NotImplementedError
+class MockPipe(DiffusionModel):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__()
 
+    def diffuse_sample(
+        self,
+        sample: Dict[str, Any],
+        *args,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        image = sample["rgb"]
+
+        if len(image.shape) == 3:
+            image = image[None, ...]
+
+        return {
+            "rgb": image
+        }
 
 class SDPipe(DiffusionModel):
     def __init__(
         self,
-        configs: dict[str, Any] = None,
+        configs: Dict[str, Any] = None,
         device: torch.device = get_device(),
     ) -> None:
         super().__init__()
         if configs is None:
             configs = {}
 
-        base_model_id = configs.get("base_model_id", ModelId.sd_v1_5)
-        refiner_model_id = configs.get("refiner_model_id", None)
+        model_id = configs.get("model_id", ModelId.sd_v2_1)
         low_mem_mode = configs.get("low_mem_mode", False)
         compile_model = configs.get("compile_model", False)
 
-        self.use_refiner = refiner_model_id is not None
-
-        if self.use_refiner:
-            raise NotImplementedError
-
-        self.base_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
-            base_model_id,
+        self.pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+            model_id,
             torch_dtype=torch.float16,
             variant="fp16",
             use_safetensors=True,
         )
-        self.base_pipe = prep_model(
-            self.base_pipe,
+
+        if lora_weights := configs.get("lora_weights"):
+            self.pipe.load_lora_weights(lora_weights)
+
+        self.pipe = prep_model(
+            self.pipe,
             low_mem_mode=low_mem_mode,
             device=device,
             compile=compile_model,
         )
-        self.base_pipe.safety_checker = None
-        self.base_pipe.requires_safety_checker = False
+        self.pipe.safety_checker = None
+        self.pipe.requires_safety_checker = False
 
-        if self.use_refiner:
-            self.refiner_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
-                refiner_model_id,
-                text_encoder_2=self.base_pipe.text_encoder_2,
-                vae=self.base_pipe.vae,
-                torch_dtype=torch.float16,
-                use_safetensors=True,
-                variant="fp16",
-            )
-            self.refiner_pipe = prep_model(
-                self.refiner_pipe,
-                low_mem_mode=low_mem_mode,
-                device=device,
-                compile=compile_model,
-            )
-        self.tokenizer = self.base_pipe.tokenizer
-        self.text_encoder = self.base_pipe.text_encoder
         self.device = device
 
     def diffuse_sample(
         self,
-        sample: dict[str, Any],
-        base_strength: float = 0.2,
-        refiner_strength: float = 0.2,
-        base_denoising_start: int = None,
-        base_denoising_end: int = None,
-        refiner_denoising_start: int = None,
-        refiner_denoising_end: int = None,
-        original_size: tuple[int, int] = (1024, 1024),
-        target_size: tuple[int, int] = (1024, 1024),
+        sample: Dict[str, Any],
+        strength: float = 0.2,
+        denoising_start: int = None,
+        denoising_end: int = None,
+        original_size: Tuple[int, int] = (1024, 1024),
+        target_size: Tuple[int, int] = (1024, 1024),
         prompt: str = default_prompt,
         negative_prompt: str = default_negative_prompt,
-        base_num_steps: int = 50,
-        refiner_num_steps: int = 50,
-        base_gen: torch.Generator | Iterable[torch.Generator] = None,
-        refiner_gen: torch.Generator | Iterable[torch.Generator] = None,
-        base_kwargs: dict[str, any] = None,
-        refiner_kwargs: dict[str, any] = None,
+        num_steps: int = 50,
+        gen: torch.Generator | Iterable[torch.Generator] = None,
+        kwargs: Dict[str, Any] = None,
     ):
         image = sample["rgb"]
+
+        if len(image.shape) == 3:
+            image = image[None, ...]
+
         batch_size = len(image)
 
-        image = batch_if_not_iterable(image)
-        base_gen = batch_if_not_iterable(base_gen)
-        refiner_gen = batch_if_not_iterable(refiner_gen)
-        validate_same_len(image, base_gen, refiner_gen)
+        if image.size(1) == 3:
+            channel_first = True
+        elif image.size(3) == 3:
+            channel_first = False
+        else:
+            raise ValueError(f"Image needs to be BCHW or BHWC, received {image.shape}")
 
-        if base_gen:
-            base_gen = base_gen * batch_size
+        if not channel_first:        
+            image = image.permute(0, 3, 1, 2)       # Diffusion model is channel first
 
-        if refiner_gen:
-            refiner_gen = refiner_gen * batch_size
-
-        base_kwargs = base_kwargs or {}
+        kwargs = kwargs or {}
         if prompt is not None:
             with torch.no_grad():
-                tokens = tokenize_prompt(self.tokenizer, prompt).to(self.device)
+                tokens = tokenize_prompt(self.pipe.tokenizer, prompt).to(self.device)
                 prompt_embeds = encode_tokens(
-                    self.text_encoder, tokens, using_sdxl=False
+                    self.pipe.text_encoder, tokens, using_sdxl=False
                 )["embeds"]
             prompt_embeds = prompt_embeds.expand(batch_size, -1, -1)
 
         if negative_prompt is not None:
             with torch.no_grad():
-                negative_tokens = tokenize_prompt(self.tokenizer, negative_prompt).to(
+                negative_tokens = tokenize_prompt(self.pipe.tokenizer, negative_prompt).to(
                     self.device
                 )
                 negative_prompt_embeds = encode_tokens(
-                    self.text_encoder, negative_tokens, using_sdxl=False
+                    self.pipe.text_encoder, negative_tokens, using_sdxl=False
                 )["embeds"]
 
             negative_prompt_embeds = negative_prompt_embeds.expand(batch_size, -1, -1)
-        image = self.base_pipe(
+
+        image = self.pipe(
             image=image,
-            generator=base_gen,
-            output_type="latent" if self.use_refiner else "pt",
-            strength=base_strength,
-            denoising_start=base_denoising_start,
-            denoising_end=base_denoising_end,
-            num_inference_steps=base_num_steps,
+            generator=gen,
+            output_type="pt",
+            strength=strength,
+            denoising_start=denoising_start,
+            denoising_end=denoising_end,
+            num_inference_steps=num_steps,
             original_size=original_size,
             target_size=target_size,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
-            **base_kwargs,
+            **kwargs,
         ).images
 
-        if self.use_refiner:
-            refiner_kwargs = refiner_kwargs or {}
-            image = self.refiner_pipe(
-                image=image,
-                generator=refiner_gen,
-                output_type="pt",
-                strength=refiner_strength,
-                denoising_start=refiner_denoising_start,
-                denoising_end=refiner_denoising_end,
-                num_inference_steps=refiner_num_steps,
-                original_size=original_size,
-                target_size=target_size,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                **refiner_kwargs,
-            ).images
+        if not channel_first:
+            image = image.permute(0, 2, 3, 1)
 
         return {"rgb": image}
 
-    @property
-    def vae(self) -> AutoencoderKL:
-        return self.base_pipe.vae
-
-    @property
-    def image_processor(self) -> VaeImageProcessor:
-        return self.base_pipe.image_processor
 
 
 model_name_to_constructor = {
     "sd_base": SDPipe,
-    "sd_full": SDPipe,
+    "mock": MockPipe,
 }
 
 
@@ -350,22 +333,7 @@ def upcast_vae(vae):
     return vae
 
 
-def load_img2img_model(
-    model_config_params: dict[str, Any], device=get_device()
-) -> DiffusionModel:
-    logging.info(f"Loading diffusion model...")
 
-    model_name = model_config_params.get("model_name")
-    constructor = model_name_to_constructor.get(model_name)
-    if not constructor:
-        raise NotImplementedError
-
-    model = constructor(configs=model_config_params, device=device)
-    logging.info(f"Finished loading diffusion model")
-    return model
-
-
-DiffusionModel.load_model = load_img2img_model
 
 def tokenize_prompt(tokenizer, prompt):
     text_inputs = tokenizer(

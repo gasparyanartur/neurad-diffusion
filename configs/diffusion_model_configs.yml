@@ -1,10 +1,11 @@
 model:
   model_config_params:
     model_name: sd_base
-    base_model_id: "stabilityai/stable-diffusion-2-1"
+    model_id: "stabilityai/stable-diffusion-2-1"
     low_mem_mode: True
     compile_model: False
+    lora_weights: null
 
   model_forward_params: 
-    base_strength: 0.2
-    base_num_steps: 20
+    strength: 0.2
+    num_steps: 20

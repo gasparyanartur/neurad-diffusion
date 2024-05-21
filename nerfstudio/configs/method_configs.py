@@ -50,7 +50,6 @@ from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.models.lidar_nerfacto import LidarNerfactoModelConfig
 from nerfstudio.models.nerfacto import NerfactoModelConfig
 from nerfstudio.models.neurad import NeuRADModelConfig
-from nerfstudio.models.neurad_diffusion import NeuRADDiffusionModelConfig
 from nerfstudio.models.splatfacto import SplatfactoModelConfig
 from nerfstudio.pipelines.ad_pipeline import ADPipelineConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
@@ -64,7 +63,6 @@ descriptions = {
     "splatfacto": "Gaussian Splatting model",
     "neurad": "Continuously improving version of NeuRAD.",
     "neurad-paper": "NeuRAD with settings matching the paper.",
-    "neuraddiffusion": "NeuRAD with diffusion model",
 }
 
 method_configs["nerfacto"] = TrainerConfig(
@@ -412,15 +410,8 @@ method_configs["neurad"] = TrainerConfig(
     logging=LoggingConfig(steps_per_log=100),
 )
 
-# ImagineDriving, NeuRAD + Stable Diffusion
-method_configs["neuraddiffusion"] = deepcopy(method_configs["neurad"])
-method_configs["neuraddiffusion"].method_name = "neuraddiffusion"
-method_configs["neuraddiffusion"].pipeline.model = NeuRADDiffusionModelConfig(
-    eval_num_rays_per_chunk=1 << 15,
-    camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
-)
 
-# New version of ImagineDriving, use changing pipeline
+# ImagineDriving, NeuRAD + Stable Diffusion
 method_configs["imaginedriving"] = TrainerConfig(
     method_name="imaginedriving",
     steps_per_eval_batch=500,
