@@ -595,7 +595,7 @@ def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: FloatTensor, cam
 
     # TODO: Project cam2world
     is_cam = ~ray_bundle.metadata["is_lidar"].flatten()                           # B, 1
-    cam_idxs = ray_bundle.camera_indices[is_cam, 0]                               # Bc
+    cam_idxs = ray_bundle.camera_indices[is_cam, 0].cpu()                         # Bc
     c2w = cameras.camera_to_worlds[cam_idxs].to(device=device)                    # Bc, 3, 4
     
     translation = torch.einsum("Brw,w->Br", c2w[..., :3], aug_translation) + c2w[..., :3, 3]

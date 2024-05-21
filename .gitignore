@@ -195,3 +195,4 @@ masks/
 *.sif
 .vscode*
 neurad-env/*
+wandb
