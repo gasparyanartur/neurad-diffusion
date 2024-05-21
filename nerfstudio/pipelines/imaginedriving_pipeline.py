@@ -16,7 +16,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import time
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type, Any
 import random
 from functools import lru_cache
 from copy import deepcopy
@@ -62,17 +62,23 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     calc_fid_steps: Tuple[int, ...] = (
         5000, 10000, 15000, 20000,
     )  # NOTE: must also be an eval step for this to work
+    eval_shift_distances_horizontal: Tuple[int, ...] = (
+        0, 2, 4, 6, 8
+    )
+    eval_shift_distances_vertical: Tuple[int, ...] = (
+        1,
+    )
     """Whether to calculate FID for lane shifted images."""
-    ray_patch_size: Tuple[int, int] = (32, 32)
+    ray_patch_size: Tuple[int, int] = (128, 128)
     """Size of the ray patches to sample from the image during training (for camera rays only)."""
 
-    diffusion_phase_step: int = 200
+    diffusion_phase_step: int = 0
     shift_prob: float = 0.2
     rotate_prob: float = 0.0
     max_shift: float = 4.0
     diffusion_loss_mult: float = 0.1
 
-    augment_probs: Tuple[float, float, float, float, float, float] = (0.1, 0, 0, 0, 0, 0)  
+    augment_probs: Tuple[float, float, float, float, float, float] = (1.0, 0, 0, 0, 0, 0)  
     """Probability of augmenting each dimension (Px, Py, Pz, Rx, Ry, Rz)"""
      # Note: rotate left/right is Px, horizontal shift is Ry
 
@@ -252,12 +258,12 @@ class ImagineDrivingPipeline(VanillaPipeline):
             transient=True,
         ) as progress:
             lane_shift_fids = (
-                {i: FrechetInceptionDistance().to(self.device) for i in (0, 2, 3)}
+                {i: FrechetInceptionDistance().to(self.device) for i in self.config.eval_shift_distances_horizontal}
                 if step in self.config.calc_fid_steps or step is None
                 else {}
             )
             vertical_shift_fids = (
-                {i: FrechetInceptionDistance().to(self.device) for i in (1,)}
+                {i: FrechetInceptionDistance().to(self.device) for i in self.config.eval_shift_distances_vertical}
                 if step in self.config.calc_fid_steps or step is None
                 else {}
             )
@@ -446,7 +452,6 @@ class ImagineDrivingPipeline(VanillaPipeline):
             fid.real_features_num_samples = fids_list[0].real_features_num_samples
 
         # Compute FID for shifted views
-        assert fids.keys() == {0, 2, 3}, "Shift amounts are hardcoded for now."
         imgs_generated = {0: gen_img}
 
         driving_direction = ray_bundle.metadata["velocities"][0, 0, :]
@@ -461,6 +466,8 @@ class ImagineDrivingPipeline(VanillaPipeline):
             "lane_shift_sign", 1
         )
         original_ray_origins = ray_bundle.origins.clone()
+
+        
         ray_bundle.origins[..., :2] += 2 * orth_right_direction[:2] * shift_sign
         imgs_generated[2] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)[
             "rgb"
@@ -566,7 +573,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
         self.model.dynamic_actors.actor_editing["lateral"] = 0
 
 
-def get_diffusion_output(model_outputs, pipe: SDPipe) -> float:
+def get_diffusion_output(model_outputs, pipe: SDPipe) -> Dict[str, Any]:
     # TODO: Refactor this to , split image and loss so that we can log diffusion images
 
     # rgb dimension is: patch_size * h * w * c
@@ -575,6 +582,7 @@ def get_diffusion_output(model_outputs, pipe: SDPipe) -> float:
     patch_rgb = model_outputs["rgb"]
     patch_rgb = patch_rgb.permute(0, 3, 1, 2)
     diffused_img = pipe.diffuse_sample({"rgb": patch_rgb})["rgb"]
+    diffused_img = diffused_img.permute(0, 2, 3, 1)
     diffusion_outputs = {
         "image": diffused_img
     }
