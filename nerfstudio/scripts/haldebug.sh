@@ -1,10 +1,9 @@
 #!/bin/bash
 #SBATCH --nodes 1
 #SBATCH --gpus 1
-#SBATCH -c 32
+#SBATCH --cpus-per-task 1
 #SBATCH --mem 100G
 #SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/neurad_imaginedriving/slurm/%j_%a.out
-#SBATCH --array=1-10
 #SBATCH --job-name=neurad_imaginedriving
 #SBATCH --partition zprodlow
 
@@ -66,12 +65,13 @@ singularity exec --nv \
     --bind /datasets:/datasets \
     --env WANDB_API_KEY=$wandb_api_key \
     $image_path \
-    python3.10 -u nerfstudio/scripts/train.py \
+    python3.10 -m pdb nerfstudio/scripts/train.py \
     $method \
     --output-dir $OUTPUT_DIR \
     --vis wandb \
     --experiment-name $name-$seq \
     $MAYBE_RESUME_CMD \
+    --pipeline.datamanager.num-processes 0 \
     ${@:2} \
     ${dataset}-data \
     --data $dataset_root \

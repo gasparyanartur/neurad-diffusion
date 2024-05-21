@@ -137,7 +137,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
         ):
             augmented_ray_bundle = augment_ray_bundle(
                 ray_bundle,
-                self._get_augment_strength(step, device) * augment_event.to(device=device),
+                self._get_augment_strength(step, augment_event).to(device),
                 self.datamanager.train_dataset.cameras,
             )
             model_outputs = self._model(augmented_ray_bundle, patch_size=self.config.ray_patch_size)
@@ -168,10 +168,15 @@ class ImagineDrivingPipeline(VanillaPipeline):
         return model_outputs, loss_dict, metrics_dict
 
 
-    def _get_augment_strength(self, step: int, device: torch.device) -> Tensor:
+    def _get_augment_strength(self, step, event: Tensor = None) -> Tensor:
         # TODO: Implement augment strength scheduling
-        max_strength = torch.tensor(self.config.augment_max_strength, device=device)
-        strength = max_strength - 2 * torch.rand_like(max_strength, device=device) * max_strength
+
+        if event is None:
+            event = torch.ones(6, dtype=torch.bool)
+
+        max_strength = torch.tensor(self.config.augment_max_strength)
+        strength = max_strength - 2 * torch.rand_like(max_strength) * max_strength
+        strength *= event
 
         return 1.0 * strength
 
@@ -581,17 +586,17 @@ def get_diffusion_loss(patch_rgb: Tensor, pipe: SDPipe) -> float:
 
 
 def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: FloatTensor, cameras: Cameras) -> RayBundle:
-    print(cameras.camera_to_worlds.shape)
     new_ray_bundle = deepcopy(ray_bundle)   # In case ground truth needs original ray_bundle
+    device = new_ray_bundle.origins.device
 
     # TODO: Considering using a different one for each camera.
-    aug_translation = augment_strength[..., :3]                 # 3
-    aug_rotation = augment_strength[..., 3:]                    # 3
+    aug_translation = augment_strength[..., :3].to(device=device)                 # 3
+    aug_rotation = augment_strength[..., 3:].to(device=device)                    # 3
 
     # TODO: Project cam2world
-    is_cam = ~ray_bundle.metadata["is_lidar"].flatten()                   # B, 1
-    cam_idxs = ray_bundle.camera_indices[is_cam, 0].cpu()     # Bc
-    c2w = cameras.camera_to_worlds[cam_idxs]                    # Bc, 3, 4
+    is_cam = ~ray_bundle.metadata["is_lidar"].flatten()                           # B, 1
+    cam_idxs = ray_bundle.camera_indices[is_cam, 0]                               # Bc
+    c2w = cameras.camera_to_worlds[cam_idxs].to(device=device)                    # Bc, 3, 4
     
     translation = torch.einsum("Brw,w->Br", c2w[..., :3], aug_translation) + c2w[..., :3, 3]
     rotation = torch.einsum("Brw,w->Br", c2w[..., :3], aug_rotation)

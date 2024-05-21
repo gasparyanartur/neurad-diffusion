@@ -138,4 +138,3 @@ class ExperimentConfig(InstantiateConfig):
         config_yaml_path = base_dir / "config.yml"
         CONSOLE.log(f"Saving config to: {config_yaml_path}")
         config_yaml_path.write_text(yaml.dump(self), "utf8")
-        CONSOLE.log(f"Finished saving config to: {config_yaml_path}")
