@@ -500,7 +500,7 @@ def transform_points(points, transform):
     return points
 
 
-#@torch_compile(dynamic=True, mode="reduce-overhead", backend="eager")
+@torch_compile(dynamic=True, mode="reduce-overhead", backend="eager")
 def transform_points_pairwise(points, transforms, with_translation=True):
     """Transform points by a pairwise transform."""
     # points: (*, 3)
@@ -516,7 +516,7 @@ def transform_points_pairwise(points, transforms, with_translation=True):
         return (points.unsqueeze(-2) @ rotations.swapaxes(-2, -1)).squeeze(-2)
 
 
-#@torch_compile(dynamic=True, mode="reduce-overhead", backend="eager")
+@torch_compile(dynamic=True, mode="reduce-overhead", backend="eager")
 def transform_points_by_batch(points, transforms, with_translation=True):
     """Transform points by a batch of transforms."""
     # points: (N, 3)
