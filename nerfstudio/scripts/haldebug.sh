@@ -76,6 +76,8 @@ singularity exec --nv \
     ${dataset}-data \
     --data $dataset_root \
     --sequence $seq \
+    --cameras "front" "front_left" "front_right" \
+    --dataset_end_fraction 0.05
     $DATAPARSER_ARGS
 #
 #EOF

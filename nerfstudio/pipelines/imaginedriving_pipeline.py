@@ -135,21 +135,18 @@ class ImagineDrivingPipeline(VanillaPipeline):
             self._is_augment_phase(step) and 
             (augment_event := (torch.rand(6) < torch.tensor(self.config.augment_probs)).any()) 
         ):
-            augmented_ray_bundle = augment_ray_bundle(
+            ray_bundle = augment_ray_bundle(
                 ray_bundle,
                 self._get_augment_strength(step, augment_event).to(device),
                 self.datamanager.train_dataset.cameras,
             )
-            model_outputs = self._model(augmented_ray_bundle, patch_size=self.config.ray_patch_size)
-            diffusion_loss = get_diffusion_loss(model_outputs, self.pipe)
+            model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
+            batch = get_diffusion_output(model_outputs, self.pipe)
             
         else:
             model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
-            diffusion_loss = None
-
 
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
-
         if (actors := self.model.dynamic_actors).config.optimize_trajectories:
             pos_norm = (actors.actor_positions - actors.initial_positions).norm(dim=-1)
             metrics_dict["traj_opt_translation"] = (
@@ -163,9 +160,6 @@ class ImagineDrivingPipeline(VanillaPipeline):
             )
 
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
-        if diffusion_loss:
-            loss_dict["diffusion_loss"] = diffusion_loss * self.config.diffusion_loss_mult
-
         return model_outputs, loss_dict, metrics_dict
 
 
@@ -572,7 +566,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
         self.model.dynamic_actors.actor_editing["lateral"] = 0
 
 
-def get_diffusion_loss(model_outputs, pipe: SDPipe) -> float:
+def get_diffusion_output(model_outputs, pipe: SDPipe) -> float:
     # TODO: Refactor this to , split image and loss so that we can log diffusion images
 
     # rgb dimension is: patch_size * h * w * c
@@ -581,9 +575,11 @@ def get_diffusion_loss(model_outputs, pipe: SDPipe) -> float:
     patch_rgb = model_outputs["rgb"]
     patch_rgb = patch_rgb.permute(0, 3, 1, 2)
     diffused_img = pipe.diffuse_sample({"rgb": patch_rgb})["rgb"]
-    diffusion_loss = torch.nn.MSELoss()(patch_rgb, diffused_img)
-
-    return diffusion_loss
+    diffusion_outputs = {
+        "image": diffused_img
+    }
+    
+    return diffusion_outputs
 
 
 
