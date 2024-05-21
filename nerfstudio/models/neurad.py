@@ -554,6 +554,7 @@ class NeuRADModel(ADModel):
         if "image" in batch:
             image, rgb = batch["image"].to(self.device), outputs["rgb"]
             metrics_dict["psnr"] = self.psnr(rgb.detach(), image)
+
         if "lidar" in batch:
             is_lidar = batch["is_lidar"][:, 0].to(self.device)
             n_lidar_rays = is_lidar.sum()

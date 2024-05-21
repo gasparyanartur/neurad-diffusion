@@ -437,6 +437,7 @@ method_configs["imaginedriving"] = TrainerConfig(
         model=NeuRADModelConfig(
             eval_num_rays_per_chunk=1 << 15,
             camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
+            rgb_upsample_factor=4
         ),
     ),
     optimizers={
