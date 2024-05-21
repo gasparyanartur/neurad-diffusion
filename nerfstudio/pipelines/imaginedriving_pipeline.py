@@ -142,28 +142,29 @@ class ImagineDrivingPipeline(VanillaPipeline):
             )
             model_outputs = self._model(augmented_ray_bundle, patch_size=self.config.ray_patch_size)
             diffusion_loss = get_diffusion_loss(model_outputs, self.pipe)
-            loss_dict = {
-                "diffusion_loss": diffusion_loss * self.config.diffusion_loss_mult
-            }
-
+            
         else:
             model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
-            metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
+            diffusion_loss = None
 
-            if (actors := self.model.dynamic_actors).config.optimize_trajectories:
-                pos_norm = (actors.actor_positions - actors.initial_positions).norm(dim=-1)
-                metrics_dict["traj_opt_translation"] = (
-                    pos_norm[pos_norm > 0].mean().nan_to_num()
-                )
-                metrics_dict["traj_opt_rotation"] = (
-                    (actors.actor_rotations_6d - actors.initial_rotations_6d)[pos_norm > 0]
-                    .norm(dim=-1)
-                    .mean()
-                    .nan_to_num()
-                )
 
-            loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+        metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
 
+        if (actors := self.model.dynamic_actors).config.optimize_trajectories:
+            pos_norm = (actors.actor_positions - actors.initial_positions).norm(dim=-1)
+            metrics_dict["traj_opt_translation"] = (
+                pos_norm[pos_norm > 0].mean().nan_to_num()
+            )
+            metrics_dict["traj_opt_rotation"] = (
+                (actors.actor_rotations_6d - actors.initial_rotations_6d)[pos_norm > 0]
+                .norm(dim=-1)
+                .mean()
+                .nan_to_num()
+            )
+
+        loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+        if diffusion_loss:
+            loss_dict["diffusion_loss"] = diffusion_loss * self.config.diffusion_loss_mult
 
         return model_outputs, loss_dict, metrics_dict
 
