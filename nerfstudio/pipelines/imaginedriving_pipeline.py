@@ -571,12 +571,13 @@ class ImagineDrivingPipeline(VanillaPipeline):
         self.model.dynamic_actors.actor_editing["lateral"] = 0
 
 
-def get_diffusion_loss(patch_rgb: Tensor, pipe: SDPipe) -> float:
+def get_diffusion_loss(model_outputs, pipe: SDPipe) -> float:
     # TODO: Refactor this to , split image and loss so that we can log diffusion images
 
     # rgb dimension is: patch_size * h * w * c
     # resize patch image to p, c, h,w
 
+    patch_rgb = model_outputs["rgb"]
     patch_rgb = patch_rgb.permute(0, 3, 1, 2)
     diffused_img = pipe.diffuse_sample({"rgb": patch_rgb})["rgb"]
     diffusion_loss = torch.nn.MSELoss()(patch_rgb, diffused_img)
