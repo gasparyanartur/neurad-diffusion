@@ -85,6 +85,7 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
      # Note: rotate left/right is Px, horizontal shift is Ry
 
     augment_max_strength: Tuple[float, float, float, float, float, float] = (5.0, 0, 0, 0, 0, 0)
+    enable_augment: bool = True
 
     diffusion_config_path: str = (
         "configs/diffusion_model_configs.yml"
@@ -138,6 +139,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
         device = ray_bundle.origins.device
 
         if (
+            self.config.enable_augment and 
             self._is_augment_phase(step) and 
             (augment_event := (torch.rand(6) < torch.tensor(self.config.augment_probs)).any()) 
         ):

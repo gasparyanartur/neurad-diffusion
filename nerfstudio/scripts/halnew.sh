@@ -3,15 +3,18 @@
 #SBATCH --gpus 1
 #SBATCH -c 32
 #SBATCH --mem 100G
-#SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/neurad_imaginedriving/slurm/%j_%a.out
+#SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/neurad_imaginedriving/slurm/%A_%a.out
 #SBATCH --array=1-10
 #SBATCH --job-name=neurad_imaginedriving
 #SBATCH --partition zprodlow
 
 
-
 # crash if no argument is given
 name=${1:?"No name given"}
+
+export WANDB_RUN_GROUP=$name
+export WANDB_ENTITY=arturruiqi
+export WANDB_PROJECT=neurad
 
 wandb_api_key=${WANDB_API_KEY}
 if [ -z ${wandb_api_key} ]; then
@@ -70,7 +73,7 @@ singularity exec --nv \
     $method \
     --output-dir $OUTPUT_DIR \
     --vis wandb \
-    --experiment-name $name-$seq \
+    --experiment-name $name-$seq-$SLURM_ARRAY_TASK_ID \
     $MAYBE_RESUME_CMD \
     ${@:2} \
     ${dataset}-data \
