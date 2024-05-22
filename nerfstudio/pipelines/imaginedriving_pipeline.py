@@ -46,7 +46,9 @@ from nerfstudio.utils import profiler
 from nerfstudio.models.diffusion import read_yaml, SDPipe, load_diffusion_model
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.cameras.cameras import Cameras
-
+from nerfstudio.model_components.losses import (
+    MSELoss,
+)
 
 
 @dataclass
@@ -72,13 +74,13 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     ray_patch_size: Tuple[int, int] = (128, 128)
     """Size of the ray patches to sample from the image during training (for camera rays only)."""
 
-    diffusion_phase_step: int = 0
+    diffusion_phase_step: int = 500
     shift_prob: float = 0.2
     rotate_prob: float = 0.0
     max_shift: float = 4.0
     diffusion_loss_mult: float = 0.1
 
-    augment_probs: Tuple[float, float, float, float, float, float] = (1.0, 0, 0, 0, 0, 0)  
+    augment_probs: Tuple[float, float, float, float, float, float] = (0.25, 0, 0, 0, 0, 0)  
     """Probability of augmenting each dimension (Px, Py, Pz, Rx, Ry, Rz)"""
      # Note: rotate left/right is Px, horizontal shift is Ry
 
@@ -119,6 +121,8 @@ class ImagineDrivingPipeline(VanillaPipeline):
             self.diffusion_config["model"]["model_config_params"]
         )
 
+
+
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
         """This function gets your training loss dict. This will be responsible for
@@ -144,10 +148,10 @@ class ImagineDrivingPipeline(VanillaPipeline):
             )
             model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
             reduced_model_outputs = {"rgb": model_outputs["rgb"]}   
-            batch = get_diffusion_output(model_outputs, self.pipe)
+            batch = self.pipe.get_diffusion_output(model_outputs)
 
-            metrics_dict = self.model.get_metrics_dict(reduced_model_outputs, batch)
-            loss_dict = self.model.get_loss_dict(reduced_model_outputs, batch, metrics_dict)
+            metrics_dict = self.pipe.get_diffusion_metrics(reduced_model_outputs, batch)
+            loss_dict = self.pipe.get_diffusion_losses(reduced_model_outputs, batch, metrics_dict)
 
         else:
             model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
@@ -573,12 +577,6 @@ class ImagineDrivingPipeline(VanillaPipeline):
         self.model.dynamic_actors.actor_editing["rotation"] = 0
         self.model.dynamic_actors.actor_editing["lateral"] = 0
 
-
-def get_diffusion_output(model_outputs, pipe: SDPipe) -> Dict[str, Any]:
-    diffusion_outputs = pipe.diffuse_sample(model_outputs)
-    return {
-        "image": diffusion_outputs["rgb"]
-    }
 
 
 def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: FloatTensor, cameras: Cameras) -> RayBundle:

@@ -113,13 +113,15 @@
       "justMyCode": true,
       "args": [
         "imaginedriving",
-        "--pipeline.diffusion-config-path=configs/mock_model_configs.yml",
+        "--vis=wandb",
+        "--pipeline.diffusion-config-path=configs/diffusion_model_configs.yml",
         "--pipeline.model.eval_num_rays_per_chunk=2048",
         "--pipeline.datamanager.num_processes=0",
         "--pipeline.datamanager.train-num-lidar-rays-per-batch=1280",
         "--pipeline.datamanager.eval-num-lidar-rays-per-batch=128",
         "--pipeline.datamanager.train_num_rays_per_batch=4096",
         "--pipeline.datamanager.eval_num_rays_per_batch=4096",
+        "--pipeline.datamanager.num_processes=0",
         "pandaset-data",
         "--data=./data/pandaset",
         "--dataset_end_fraction=0.2",
@@ -135,6 +137,7 @@
       "justMyCode": true,
       "args": [
         "imaginedriving",
+        "--vis=wandb",
         "--pipeline.diffusion-config-path=configs/mock_model_configs.yml",
         "--pipeline.model.eval_num_rays_per_chunk=2048",
         "--pipeline.model.field.grid.static.hashgrid_dim=2",
@@ -152,6 +155,18 @@
         "--data=./data/pandaset",
         "--dataset_end_fraction=0.2",
         "--cameras=front",
+      ]
+    },
+    {
+      "name": "Python: ImagineDriving train help",
+      "type": "python",
+      "request": "launch",
+      "program": "nerfstudio/scripts/train.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "args": [
+        "imaginedriving",
+        "--help"
       ]
     },
     {

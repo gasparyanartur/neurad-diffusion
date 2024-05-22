@@ -6,7 +6,7 @@ from pathlib import Path
 import logging
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 
 from diffusers import StableDiffusionXLImg2ImgPipeline, StableDiffusionImg2ImgPipeline
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import (
@@ -21,6 +21,8 @@ import torchvision
 
 torchvision.disable_beta_transforms_warning()
 from torchvision.transforms import v2 as transform
+from torchmetrics.image import PeakSignalNoiseRatio
+
 
 
 default_prompt = "dashcam recording, urban driving scene, video, autonomous driving, detailed cars, traffic scene, pandaset, kitti, high resolution, realistic, detailed, camera video, dslr, ultra quality, sharp focus, crystal clear, 8K UHD, 10 Hz capture frequency 1/2.7 CMOS sensor, 1920x1080"
@@ -146,15 +148,25 @@ def prep_model(
 
 class DiffusionModel(ABC):
     @abstractmethod
-    def diffuse_sample(self, sample: Dict[str, Any], *args, **kwargs) -> Dict[str, Any]:
+    def get_diffusion_output(self, sample: Dict[str, Any], *args, **kwargs) -> Dict[str, Any]:
         raise NotImplementedError
+
+    @abstractmethod
+    def get_diffusion_metrics(self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any]) -> Dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_diffusion_losses(self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any], metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
+        raise NotImplementedError
+
 
 
 class MockPipe(DiffusionModel):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__()
+        self.mse = nn.MSELoss()
 
-    def diffuse_sample(
+    def get_diffusion_output(
         self,
         sample: Dict[str, Any],
         *args,
@@ -168,6 +180,13 @@ class MockPipe(DiffusionModel):
         return {
             "rgb": image
         }
+
+    def get_diffusion_metrics(self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any]) -> Dict[str, Any]:
+        return {"mse": self.mse(batch_pred["rgb"], batch_gt["rgb"])}
+
+    def get_diffusion_losses(self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any], metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
+        return metrics_dict
+
 
 class SDPipe(DiffusionModel):
     def __init__(
@@ -204,7 +223,16 @@ class SDPipe(DiffusionModel):
 
         self.device = device
 
-    def diffuse_sample(
+        # TODO: Make this configurable
+        self.diffusion_metrics = {
+            "psnr": PeakSignalNoiseRatio(data_range=1.0),
+            "mse": nn.MSELoss()
+        }
+        self.diffusion_losses = {
+            "mse": nn.MSELoss()
+        }
+
+    def get_diffusion_output(
         self,
         sample: Dict[str, Any],
         strength: float = 0.2,
@@ -274,6 +302,31 @@ class SDPipe(DiffusionModel):
             image = image.permute(0, 2, 3, 1)
 
         return {"rgb": image}
+
+
+    def get_diffusion_metrics(self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any]) -> Dict[str, Any]:
+        # Currently only handles RGB case, assumes all metrics take in an RGB image.
+        rgb_pred = batch_pred["rgb"]
+        rgb_gt = batch_gt["rgb"]
+
+        return {
+            metric_name: metric(rgb_pred, rgb_gt) 
+            for metric_name, metric in self.diffusion_metrics.items()
+        }
+
+
+    def get_diffusion_losses(self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any], metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
+        # Currently only handles RGB case, assumes all metrics take in an RGB image.
+        rgb_pred = batch_pred["rgb"]
+        rgb_gt = batch_gt["rgb"]
+
+        loss_dict = {}
+        for loss_name, loss in self.diffusion_losses.items():
+            if loss_name in metrics_dict:
+                loss_dict[loss_name] = metrics_dict[loss_name]
+                continue
+
+            loss_dict[loss_name] = loss(rgb_pred, rgb_gt)
 
 
 
