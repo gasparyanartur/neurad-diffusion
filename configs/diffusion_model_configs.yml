@@ -3,7 +3,7 @@ model:
     model_name: sd_base
     model_id: "stabilityai/stable-diffusion-2-1"
     low_mem_mode: True
-    compile_model: False
+    compile_model: True
     lora_weights: null
 
   model_forward_params: 

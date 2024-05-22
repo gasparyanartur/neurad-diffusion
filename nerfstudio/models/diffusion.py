@@ -201,6 +201,7 @@ class SDPipe(DiffusionModel):
         model_id = configs.get("model_id", ModelId.sd_v2_1)
         low_mem_mode = configs.get("low_mem_mode", False)
         compile_model = configs.get("compile_model", False)
+        disable_progress_bar = configs.get("disable_progress_bar", True)
 
         self.pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
             model_id,
@@ -208,6 +209,8 @@ class SDPipe(DiffusionModel):
             variant="fp16",
             use_safetensors=True,
         )
+
+        self.pipe.set_progress_bar_config(disable=disable_progress_bar)
 
         if lora_weights := configs.get("lora_weights"):
             self.pipe.load_lora_weights(lora_weights)
@@ -225,11 +228,11 @@ class SDPipe(DiffusionModel):
 
         # TODO: Make this configurable
         self.diffusion_metrics = {
-            "psnr": PeakSignalNoiseRatio(data_range=1.0),
-            "mse": nn.MSELoss()
+            "psnr": PeakSignalNoiseRatio(data_range=1.0).to(device),
+            "mse": nn.MSELoss().to(device),
         }
         self.diffusion_losses = {
-            "mse": nn.MSELoss()
+            "mse": nn.MSELoss().to(device)
         }
 
     def get_diffusion_output(
@@ -327,7 +330,8 @@ class SDPipe(DiffusionModel):
                 continue
 
             loss_dict[loss_name] = loss(rgb_pred, rgb_gt)
-
+        
+        return loss_dict
 
 
 model_name_to_constructor = {
