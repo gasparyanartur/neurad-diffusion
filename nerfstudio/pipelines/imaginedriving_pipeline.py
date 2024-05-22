@@ -141,6 +141,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
             self._is_augment_phase(step) and 
             (augment_event := (torch.rand(6) < torch.tensor(self.config.augment_probs)).any()) 
         ):
+
             ray_bundle = augment_ray_bundle(
                 ray_bundle,
                 self._get_augment_strength(step, augment_event).to(device),
