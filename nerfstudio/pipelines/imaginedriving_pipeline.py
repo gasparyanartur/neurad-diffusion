@@ -459,32 +459,27 @@ class ImagineDrivingPipeline(VanillaPipeline):
             fid.real_features_cov_sum = fids_list[0].real_features_cov_sum
             fid.real_features_num_samples = fids_list[0].real_features_num_samples
 
-        # Compute FID for shifted views
-        imgs_generated = {0: gen_img}
-
+        # TODO: Replace this logic with augment_ray_bundle
         driving_direction = ray_bundle.metadata["velocities"][0, 0, :]
         driving_direction = driving_direction / driving_direction.norm()
         orth_right_direction = torch.cross(
             driving_direction,
             torch.tensor([0.0, 0.0, 1.0], device=driving_direction.device),
         )
-
-        # TODO: Do we need to take z axis into account?
         shift_sign = self.datamanager.eval_lidar_dataset.metadata.get(
             "lane_shift_sign", 1
-        )
-        original_ray_origins = ray_bundle.origins.clone()
+        ) # TODO: Do we need to take z axis into account?
+        shift_direction = orth_right_direction * shift_sign
 
-        
-        ray_bundle.origins[..., :2] += 2 * orth_right_direction[:2] * shift_sign
-        imgs_generated[2] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)[
-            "rgb"
-        ]
-        ray_bundle.origins[..., :2] += 1 * orth_right_direction[:2] * shift_sign
-        imgs_generated[3] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)[
-            "rgb"
-        ]
+        # Compute FID for shifted views
+        imgs_generated = {0: gen_img}
+        original_ray_origins = ray_bundle.origins.clone()
+        for dist in filter(lambda d: d != 0, fids.keys()):
+            shifted_origins = original_ray_origins + dist * shift_direction 
+            ray_bundle.origins = shifted_origins
+            imgs_generated[dist] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)["rgb"]
         ray_bundle.origins = original_ray_origins
+
         for shift, img in imgs_generated.items():
             img = (
                 (self._downsample_img((img).permute(2, 0, 1)) * 255)
@@ -512,15 +507,16 @@ class ImagineDrivingPipeline(VanillaPipeline):
             fid.real_features_cov_sum = fids_list[0].real_features_cov_sum
             fid.real_features_num_samples = fids_list[0].real_features_num_samples
 
-        # Compute FID for shifted views
-        assert fids.keys() == {1}, "Shift amounts are hardcoded for now."
-        imgs_generated = {}
+        # TODO: Replace this logic with augment_ray_bundle
+        shift_direction = torch.tensor([0.0, 0.0, 1.0], device=ray_bundle.origins.device)
 
+        # Compute FID for shifted views
+        imgs_generated = {}
         original_ray_origins = ray_bundle.origins.clone()
-        ray_bundle.origins[..., 2] += 1.0
-        imgs_generated[1] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)[
-            "rgb"
-        ]
+        for dist in filter(lambda d: d != 0, fids.keys()):
+            shifted_origins = original_ray_origins + dist * shift_direction 
+            ray_bundle.origins = shifted_origins
+            imgs_generated[dist] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)["rgb"]
         ray_bundle.origins = original_ray_origins
 
         for shift, img in imgs_generated.items():
@@ -590,7 +586,6 @@ def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: FloatTensor, cam
     aug_translation = augment_strength[..., :3].to(device=device)                 # 3
     aug_rotation = augment_strength[..., 3:].to(device=device)                    # 3
 
-    # TODO: Project cam2world
     is_cam = ~ray_bundle.metadata["is_lidar"].flatten()                           # B, 1
     cam_idxs = ray_bundle.camera_indices[is_cam, 0].cpu()                         # Bc
     c2w = cameras.camera_to_worlds[cam_idxs].to(device=device)                    # Bc, 3, 4

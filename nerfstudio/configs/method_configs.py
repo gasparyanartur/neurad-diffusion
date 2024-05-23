@@ -414,13 +414,13 @@ method_configs["neurad"] = TrainerConfig(
 # ImagineDriving, NeuRAD + Stable Diffusion
 method_configs["imaginedriving"] = TrainerConfig(
     method_name="imaginedriving",
-    steps_per_eval_batch=500,
-    steps_per_eval_all_images=5000,
+    steps_per_eval_batch=100,
+    steps_per_eval_all_images=200,
     steps_per_save=2000,
     max_num_iterations=20001,
     mixed_precision=True,
     pipeline=ImagineDrivingPipelineConfig(
-        calc_fid_steps=(5000, 10000, 15000, 20000),
+        calc_fid_steps=tuple(range(0, 20001, 200)),
         ray_patch_size=(128, 128),
         datamanager=ADDataManagerConfig(
             dataparser=PandaSetDataParserConfig(add_missing_points=True)
@@ -430,6 +430,7 @@ method_configs["imaginedriving"] = TrainerConfig(
             camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
             rgb_upsample_factor=4
         ),
+        diffusion_phase_step=1000,
     ),
     optimizers={
         "trajectory_opt": {

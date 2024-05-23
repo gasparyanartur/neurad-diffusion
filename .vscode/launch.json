@@ -139,7 +139,7 @@
         "imaginedriving",
         "--vis=tensorboard",
         "--pipeline.diffusion-config-path=configs/diffusion_model_configs.yml",
-        "--pipeline.diffusion_phase_step=0",
+        "--pipeline.diffusion_phase_step=1000",
         "--pipeline.model.eval_num_rays_per_chunk=2048",
         "--pipeline.model.field.grid.static.hashgrid_dim=2",
         "--pipeline.model.field.grid.static.num_levels=4",
