@@ -577,6 +577,22 @@ class ImagineDrivingPipeline(VanillaPipeline):
         self.model.dynamic_actors.actor_editing["lateral"] = 0
 
 
+def rotate_around(theta, dim: int, device=None) -> torch.Tensor:
+    c = torch.cos(theta)
+    s = torch.sin(theta)
+
+    match dim:
+        case 0:
+            r = [[1, 0, 0], [0, c, -s], [0, s, c]]
+        case 1:
+            r = [[c, 0, s], [0, 1, 0], [-s, 0, c]]
+        case 2:
+            r = [[c, -s, 0], [s, c, 0], [0, 0, 1]]
+        case _:
+            raise ValueError
+
+    return torch.tensor(r, device=device, dtype=torch.float32)
+
 
 def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: FloatTensor, cameras: Cameras) -> RayBundle:
     new_ray_bundle = deepcopy(ray_bundle)   # In case ground truth needs original ray_bundle
@@ -587,13 +603,19 @@ def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: FloatTensor, cam
     aug_rotation = augment_strength[..., 3:].to(device=device)                    # 3
 
     is_cam = ~ray_bundle.metadata["is_lidar"].flatten()                           # B, 1
+    
     cam_idxs = ray_bundle.camera_indices[is_cam, 0].cpu()                         # Bc
     c2w = cameras.camera_to_worlds[cam_idxs].to(device=device)                    # Bc, 3, 4
-    
     translation = torch.einsum("Brw,w->Br", c2w[..., :3], aug_translation) + c2w[..., :3, 3]
-    rotation = torch.einsum("Brw,w->Br", c2w[..., :3], aug_rotation)
+
+    rotation = (        # Chain together rotations, X -> Y -> Z
+        rotate_around(aug_rotation[2], 2) @
+        rotate_around(aug_rotation[1], 1) @
+        rotate_around(aug_rotation[0], 0) 
+    )
+    direction = torch.einsum("wh,Bh->Bw", rotation, ray_bundle.directions[is_cam.flatten()])
 
     new_ray_bundle.origins[is_cam.flatten()] += translation
-    new_ray_bundle.directions[is_cam.flatten()] += rotation
+    new_ray_bundle.directions[is_cam.flatten()] = direction
     
     return new_ray_bundle

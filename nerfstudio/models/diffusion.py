@@ -275,10 +275,10 @@ class SDPipe(DiffusionModel):
         kwargs = kwargs or {}
         kwargs["image"] = image
         kwargs["output_type"] = kwargs.get("output_type", "pt")
+        kwargs["strength"] = kwargs.get("strength", 0.2)
 
         if not "prompt" in kwargs and not "negative_prompt" in kwargs and not "prompt_embeds" in kwargs and not "negative_prompt_embeds" in kwargs:
             kwargs["prompt"] = ""
-
 
         image = self.pipe(
             **kwargs,
