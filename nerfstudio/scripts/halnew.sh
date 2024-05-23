@@ -24,6 +24,7 @@ fi
 
 method=${METHOD:-imaginedriving}
 dataset=${DATASET:-pandaset}
+cameras=${CAMERAS:-front}
 # Specify the path to the config file
 id_to_seq=nerfstudio/scripts/arrays/${dataset}_id_to_seq${ARRAY_SUFFIX}.txt
 
@@ -79,6 +80,7 @@ singularity exec --nv \
     ${dataset}-data \
     --data $dataset_root \
     --sequence $seq \
+    --cameras $cameras \
     $DATAPARSER_ARGS
 #
 #EOF
