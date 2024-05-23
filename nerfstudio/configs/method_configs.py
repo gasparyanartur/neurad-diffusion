@@ -366,7 +366,10 @@ method_configs["neurad"] = TrainerConfig(
     pipeline=ADPipelineConfig(
         calc_fid_steps=(99999999,),
         datamanager=ADDataManagerConfig(
-            dataparser=PandaSetDataParserConfig(add_missing_points=True)
+            dataparser=PandaSetDataParserConfig(
+                add_missing_points=True,
+                #cameras=("front",)
+            )
         ),
         model=NeuRADModelConfig(
             eval_num_rays_per_chunk=1 << 15,

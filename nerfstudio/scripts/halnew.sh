@@ -24,6 +24,7 @@ fi
 
 method=${METHOD:-imaginedriving}
 dataset=${DATASET:-pandaset}
+cameras=${CAMERAS:-front}
 # Specify the path to the config file
 id_to_seq=nerfstudio/scripts/arrays/${dataset}_id_to_seq${ARRAY_SUFFIX}.txt
 
@@ -35,7 +36,7 @@ seq=$(awk -v ArrayTaskID=$SLURM_ARRAY_TASK_ID '$1==ArrayTaskID {print $2}' $id_t
 echo "Starting training for $name with extra args ${@:2}"
 echo "Sequence $seq"
 
-export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/neurad_imaginedriving/$DATASET-$METHOD/$SLURM_JOB_ID"}
+export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/neurad_imaginedriving/$dataset-$method/$SLURM_JOB_ID"}
 mkdir -p $OUTPUT_DIR
 
 
@@ -79,6 +80,7 @@ singularity exec --nv \
     ${dataset}-data \
     --data $dataset_root \
     --sequence $seq \
+    --cameras $cameras \
     $DATAPARSER_ARGS
 #
 #EOF
