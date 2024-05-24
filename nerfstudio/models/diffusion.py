@@ -284,6 +284,9 @@ class SDPipe(DiffusionModel):
             **kwargs,
         ).images
 
+        if isinstance(image, list):
+            image = torch.stack(image)
+
         if not channel_first:
             image = image.permute(0, 2, 3, 1)
 
