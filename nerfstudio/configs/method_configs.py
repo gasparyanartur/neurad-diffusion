@@ -364,11 +364,10 @@ method_configs["neurad"] = TrainerConfig(
     max_num_iterations=20001,
     mixed_precision=True,
     pipeline=ADPipelineConfig(
-        calc_fid_steps=(99999999,),
+        calc_fid_steps=tuple(range(0, 20001, 5000)),
         datamanager=ADDataManagerConfig(
             dataparser=PandaSetDataParserConfig(
                 add_missing_points=True,
-                #cameras=("front",)
             )
         ),
         model=NeuRADModelConfig(
@@ -433,7 +432,7 @@ method_configs["imaginedriving"] = TrainerConfig(
             camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
             rgb_upsample_factor=4
         ),
-        diffusion_phase_step=1000,
+        augment_phase_step=1000,
     ),
     optimizers={
         "trajectory_opt": {

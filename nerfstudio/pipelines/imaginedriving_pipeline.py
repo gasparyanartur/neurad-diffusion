@@ -74,21 +74,17 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     ray_patch_size: Tuple[int, int] = (128, 128)
     """Size of the ray patches to sample from the image during training (for camera rays only)."""
 
-    diffusion_phase_step: int = 500
-    shift_prob: float = 0.2
-    rotate_prob: float = 0.0
-    max_shift: float = 4.0
-    diffusion_loss_mult: float = 1.0
-
+    augment_phase_step: int = 500
+    augment_loss_mult: float = 1.0
     augment_strategy: str = "partial_const" 
     """ Which diffusion augmentation strategy to use.
         Can choose between `none`, `partial_const`, and `full_prob`.
     """
-    augment_probs: Tuple[float, float, float, float, float, float] = (0.25, 0, 0, 0, 0, 0)  
+    augment_probs: Tuple[float, float, float, float, float, float] = (0.25, 0, 0, 0, 0, 0.25)  
     """Probability of augmenting each dimension (Px, Py, Pz, Rx, Ry, Rz)"""
-     # Note: rotate left/right is Px, horizontal shift is Ry
+     # Note: rotate left/right is Px, horizontal shift is Rz
 
-    augment_max_strength: Tuple[float, float, float, float, float, float] = (5.0, 0, 0, 0, 0, 0)
+    augment_max_strength: Tuple[float, float, float, float, float, float] = (5.0, 0, 0, 0, 0, torch.pi/4)
 
     diffusion_config_path: str = (
         "configs/diffusion_model_configs.yml"
@@ -210,7 +206,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
         aug_batch = self.pipe.get_diffusion_output(model_outputs)
         aug_metrics_dict = self.pipe.get_diffusion_metrics(aug_outputs, aug_batch)
         aug_loss_dict = self.pipe.get_diffusion_losses(aug_outputs, aug_batch, aug_metrics_dict)
-        aug_loss_dict = {k:v*self.config.diffusion_loss_mult for k,v in aug_loss_dict.items()} 
+        aug_loss_dict = {k:v*self.config.augment_loss_mult for k,v in aug_loss_dict.items()} 
 
         model_outputs.update({("aug_" + k):v for k,v in aug_outputs.items()})
         loss_dict.update({("aug_" + k):v for k,v in aug_loss_dict.items()})
@@ -233,7 +229,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
 
     def _is_augment_phase(self, step: int) -> bool:
-        return step >= self.config.diffusion_phase_step
+        return step >= self.config.augment_phase_step
 
 
     @profiler.time_function

@@ -4,7 +4,7 @@
 #SBATCH -c 32
 #SBATCH --mem 100G
 #SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/neurad_imaginedriving/slurm/%A_%a.out
-#SBATCH --array=1-10
+#SBATCH --array=1
 #SBATCH --job-name=neurad_imaginedriving
 #SBATCH --partition zprodlow
 
