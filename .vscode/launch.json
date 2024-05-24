@@ -169,6 +169,35 @@
         "--help"
       ]
     },
+    
+    {
+      "name": "Python: ImagineDriving render help",
+      "type": "python",
+      "request": "launch",
+      "program": "nerfstudio/scripts/render.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "args": [
+        "dataset",
+        "--help"
+      ]
+    },
+    {
+      "name": "Python: neurad render",
+      "type": "python",
+      "request": "launch",
+      "program": "nerfstudio/scripts/render.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "args": [
+        "dataset",
+        "--load-config=./nerfstudio/scripts/config.yml", 
+        "--data=/home/s0001899/dev/pandaset",
+        "--config-output-dir=/home/s0001899/dev/neurad_output/2024-05-23_091132/",
+      ]
+    },
+
+
     {
       "name": "Python: ImagineDriving CPU",
       "type": "python",
