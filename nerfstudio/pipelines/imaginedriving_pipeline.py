@@ -78,14 +78,17 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     shift_prob: float = 0.2
     rotate_prob: float = 0.0
     max_shift: float = 4.0
-    diffusion_loss_mult: float = 0.1
+    diffusion_loss_mult: float = 1.0
 
+    augment_strategy: str = "partial_const" 
+    """ Which diffusion augmentation strategy to use.
+        Can choose between `none`, `partial_const`, and `full_prob`.
+    """
     augment_probs: Tuple[float, float, float, float, float, float] = (0.25, 0, 0, 0, 0, 0)  
     """Probability of augmenting each dimension (Px, Py, Pz, Rx, Ry, Rz)"""
      # Note: rotate left/right is Px, horizontal shift is Ry
 
     augment_max_strength: Tuple[float, float, float, float, float, float] = (5.0, 0, 0, 0, 0, 0)
-    enable_augment: bool = True
 
     diffusion_config_path: str = (
         "configs/diffusion_model_configs.yml"
@@ -122,8 +125,6 @@ class ImagineDrivingPipeline(VanillaPipeline):
             self.diffusion_config["model"]["model_config_params"]
         )
 
-
-
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
         """This function gets your training loss dict. This will be responsible for
@@ -134,45 +135,86 @@ class ImagineDrivingPipeline(VanillaPipeline):
             step: current iteration step to update sampler if using DDP (distributed)
         """
         # Regular forward pass and loss calc
-
+        self.train()
         ray_bundle, batch = self.datamanager.next_train(step)
-        device = ray_bundle.origins.device
+        cameras = self.datamanager.train_dataset.cameras
 
-        if (
-            self.config.enable_augment and 
+        match self.config.augment_strategy:
+            case "none":
+                return self._strategy_augment_none(ray_bundle, batch, use_actor_shift=True)
+
+            case "full_prob":
+                return self._strategy_augment_full_prob(ray_bundle, batch, step, cameras, use_actor_shift=True)
+
+            case "partial_const":
+                return self._strategy_augment_partial_const(ray_bundle, batch, step, cameras, use_actor_shift=True)
+        
+            case _:
+                raise ValueError("Unrecognized augment strategy", self.config.augment_strategy)
+
+
+    def _strategy_augment_none(self, ray_bundle, batch, use_actor_shift=True):
+        model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
+        metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
+
+        if use_actor_shift and (actors := self.model.dynamic_actors).config.optimize_trajectories:
+            pos_norm = (actors.actor_positions - actors.initial_positions).norm(dim=-1)
+            metrics_dict["traj_opt_translation"] = (
+                pos_norm[pos_norm > 0].mean().nan_to_num()
+            )
+            metrics_dict["traj_opt_rotation"] = (
+                (actors.actor_rotations_6d - actors.initial_rotations_6d)[pos_norm > 0]
+                .norm(dim=-1)
+                .mean()
+                .nan_to_num()
+            )
+        loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+
+        return model_outputs, loss_dict, metrics_dict
+
+    def _strategy_augment_full_prob(self, ray_bundle, batch, step: int):
+        if not (
             self._is_augment_phase(step) and 
             (augment_event := (torch.rand(6) < torch.tensor(self.config.augment_probs)).any()) 
         ):
+            return self._strategy_no_augment(ray_bundle, batch, step)
 
-            ray_bundle = augment_ray_bundle(
-                ray_bundle,
-                self._get_augment_strength(step, augment_event).to(device),
-                self.datamanager.train_dataset.cameras,
-            )
-            model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
-            reduced_model_outputs = {"rgb": model_outputs["rgb"]}   
-            batch = self.pipe.get_diffusion_output(model_outputs)
+        ray_bundle = augment_ray_bundle(
+            ray_bundle,
+            self._get_augment_strength(step, augment_event).to(device),
+            self.datamanager.train_dataset.cameras,
+        )
+        model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
+        reduced_model_outputs = {"rgb": model_outputs["rgb"]}   
+        batch = self.pipe.get_diffusion_output(model_outputs)
 
-            metrics_dict = self.pipe.get_diffusion_metrics(reduced_model_outputs, batch)
-            loss_dict = self.pipe.get_diffusion_losses(reduced_model_outputs, batch, metrics_dict)
+        metrics_dict = self.pipe.get_diffusion_metrics(reduced_model_outputs, batch)
+        loss_dict = self.pipe.get_diffusion_losses(reduced_model_outputs, batch, metrics_dict)
 
-        else:
-            model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
-            metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
+        model_outputs.update({("aug_" + k):v for k,v in model_outputs.items()})
+        loss_dict.update({("aug_" + k):v for k,v in loss_dict.items()})
+        metrics_dict.update({("aug_" + k):v for k,v in metrics_dict.items()})
 
-            if (actors := self.model.dynamic_actors).config.optimize_trajectories:
-                pos_norm = (actors.actor_positions - actors.initial_positions).norm(dim=-1)
-                metrics_dict["traj_opt_translation"] = (
-                    pos_norm[pos_norm > 0].mean().nan_to_num()
-                )
-                metrics_dict["traj_opt_rotation"] = (
-                    (actors.actor_rotations_6d - actors.initial_rotations_6d)[pos_norm > 0]
-                    .norm(dim=-1)
-                    .mean()
-                    .nan_to_num()
-                )
+        return model_outputs, loss_dict, metrics_dict
 
-            loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+
+    def _strategy_augment_partial_const(self, ray_bundle, batch, step: int, cameras, use_actor_shift: bool = False):
+        model_outputs, loss_dict, metrics_dict = self._strategy_augment_none(ray_bundle, batch, use_actor_shift)
+        if not self._is_augment_phase(step):
+            return model_outputs, loss_dict, metrics_dict
+
+        aug_strength = self._get_augment_strength(step)
+        aug_ray_bundle = augment_ray_bundle(ray_bundle, aug_strength, cameras)
+        aug_outputs = self.model(aug_ray_bundle, patch_size=self.config.ray_patch_size)
+
+        aug_batch = self.pipe.get_diffusion_output(model_outputs)
+        aug_metrics_dict = self.pipe.get_diffusion_metrics(aug_outputs, aug_batch)
+        aug_loss_dict = self.pipe.get_diffusion_losses(aug_outputs, aug_batch, aug_metrics_dict)
+        aug_loss_dict = {k:v*self.config.diffusion_loss_mult for k,v in aug_loss_dict.items()} 
+
+        model_outputs.update({("aug_" + k):v for k,v in aug_outputs.items()})
+        loss_dict.update({("aug_" + k):v for k,v in aug_loss_dict.items()})
+        metrics_dict.update({("aug_" + k):v for k,v in aug_metrics_dict.items()})
 
         return model_outputs, loss_dict, metrics_dict
 
@@ -203,11 +245,11 @@ class ImagineDrivingPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
+
         ray_bundle, batch = self.datamanager.next_eval(step)
         model_outputs = self.model(ray_bundle, patch_size=self.config.ray_patch_size)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
-        self.train()
         return model_outputs, loss_dict, metrics_dict
 
     @profiler.time_function
@@ -219,6 +261,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
+
         # Image eval
         camera, batch = self.datamanager.next_eval_image(step)
         outputs = self.model.get_outputs_for_camera(camera)
@@ -235,7 +278,6 @@ class ImagineDrivingPipeline(VanillaPipeline):
         assert not set(lidar_metrics_dict.keys()).intersection(metrics_dict.keys())
         metrics_dict.update(lidar_metrics_dict)
 
-        self.train()
         return metrics_dict, images_dict
 
     @profiler.time_function
@@ -424,7 +466,6 @@ class ImagineDrivingPipeline(VanillaPipeline):
                     actor_fids[edit_type].compute().item()
                 )
 
-        self.train()
         return metrics_dict
 
     @staticmethod
@@ -594,7 +635,7 @@ def rotate_around(theta, dim: int, device=None) -> torch.Tensor:
     return torch.tensor(r, device=device, dtype=torch.float32)
 
 
-def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: FloatTensor, cameras: Cameras) -> RayBundle:
+def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: Tensor, cameras: Cameras) -> RayBundle:
     new_ray_bundle = deepcopy(ray_bundle)   # In case ground truth needs original ray_bundle
     device = new_ray_bundle.origins.device
 
@@ -606,16 +647,16 @@ def augment_ray_bundle(ray_bundle: RayBundle, augment_strength: FloatTensor, cam
     
     cam_idxs = ray_bundle.camera_indices[is_cam, 0].cpu()                         # Bc
     c2w = cameras.camera_to_worlds[cam_idxs].to(device=device)                    # Bc, 3, 4
-    translation = torch.einsum("Brw,w->Br", c2w[..., :3], aug_translation) + c2w[..., :3, 3]
+    translation = c2w[..., :3] @ aug_translation + c2w[..., :3, 3]
 
     rotation = (        # Chain together rotations, X -> Y -> Z
         rotate_around(aug_rotation[2], 2) @
         rotate_around(aug_rotation[1], 1) @
         rotate_around(aug_rotation[0], 0) 
-    )
-    direction = torch.einsum("wh,Bh->Bw", rotation, ray_bundle.directions[is_cam.flatten()])
+    ).to(device)
+    direction = ray_bundle.directions[is_cam.flatten()] @ rotation.T
 
-    new_ray_bundle.origins[is_cam.flatten()] += translation
-    new_ray_bundle.directions[is_cam.flatten()] = direction
+    new_ray_bundle.origins[is_cam.flatten()] += translation.to(new_ray_bundle.origins.dtype)
+    new_ray_bundle.directions[is_cam.flatten()] = direction.to(new_ray_bundle.directions.dtype)
     
     return new_ray_bundle
