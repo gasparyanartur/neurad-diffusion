@@ -178,7 +178,7 @@
       "console": "integratedTerminal",
       "justMyCode": true,
       "args": [
-        "camera-path",
+        "dataset",
         "--help"
       ]
     },
