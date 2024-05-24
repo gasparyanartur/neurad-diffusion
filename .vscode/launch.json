@@ -171,14 +171,14 @@
     },
     
     {
-      "name": "Python: ImagineDriving render help",
+      "name": "Python: neurad render help",
       "type": "python",
       "request": "launch",
       "program": "nerfstudio/scripts/render.py",
       "console": "integratedTerminal",
       "justMyCode": true,
       "args": [
-        "dataset",
+        "camera-path",
         "--help"
       ]
     },
