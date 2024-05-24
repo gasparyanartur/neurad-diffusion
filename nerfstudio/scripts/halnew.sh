@@ -36,7 +36,7 @@ seq=$(awk -v ArrayTaskID=$SLURM_ARRAY_TASK_ID '$1==ArrayTaskID {print $2}' $id_t
 echo "Starting training for $name with extra args ${@:2}"
 echo "Sequence $seq"
 
-export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/neurad_imaginedriving/$dataset-$method/$SLURM_JOB_ID"}
+export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/neurad_imaginedriving/$dataset-$method/$SLURM_ARRAY_JOB_ID"}
 mkdir -p $OUTPUT_DIR
 
 
@@ -74,7 +74,7 @@ singularity exec --nv \
     $method \
     --output-dir $OUTPUT_DIR \
     --vis wandb \
-    --experiment-name $name-$seq-$SLURM_ARRAY_TASK_ID \
+    --experiment-name $name-$seq-$SLURM_ARRAY_JOB_ID-$SLURM_ARRAY_TASK_ID \
     $MAYBE_RESUME_CMD \
     ${@:2} \
     ${dataset}-data \
