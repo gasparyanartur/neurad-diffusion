@@ -238,17 +238,23 @@ class SDPipe(DiffusionModel):
     def get_diffusion_output(
         self,
         sample: Dict[str, Any],
-        strength: float = 0.2,
-        denoising_start: int = None,
-        denoising_end: int = None,
-        original_size: Tuple[int, int] = (1024, 1024),
-        target_size: Tuple[int, int] = (1024, 1024),
-        prompt: str = default_prompt,
-        negative_prompt: str = default_negative_prompt,
-        num_steps: int = 50,
-        gen: torch.Generator | Iterable[torch.Generator] = None,
-        kwargs: Dict[str, Any] = None,
+        **kwargs,
     ):
+        """ Denoise image with diffusion model.
+        
+        Interesting kwargs:
+        - image
+        - generator
+        - output_type 
+        - strength
+        - denoising_start
+        - denoising_end
+        - num_inference_steps
+        - original_size
+        - target_size
+        - prompt_embeds
+        - negative_prompt_embeds
+        """
         image = sample["rgb"]
 
         if len(image.shape) == 3:
@@ -267,37 +273,14 @@ class SDPipe(DiffusionModel):
             image = image.permute(0, 3, 1, 2)       # Diffusion model is channel first
 
         kwargs = kwargs or {}
-        if prompt is not None:
-            with torch.no_grad():
-                tokens = tokenize_prompt(self.pipe.tokenizer, prompt).to(self.device)
-                prompt_embeds = encode_tokens(
-                    self.pipe.text_encoder, tokens, using_sdxl=False
-                )["embeds"]
-            prompt_embeds = prompt_embeds.expand(batch_size, -1, -1)
+        kwargs["image"] = image
+        kwargs["output_type"] = kwargs.get("output_type", "pt")
+        kwargs["strength"] = kwargs.get("strength", 0.2)
 
-        if negative_prompt is not None:
-            with torch.no_grad():
-                negative_tokens = tokenize_prompt(self.pipe.tokenizer, negative_prompt).to(
-                    self.device
-                )
-                negative_prompt_embeds = encode_tokens(
-                    self.pipe.text_encoder, negative_tokens, using_sdxl=False
-                )["embeds"]
-
-            negative_prompt_embeds = negative_prompt_embeds.expand(batch_size, -1, -1)
+        if not "prompt" in kwargs and not "negative_prompt" in kwargs and not "prompt_embeds" in kwargs and not "negative_prompt_embeds" in kwargs:
+            kwargs["prompt"] = ""
 
         image = self.pipe(
-            image=image,
-            generator=gen,
-            output_type="pt",
-            strength=strength,
-            denoising_start=denoising_start,
-            denoising_end=denoising_end,
-            num_inference_steps=num_steps,
-            original_size=original_size,
-            target_size=target_size,
-            prompt_embeds=prompt_embeds,
-            negative_prompt_embeds=negative_prompt_embeds,
             **kwargs,
         ).images
 

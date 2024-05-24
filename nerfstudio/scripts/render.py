@@ -908,6 +908,7 @@ class DatasetRender(BaseRender):
                 setattr(data_manager_config.dataparser, "downscale_factor", self.downscale_factor)
             # Remove any frame limit on the the dataparser
             config.pipeline.datamanager.dataparser.max_eval_frames = None
+            config.pipeline.datamanager.dataparser.cameras=("front_left",)
             return config
 
         config, pipeline, _, _ = eval_setup(

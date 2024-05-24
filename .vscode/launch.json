@@ -138,8 +138,8 @@
       "args": [
         "imaginedriving",
         "--vis=tensorboard",
-        "--pipeline.diffusion-config-path=configs/diffusion_model_configs.yml",
-        "--pipeline.diffusion_phase_step=1000",
+        "--pipeline.diffusion-config-path=configs/mock_model_configs.yml",
+        "--pipeline.diffusion_phase_step=0",
         "--pipeline.model.eval_num_rays_per_chunk=2048",
         "--pipeline.model.field.grid.static.hashgrid_dim=2",
         "--pipeline.model.field.grid.static.num_levels=4",
@@ -169,6 +169,35 @@
         "--help"
       ]
     },
+    
+    {
+      "name": "Python: neurad render help",
+      "type": "python",
+      "request": "launch",
+      "program": "nerfstudio/scripts/render.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "args": [
+        "camera-path",
+        "--help"
+      ]
+    },
+    {
+      "name": "Python: neurad render",
+      "type": "python",
+      "request": "launch",
+      "program": "nerfstudio/scripts/render.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "args": [
+        "dataset",
+        "--load-config=./nerfstudio/scripts/config.yml", 
+        "--data=/home/s0001899/dev/pandaset",
+        "--config-output-dir=/home/s0001899/dev/neurad_output/2024-05-23_091132/",
+      ]
+    },
+
+
     {
       "name": "Python: ImagineDriving CPU",
       "type": "python",

@@ -1,0 +1,6 @@
+model_config_params:
+  base_model_id: stabilityai/stable-diffusion-xl-base-1.0
+  model_name: sdxlbase
+model_forward_params:
+  base_num_steps: 50
+  base_strength: 0.1
