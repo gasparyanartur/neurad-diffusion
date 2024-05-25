@@ -1,7 +1,11 @@
 import torch
 from torch import nn
 from pathlib import Path
-from nerfstudio.models.diffusion import SDPipe, read_yaml, read_image
+from nerfstudio.models.diffusion_model import (
+    StableDiffusionModel,
+    read_yaml,
+    read_image,
+)
 import matplotlib.pyplot as plt
 import torchvision.transforms.v2 as tvtf
 import torchvision as tv
@@ -36,7 +40,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     diff_config = read_yaml(args.config_path)
 
-    pipe = SDPipe(diff_config)
+    pipe = StableDiffusionModel(diff_config)
     img_transform = tvtf.Compose(
         (
             tvtf.ConvertImageDtype(torch.float32),

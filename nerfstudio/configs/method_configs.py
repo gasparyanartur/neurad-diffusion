@@ -47,6 +47,7 @@ from nerfstudio.engine.optimizers import (
 )
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 from nerfstudio.engine.trainer import TrainerConfig
+from nerfstudio.models.diffusion_model import DiffusionModelConfig, DiffusionModelId, DiffusionModelType
 from nerfstudio.models.lidar_nerfacto import LidarNerfactoModelConfig
 from nerfstudio.models.nerfacto import NerfactoModelConfig
 from nerfstudio.models.neurad import NeuRADModelConfig
@@ -430,7 +431,16 @@ method_configs["imaginedriving"] = TrainerConfig(
         model=NeuRADModelConfig(
             eval_num_rays_per_chunk=1 << 15,
             camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
-            rgb_upsample_factor=4
+            rgb_upsample_factor=4,
+        ),
+        diffusion_model=DiffusionModelConfig(
+            model_type=DiffusionModelType.sd, 
+            model_id=DiffusionModelId.sd_v2_1,
+            low_mem_mode=False,
+            compile_model=True,
+            lora_weights=None,
+            noise_strength=0.2,
+            num_inference_steps=50
         ),
         augment_phase_step=1000,
     ),
