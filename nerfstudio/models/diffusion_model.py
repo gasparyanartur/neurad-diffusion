@@ -4,32 +4,30 @@ from typing import Any, Dict, Tuple, Type, Union, Optional
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 import logging
+import itertools as it
+import yaml
 
+import numpy as np
 import torch
 from torch import Tensor, nn
 
-from diffusers import StableDiffusionXLImg2ImgPipeline, StableDiffusionImg2ImgPipeline
-from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import (
-    retrieve_latents,
-)
+from diffusers import StableDiffusionImg2ImgPipeline
 from diffusers.image_processor import VaeImageProcessor
 from diffusers import AutoencoderKL
 
-import numpy as np
-import yaml
-import torchvision
 
-from nerfstudio.configs.base_config import InstantiateConfig
+import torchvision
 
 torchvision.disable_beta_transforms_warning()
 from torchvision.transforms import v2 as transform
 from torchmetrics.image import PeakSignalNoiseRatio
 
+from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
 
-default_prompt = "dashcam recording, urban driving scene, video, autonomous driving, detailed cars, traffic scene, pandaset, kitti, high resolution, realistic, detailed, camera video, dslr, ultra quality, sharp focus, crystal clear, 8K UHD, 10 Hz capture frequency 1/2.7 CMOS sensor, 1920x1080"
-default_negative_prompt = "face, human features, unrealistic, artifacts, blurry, noisy image, NeRF, oil-painting, art, drawing, poor geometry, oversaturated, undersaturated, distorted, bad image, bad photo"
+from nerfstudio.configs.base_config import InstantiateConfig
 
 
 def get_device():
@@ -133,6 +131,53 @@ class DiffusionModelId:
 class DiffusionModelType:
     sd: str = "sd"
     mock: str = "mock"
+
+
+def tokenize_prompt(
+    tokenizer: CLIPTokenizer, prompt: Union[str, Iterable[str]]
+) -> torch.Tensor:
+    text_inputs = tokenizer(
+        prompt,
+        padding="max_length",
+        max_length=tokenizer.model_max_length,
+        truncation=True,
+        return_tensors="pt",
+    )
+    tokens = text_inputs.input_ids
+    return tokens
+
+
+def encode_tokens(
+    text_encoder: Union[CLIPTextModel, CLIPTextModelWithProjection],
+    tokens: torch.Tensor,
+) -> torch.Tensor:
+    prompt_embeds = text_encoder(tokens.to(text_encoder.device))
+    return prompt_embeds.last_hidden_state
+
+
+@lru_cache(maxsize=4)
+def _embed_hashable_prompt(
+    tokenizer: CLIPTokenizer,
+    text_encoder: Union[CLIPTextModel, CLIPTextModelWithProjection],
+    prompt: Union[str, Tuple[str, ...]],
+) -> torch.Tensor:
+    tokens = tokenize_prompt(tokenizer, prompt)
+    embeddings = encode_tokens(text_encoder, tokens)
+    return embeddings
+
+
+def embed_prompt(
+    tokenizer: CLIPTokenizer,
+    text_encoder: Union[CLIPTextModel, CLIPTextModelWithProjection],
+    prompt: Union[str, Tuple[str, ...]],
+) -> torch.Tensor:
+    if not isinstance(
+        prompt, str
+    ):  # Convert list to tuple to make it hashable for memoization
+        prompt = tuple(prompt)
+
+    embeddings = _embed_hashable_prompt(tokenizer, text_encoder, prompt)
+    return embeddings
 
 
 @dataclass
@@ -331,6 +376,8 @@ class StableDiffusionModel(DiffusionModel):
         if len(image.shape) == 3:
             image = image[None, ...]
 
+        batch_size = len(image)
+
         if image.size(1) == 3:
             channel_first = True
         elif image.size(3) == 3:
@@ -350,26 +397,49 @@ class StableDiffusionModel(DiffusionModel):
         )
 
         if (
-            not "prompt" in kwargs
-            and not "negative_prompt" in kwargs
-            and not "prompt_embeds" in kwargs
-            and not "negative_prompt_embeds" in kwargs
+            "generator" in kwargs
+            and isinstance(kwargs["generator"], torch.Generator)
+            and batch_size > 1
         ):
-            kwargs["prompt"] = ""
+            raise ValueError(f"Number of generators must match number of images")
 
-        # Repeat the items which need to be given as a batch
-        batch_size = len(image)
-        for key in ["prompt", "negative_prompt", "prompt_embeds", "negative_prompt_embeds", "generator"]:
-            if key not in kwargs:
-                continue
+        # Convert any existing prompts to prompt embeddings, utilizing memoization.
+        # Ensure there is at least one prompt embedding passed to the pipeline.
+        prompt_embed_keys = []
+        for prefix, suffix in it.product(["", "negative_"], ["", "_two"]):
+            prompt_key = f"{prefix}prompt{suffix}"
+            prompt_embed_key = f"{prefix}prompt_embeds{suffix}"
 
-            value = kwargs[key]
-            if isinstance(value, (str, torch.Generator)):
-                kwargs[key] = [value for _ in range(batch_size)]
-            elif isinstance(value, torch.Tensor):
-                kwargs[key] = [value for _ in range]
+            if prompt_key in kwargs:
+                prompt_embed_keys.append(prompt_embed_key)
+                prompt = kwargs.pop(prompt_key)
+                if prompt_embed_key not in kwargs:
+                    with torch.no_grad():
+                        kwargs[prompt_embed_key] = embed_prompt(
+                            self.pipe.tokenizer, self.pipe.text_encoder, prompt
+                        )
 
+            if prompt_embed_key in kwargs:
+                prompt_embed_keys.append(prompt_embed_key)
 
+        # If no promp embed keys were passed, create one from an empty prompt
+        if not prompt_embed_keys:
+            prompt_embed_keys.append("prompt_embeds")
+            with torch.no_grad():
+                kwargs["prompt_embeds"] = embed_prompt(
+                    self.pipe.tokenizer, self.pipe.text_encoder, ""
+                )
+
+        # Ensure batch size of prompts matches batch size of images
+        for prompt_embed_key in prompt_embed_keys:
+            if len(kwargs[prompt_embed_key].shape) == 2:
+                kwargs[prompt_embed_key] = kwargs[prompt_embed_key][None, ...]
+
+            if kwargs[prompt_embed_key].size(0) == 1 and batch_size > 1:
+                embed_size = kwargs[prompt_embed_key].shape
+                kwargs[prompt_embed_key] = kwargs[prompt_embed_key].expand(
+                    batch_size * embed_size[0], embed_size[1], embed_size[2]
+                )
 
         image = self.pipe(
             **kwargs,
