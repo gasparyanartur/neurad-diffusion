@@ -357,6 +357,20 @@ class StableDiffusionModel(DiffusionModel):
         ):
             kwargs["prompt"] = ""
 
+        # Repeat the items which need to be given as a batch
+        batch_size = len(image)
+        for key in ["prompt", "negative_prompt", "prompt_embeds", "negative_prompt_embeds", "generator"]:
+            if key not in kwargs:
+                continue
+
+            value = kwargs[key]
+            if isinstance(value, (str, torch.Generator)):
+                kwargs[key] = [value for _ in range(batch_size)]
+            elif isinstance(value, torch.Tensor):
+                kwargs[key] = [value for _ in range]
+
+
+
         image = self.pipe(
             **kwargs,
         ).images

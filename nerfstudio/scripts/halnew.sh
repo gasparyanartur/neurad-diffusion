@@ -25,23 +25,23 @@ fi
 method=${METHOD:-imaginedriving}
 dataset=${DATASET:-pandaset}
 cameras=${CAMERAS:-front}
+job_id=${SLURM_ARRAY_JOB_ID:-"000000"}
+task_id=${SLURM_ARRAY_TASK_ID:-"1"}
+image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-24_05_24.sif"}
+
 # Specify the path to the config file
 id_to_seq=nerfstudio/scripts/arrays/${dataset}_id_to_seq${ARRAY_SUFFIX}.txt
 
 # Extract the sample name for the current $SLURM_ARRAY_TASK_ID
-seq=$(awk -v ArrayTaskID=$SLURM_ARRAY_TASK_ID '$1==ArrayTaskID {print $2}' $id_to_seq)
+seq=$(awk -v ArrayTaskID=$task_id '$1==ArrayTaskID {print $2}' $id_to_seq)
 [[ -z $seq ]] && exit 1
 
 # For each sequence, start the training
 echo "Starting training for $name with extra args ${@:2}"
 echo "Sequence $seq"
 
-export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/neurad_imaginedriving/$dataset-$method/$SLURM_ARRAY_JOB_ID"}
+export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/neurad_imaginedriving/$dataset-$method/$job_id"}
 mkdir -p $OUTPUT_DIR
-
-
-image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-03_05_24.sif"}
-
 
 if [ -z ${LOAD_NAME+x} ]; then
     MAYBE_RESUME_CMD=""
@@ -74,7 +74,7 @@ singularity exec --nv \
     $method \
     --output-dir $OUTPUT_DIR \
     --vis wandb \
-    --experiment-name $name-$seq-$SLURM_ARRAY_JOB_ID-$SLURM_ARRAY_TASK_ID \
+    --experiment-name $name-$seq-$job_id-$task_id \
     $MAYBE_RESUME_CMD \
     ${@:2} \
     ${dataset}-data \

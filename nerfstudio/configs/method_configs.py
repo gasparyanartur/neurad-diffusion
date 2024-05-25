@@ -442,7 +442,8 @@ method_configs["imaginedriving"] = TrainerConfig(
             noise_strength=0.2,
             num_inference_steps=50
         ),
-        augment_phase_step=1000,
+        augment_phase_step=0,
+        augment_strategy="partial_const",
     ),
     optimizers={
         "trajectory_opt": {
