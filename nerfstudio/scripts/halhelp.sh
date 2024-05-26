@@ -7,6 +7,7 @@
 
 image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-03_05_24.sif"}
 method=${METHOD:-imaginedriving}
+runscript=${RUNSCRIPT:-"train.py"}
 
 singularity exec --nv \
     --bind $PWD:/nerfstudio \

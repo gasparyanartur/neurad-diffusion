@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --nodes 1
 #SBATCH --gpus 1
-#SBATCH -c 32
 #SBATCH --mem 100G
 #SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/neurad_imaginedriving/slurm/%j_%a.out
 #SBATCH --job-name=neurad_imaginedriving

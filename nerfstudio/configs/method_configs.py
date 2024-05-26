@@ -437,12 +437,13 @@ method_configs["imaginedriving"] = TrainerConfig(
             model_type=DiffusionModelType.sd, 
             model_id=DiffusionModelId.sd_v2_1,
             low_mem_mode=False,
-            compile_model=True,
-            lora_weights=None,
+            compile_model=False,
+            #lora_weights=None,
+            lora_weights="/staging/agp/masterthesis/nerf-thesis-shared/output/finetune/sd_v2_1/322198/checkpoint-124950/322198/pytorch_lora_weights.safetensors",
             noise_strength=0.2,
             num_inference_steps=50
         ),
-        augment_phase_step=0,
+        augment_phase_step=1000,
         augment_strategy="partial_const",
     ),
     optimizers={

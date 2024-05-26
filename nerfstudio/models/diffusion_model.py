@@ -241,6 +241,10 @@ class DiffusionModel(ABC):
             DiffusionModelType.mock: MockDiffusionModel,
         }
         model = model_type_to_constructor[config.model_type]
+
+        if config.compile_model and config.lora_weights:
+            logging.warning("Compiling the model currently leads to a bug when a LoRA is loaded, proceed with caution")
+
         return model(config=config, **kwargs)
 
 
