@@ -1,3 +1,0 @@
-PYTHONPATH='.' WANDB_API_KEY=$WANDB_API_KEY srun --gpus=1 singularity exec --nv --bind /$PWD:/nerfstudio --bind /staging:/staging --bind /workspaces:/workspaces --bind /datasets:/datasets -
--env WANDB_API_KEY=$WANDB_API_KEY /staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-03_05_24.sif python3.10 -u nerfstudio/scripts/train.py neurad --output-dir /staging/agp/masterthesis/nerf-thesis-shared/logs/neurad
-_train_one_camera --vis wandb --experiment-name neurad_one_camera ${@:2} pandaset-data --data /staging/agp/datasets/pandaset --sequence 001 --cameras "front"
