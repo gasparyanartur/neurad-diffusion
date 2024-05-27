@@ -1,4 +1,7 @@
 Diffusion:
+
+    Add textual inversion before diffusion
+
     Benchmark:
         Trained vs Untrained
         Shifted NeuRAD outputs (where we have ground truth - Front Left / Front )
@@ -28,8 +31,10 @@ Diffusion:
 
 NeuRAD:
     (note: Disable Camera Optimization)
-    
+
     Base NeuRAD vs Base Diffusion vs Diffusion Lora (vs Diffusion ControlNet Lora)  (plot metrics over time)
+
+    Noise scheudling during trianing (less towards end !)
 
     Generate Plots for different
         Image + Metrics
