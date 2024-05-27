@@ -4,8 +4,9 @@ model:
     model_id: "stabilityai/stable-diffusion-2-1"
     low_mem_mode: False
     compile_model: True
-    lora_weights: null
+    lora_weights: "/staging/agp/masterthesis/nerf-thesis-shared/output/finetune/sd_v2_1/322198/checkpoint-124950/322198/pytorch_lora_weights.safetensors"
+    #lora_weights: null
 
   model_forward_params: 
     strength: 0.2
-    num_steps: 20
+    num_steps: 50

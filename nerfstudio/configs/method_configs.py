@@ -47,6 +47,7 @@ from nerfstudio.engine.optimizers import (
 )
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 from nerfstudio.engine.trainer import TrainerConfig
+from nerfstudio.models.diffusion_model import DiffusionModelConfig, DiffusionModelId, DiffusionModelType
 from nerfstudio.models.lidar_nerfacto import LidarNerfactoModelConfig
 from nerfstudio.models.nerfacto import NerfactoModelConfig
 from nerfstudio.models.neurad import NeuRADModelConfig
@@ -364,11 +365,10 @@ method_configs["neurad"] = TrainerConfig(
     max_num_iterations=20001,
     mixed_precision=True,
     pipeline=ADPipelineConfig(
-        calc_fid_steps=(99999999,),
+        calc_fid_steps=tuple(range(0, 20001, 5000)),
         datamanager=ADDataManagerConfig(
             dataparser=PandaSetDataParserConfig(
                 add_missing_points=True,
-                #cameras=("front",)
             )
         ),
         model=NeuRADModelConfig(
@@ -431,9 +431,20 @@ method_configs["imaginedriving"] = TrainerConfig(
         model=NeuRADModelConfig(
             eval_num_rays_per_chunk=1 << 15,
             camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
-            rgb_upsample_factor=4
+            rgb_upsample_factor=4,
         ),
-        diffusion_phase_step=1000,
+        diffusion_model=DiffusionModelConfig(
+            model_type=DiffusionModelType.sd, 
+            model_id=DiffusionModelId.sd_v2_1,
+            low_mem_mode=False,
+            compile_model=False,
+            #lora_weights=None,
+            lora_weights="/staging/agp/masterthesis/nerf-thesis-shared/output/finetune/sd_v2_1/322198/checkpoint-124950/322198/pytorch_lora_weights.safetensors",
+            noise_strength=0.2,
+            num_inference_steps=50
+        ),
+        augment_phase_step=1000,
+        augment_strategy="partial_const",
     ),
     optimizers={
         "trajectory_opt": {

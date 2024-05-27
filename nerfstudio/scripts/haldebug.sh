@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --nodes 1
 #SBATCH --gpus 1
-#SBATCH --cpus-per-task 1
 #SBATCH --mem 100G
 #SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/neurad_imaginedriving/slurm/%j_%a.out
 #SBATCH --job-name=neurad_imaginedriving
@@ -12,6 +11,10 @@
 # crash if no argument is given
 name=${1:?"No name given"}
 
+export WANDB_RUN_GROUP=$name
+export WANDB_ENTITY=arturruiqi
+export WANDB_PROJECT=neurad
+
 wandb_api_key=${WANDB_API_KEY}
 if [ -z ${wandb_api_key} ]; then
     echo "WANDB_API_KEY not set. Exiting."
@@ -20,23 +23,24 @@ fi
 
 method=${METHOD:-imaginedriving}
 dataset=${DATASET:-pandaset}
+cameras=${CAMERAS:-front}
+job_id=${SLURM_ARRAY_JOB_ID:-"000000"}
+task_id=${SLURM_ARRAY_TASK_ID:-"1"}
+image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-24_05_24.sif"}
+
 # Specify the path to the config file
 id_to_seq=nerfstudio/scripts/arrays/${dataset}_id_to_seq${ARRAY_SUFFIX}.txt
 
 # Extract the sample name for the current $SLURM_ARRAY_TASK_ID
-seq=$(awk -v ArrayTaskID=$SLURM_ARRAY_TASK_ID '$1==ArrayTaskID {print $2}' $id_to_seq)
+seq=$(awk -v ArrayTaskID=$task_id '$1==ArrayTaskID {print $2}' $id_to_seq)
 [[ -z $seq ]] && exit 1
 
 # For each sequence, start the training
 echo "Starting training for $name with extra args ${@:2}"
 echo "Sequence $seq"
 
-export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/neurad_imaginedriving/$DATASET-$METHOD/$SLURM_JOB_ID"}
+export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/neurad_imaginedriving/$dataset-$method/$job_id"}
 mkdir -p $OUTPUT_DIR
-
-
-image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-03_05_24.sif"}
-
 
 if [ -z ${LOAD_NAME+x} ]; then
     MAYBE_RESUME_CMD=""
@@ -58,6 +62,7 @@ else
     exit 1
 fi
 
+
 singularity exec --nv \
     --bind $PWD:/nerfstudio \
     --bind /staging:/staging \
@@ -68,7 +73,7 @@ singularity exec --nv \
     python3.10 -m pdb nerfstudio/scripts/train.py \
     $method \
     --output-dir $OUTPUT_DIR \
-    --vis wandb \
+    --vis tensorboard \
     --experiment-name $name-$seq \
     $MAYBE_RESUME_CMD \
     --pipeline.datamanager.num-processes 0 \
@@ -77,7 +82,7 @@ singularity exec --nv \
     --data $dataset_root \
     --sequence $seq \
     --cameras "front" \
-    --dataset_end_fraction 0.05
+    --sequence=001
     $DATAPARSER_ARGS
 #
 #EOF

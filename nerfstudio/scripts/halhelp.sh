@@ -6,6 +6,7 @@
 
 
 image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-03_05_24.sif"}
+runscript=${RUNSCRIPT:-"train.py"}
 method=${METHOD:-imaginedriving}
 
 singularity exec --nv \
@@ -14,6 +15,7 @@ singularity exec --nv \
     --bind /workspaces:/workspaces \
     --bind /datasets:/datasets \
     $image_path \
-    python3.10 nerfstudio/scripts/train.py $method --help
+    python3.10 nerfstudio/scripts/$runscript \
+    ${@:1} --help
 #
 #EOF
