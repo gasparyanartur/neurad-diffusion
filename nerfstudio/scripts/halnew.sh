@@ -42,6 +42,7 @@ echo "Sequence $seq"
 
 export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/neurad_imaginedriving/$dataset-$method/$job_id"}
 mkdir -p $OUTPUT_DIR
+chmod 775 -R $OUTPUT_DIR
 
 if [ -z ${LOAD_NAME+x} ]; then
     MAYBE_RESUME_CMD=""
@@ -82,5 +83,8 @@ singularity exec --nv \
     --sequence $seq \
     --cameras $cameras \
     $DATAPARSER_ARGS
+
+chmod 775 -R $OUTPUT_DIR
+
 #
 #EOF

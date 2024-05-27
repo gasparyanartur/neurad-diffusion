@@ -9,48 +9,25 @@
 #SBATCH --partition zprodlow
 
 
-# crash if no argument is given
-name=${1:?"No name given"}
-
-export WANDB_RUN_GROUP=$name
-export WANDB_ENTITY=arturruiqi
-export WANDB_PROJECT=neurad
-
-wandb_api_key=${WANDB_API_KEY}
-if [ -z ${wandb_api_key} ]; then
-    echo "WANDB_API_KEY not set. Exiting."
+configpath=${CONFIGPATH}
+if [ -z ${configpath} ]; then
+    echo "configpath not set. Exiting."
     exit 1;
 fi
 
-method=${METHOD:-neurad}
 dataset=${DATASET:-pandaset}
-cameras=${CAMERAS:-all}
+outputpath=${OUTPUTPATH:-renders}
+subcommand=${SUBCOMMAND:-dataset}
+image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-24_05_24.sif"}
 # Specify the path to the config file
-id_to_seq=nerfstudio/scripts/arrays/${dataset}_id_to_seq${ARRAY_SUFFIX}.txt
+id_to_seq=nerfstudio/scripts/arrays/${dataset}_id_to_seq.txt
+slurm_array_task_id=${SLURM_ARRAY_TASK_ID:-1}
 
 # Extract the sample name for the current $SLURM_ARRAY_TASK_ID
-seq=$(awk -v ArrayTaskID=$SLURM_ARRAY_TASK_ID '$1==ArrayTaskID {print $2}' $id_to_seq)
+seq=$(awk -v ArrayTaskID=$slurm_array_task_id '$1==ArrayTaskID {print $2}' $id_to_seq)
 [[ -z $seq ]] && exit 1
 
-# For each sequence, start the training
-echo "Starting training for $name with extra args ${@:2}"
 echo "Sequence $seq"
-
-export OUTPUT_DIR=${OUTPUT_DIR:="/staging/agp/masterthesis/nerf-thesis-shared/output/$dataset-$method/$SLURM_ARRAY_JOB_ID"}
-mkdir -p $OUTPUT_DIR
-
-
-image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-03_05_24.sif"}
-
-
-if [ -z ${LOAD_NAME+x} ]; then
-    MAYBE_RESUME_CMD=""
-else
-    echo "LOAD_NAME specified in environment, resuming from $LOAD_NAME"
-    checkpoints=( $(ls outputs/$LOAD_NAME-$seq/$method/*/nerfstudio_models/*.ckpt) )
-    MAYBE_RESUME_CMD="--load-checkpoint=${checkpoints[-1]}"
-fi
-
 
 if [ "$dataset" == "zod" ]; then
     dataset_root="/staging/dataset_donation/round_2"
@@ -70,17 +47,11 @@ singularity exec --nv \
     --bind /datasets:/datasets \
     --env WANDB_API_KEY=$wandb_api_key \
     $image_path \
-    python3.10 -u nerfstudio/scripts/train.py \
-    $method \
-    --output-dir $OUTPUT_DIR \
-    --vis wandb \
-    --experiment-name $name-$seq-$SLURM_ARRAY_JOB_ID-$SLURM_ARRAY_TASK_ID \
-    $MAYBE_RESUME_CMD \
-    ${@:2} \
-    ${dataset}-data \
-    --data $dataset_root \
-    --sequence $seq \
-    --cameras $cameras \
-    $DATAPARSER_ARGS
+    python3.10 -u nerfstudio/scripts/render.py \
+    $subcommand \
+    --load-config $configpath \
+    --output-path $outputpath \
+    ${@:1} \
+
 #
 #EOF
