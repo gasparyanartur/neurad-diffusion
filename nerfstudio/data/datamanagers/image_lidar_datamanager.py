@@ -30,12 +30,23 @@ from typing_extensions import Literal
 from nerfstudio.cameras.lidars import Lidars
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.data.datamanagers.base_datamanager import TDataset
-from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager, ParallelDataManagerConfig
+from nerfstudio.data.datamanagers.parallel_datamanager import (
+    ParallelDataManager,
+    ParallelDataManagerConfig,
+)
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from nerfstudio.data.datasets.base_dataset import InputDataset
 from nerfstudio.data.datasets.lidar_dataset import LidarDataset
-from nerfstudio.data.pixel_samplers import LidarPointSampler, LidarPointSamplerConfig, PixelSampler
-from nerfstudio.data.utils.dataloaders import CacheDataloader, FixedIndicesEvalDataloader, RandIndicesEvalDataloader
+from nerfstudio.data.pixel_samplers import (
+    LidarPointSampler,
+    LidarPointSamplerConfig,
+    PixelSampler,
+)
+from nerfstudio.data.utils.dataloaders import (
+    CacheDataloader,
+    FixedIndicesEvalDataloader,
+    RandIndicesEvalDataloader,
+)
 from nerfstudio.data.utils.nerfstudio_collate import nerfstudio_collate
 from nerfstudio.model_components.ray_generators import LidarRayGenerator, RayGenerator
 
@@ -150,7 +161,13 @@ class ImageLidarDataProcessor(mp.Process):  # type: ignore
     def get_batch_and_ray_bundle(self):
         img_batch, img_ray_bundle = self.get_image_batch_and_ray_bundle()
         lidar_batch, lidar_ray_bundle = self.get_lidar_batch_and_ray_bundle()
-        return _merge_img_lidar(img_ray_bundle, img_batch, lidar_ray_bundle, lidar_batch, len(self.image_dataset))
+        return _merge_img_lidar(
+            img_ray_bundle,
+            img_batch,
+            lidar_ray_bundle,
+            lidar_batch,
+            len(self.image_dataset),
+        )
 
     def get_image_batch_and_ray_bundle(self):
         if not len(self.image_dataset.cameras):
@@ -165,7 +182,9 @@ class ImageLidarDataProcessor(mp.Process):  # type: ignore
             return None, None
         batch = self.point_sampler.sample(self.cached_points)
         ray_indices = batch.pop("indices")
-        ray_bundle: RayBundle = self.lidar_ray_generator(ray_indices, points=batch["lidar"])
+        ray_bundle: RayBundle = self.lidar_ray_generator(
+            ray_indices, points=batch["lidar"]
+        )
         return batch, ray_bundle
 
 
@@ -223,12 +242,25 @@ class ImageLidarDataManager(ParallelDataManager):
         self.train_lidar_ray_generator = LidarRayGenerator(
             self.train_lidar_dataset.lidars,
         )
+        self.train_ray_generator = RayGenerator(
+            self.train_dataset.cameras
+        )
         # Cache jointly to allow memory sharing between processes
-        cached_images = _cache_images(self.train_dataset, self.config.max_thread_workers, self.config.collate_fn)
-        cached_points = _cache_points(self.train_lidar_dataset, self.config.max_thread_workers, lidar_packed_collate)
-        self.data_queue = mp.Queue(maxsize=self.config.queue_size) if self.use_mp else None
+        cached_images = _cache_images(
+            self.train_dataset, self.config.max_thread_workers, self.config.collate_fn
+        )
+        cached_points = _cache_points(
+            self.train_lidar_dataset,
+            self.config.max_thread_workers,
+            lidar_packed_collate,
+        )
+        self.data_queue = (
+            mp.Queue(maxsize=self.config.queue_size) if self.use_mp else None
+        )
         # Create an individual queue for passing functions to each process
-        self.func_queues = [mp.Queue() for _ in range(max(self.config.num_processes, 1))]
+        self.func_queues = [
+            mp.Queue() for _ in range(max(self.config.num_processes, 1))
+        ]
         self.data_procs = [
             ImageLidarDataProcessor(
                 out_queue=self.data_queue,
@@ -291,7 +323,9 @@ class ImageLidarDataManager(ParallelDataManager):
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
-        ray_bundle, batch = self.next_batch if self.next_batch is not None else self._get_from_queue()
+        ray_bundle, batch = (
+            self.next_batch if self.next_batch is not None else self._get_from_queue()
+        )
         if self.use_mp:
             self.next_batch = self._get_from_queue()  # prefetch next batch
         return ray_bundle, batch
@@ -303,7 +337,9 @@ class ImageLidarDataManager(ParallelDataManager):
             # Manually call the data processing function (not in parallel)
             ray_bundle, batch = self.data_procs[0].get_batch_and_ray_bundle()
         ray_bundle = ray_bundle.to(self.device, non_blocking=self.use_mp)
-        batch = {k: v.to(self.device, non_blocking=self.use_mp) for k, v in batch.items()}
+        batch = {
+            k: v.to(self.device, non_blocking=self.use_mp) for k, v in batch.items()
+        }
         return ray_bundle, batch
 
     def next_eval(self, step: int) -> Tuple[RayBundle, Dict]:
@@ -316,11 +352,17 @@ class ImageLidarDataManager(ParallelDataManager):
         if len(self.eval_lidar_dataset.lidars):
             lidar_batch = next(self.iter_eval_lidar_dataloader)
             lidar_batch = self.eval_point_sampler.sample(lidar_batch)
-            lidar_ray_bundle = self.eval_lidar_ray_generator(lidar_batch.pop("indices"), points=lidar_batch["lidar"])
+            lidar_ray_bundle = self.eval_lidar_ray_generator(
+                lidar_batch.pop("indices"), points=lidar_batch["lidar"]
+            )
         else:
             lidar_ray_bundle, lidar_batch = None, None
         return _merge_img_lidar(
-            img_ray_bundle, img_batch, lidar_ray_bundle, lidar_batch, len(self.eval_dataset.cameras)
+            img_ray_bundle,
+            img_batch,
+            lidar_ray_bundle,
+            lidar_batch,
+            len(self.eval_dataset.cameras),
         )
 
     def get_num_train_data(self) -> int:
@@ -391,16 +433,24 @@ def _merge_img_lidar(
     if img_ray_bundle is not None:
         assert img_batch is not None
         device = img_ray_bundle.origins.device
-        img_batch["is_lidar"] = torch.zeros((len(img_ray_bundle), 1), dtype=torch.bool, device=device)
-        img_batch["did_return"] = torch.ones((len(img_ray_bundle), 1), dtype=torch.bool, device=device)
+        img_batch["is_lidar"] = torch.zeros(
+            (len(img_ray_bundle), 1), dtype=torch.bool, device=device
+        )
+        img_batch["did_return"] = torch.ones(
+            (len(img_ray_bundle), 1), dtype=torch.bool, device=device
+        )
         img_ray_bundle.metadata["is_lidar"] = img_batch["is_lidar"]
         img_batch["img_indices"] = img_batch.pop("indices")
-        img_ray_bundle.metadata["did_return"] = torch.ones((len(img_ray_bundle), 1), dtype=torch.bool, device=device)
+        img_ray_bundle.metadata["did_return"] = torch.ones(
+            (len(img_ray_bundle), 1), dtype=torch.bool, device=device
+        )
 
     # process lidar
     if lidar_ray_bundle is not None:
         assert lidar_batch is not None
-        lidar_ray_bundle.camera_indices = lidar_ray_bundle.camera_indices + img_dataset_len
+        lidar_ray_bundle.camera_indices = (
+            lidar_ray_bundle.camera_indices + img_dataset_len
+        )
         lidar_batch["is_lidar"] = lidar_ray_bundle.metadata["is_lidar"]
         lidar_batch["distance"] = lidar_ray_bundle.metadata["directions_norm"]
         lidar_batch["did_return"] = lidar_ray_bundle.metadata["did_return"]
@@ -412,12 +462,16 @@ def _merge_img_lidar(
         ray_bundle, batch = img_ray_bundle, img_batch
     else:
         ray_bundle = img_ray_bundle.cat(lidar_ray_bundle, dim=0)
-        overlapping_keys = set(img_batch.keys()).intersection(set(lidar_batch.keys())) - {"is_lidar", "did_return"}
+        overlapping_keys = set(img_batch.keys()).intersection(
+            set(lidar_batch.keys())
+        ) - {"is_lidar", "did_return"}
         assert not overlapping_keys, f"Overlapping keys in batch: {overlapping_keys}"
         batch = {
             **img_batch,
             **lidar_batch,
             "is_lidar": torch.cat([img_batch["is_lidar"], lidar_batch["is_lidar"]]),
-            "did_return": torch.cat([img_batch["did_return"], lidar_batch["did_return"]]),
+            "did_return": torch.cat(
+                [img_batch["did_return"], lidar_batch["did_return"]]
+            ),
         }
     return ray_bundle, batch

@@ -39,10 +39,11 @@ from nerfstudio.data.datamanagers.ad_datamanager import (
 )
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
+from nerfstudio.data.dataparsers.ad_dataparser import OPENCV_TO_NERFSTUDIO
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.utils import profiler
-from nerfstudio.models.diffusion_model import (
+from nerfstudio.generative.diffusion_model import (
     read_yaml,
     DiffusionModel,
     DiffusionModelConfig,
@@ -699,6 +700,7 @@ def augment_ray_bundle(
 
     cam_idxs = ray_bundle.camera_indices[is_cam, 0].cpu()  # Bc
     c2w = cameras.camera_to_worlds[cam_idxs].to(device=device)  # Bc, 3, 4
+    c2w[:3, :3] = c2w[:3, :3] @ OPENCV_TO_NERFSTUDIO
     translation = c2w[..., :3] @ aug_translation + c2w[..., :3, 3]
 
     rotation = (  # Chain together rotations, X -> Y -> Z

@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from pathlib import Path
-from nerfstudio.models.diffusion_model import (
+from nerfstudio.generative.diffusion_model import (
     StableDiffusionModel,
     read_yaml,
     read_image,
