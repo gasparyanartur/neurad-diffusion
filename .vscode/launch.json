@@ -245,5 +245,29 @@
         "--dataset_end_fraction=1.0",
       ]
     },
+    {
+      "name": "Python: train controlnet pandaset local debug",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "scripts/run_train_lora.py",
+      "env": {
+          "PYTHONPATH":"${workspaceFolder}",
+      },
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": "configs/local-configs/train-controlnet-pandaset-local-debug.yml"
+  },
+  {
+      "name": "Python: train diffusion pandaset local debug",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "scripts/run_train_lora.py",
+      "env": {
+          "PYTHONPATH":"${workspaceFolder}",
+      },
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": "configs/local-configs/train-diffusion-pandaset-local-debug.yml"
+  }
   ]
 }

@@ -15,6 +15,10 @@ from torch.utils.data import Dataset
 from torch import Tensor
 import torchvision
 
+from nerfstudio.cameras.cameras import CameraType, Cameras
+from nerfstudio.data.dataparsers.ad_dataparser import OPENCV_TO_NERFSTUDIO
+from nerfstudio.data.dataparsers.pandaset_dataparser import AVAILABLE_CAMERAS
+
 torchvision.disable_beta_transforms_warning()
 from torchvision.transforms import v2 as tvtf
 import torchvision
@@ -39,6 +43,8 @@ suffixes = {
     ("lidar", "neurad"): ".pkl.gz",
     ("pose", "pandaset"): ".json",
     ("intrinsics", "pandaset"): ".json",
+    ("timestamp", "pandaset"): ".json",
+    ("camera", "pandaset"): "",
 }
 RANGE_SEP = ":"
 CN_SIGNAL_PATTERN = re.compile(r"cn_(?P<type>\w+)_(?P<num_channels>\d+)_(?P<note>\w+)")
@@ -221,10 +227,10 @@ def meta_to_str(meta: Dict[str, Any]) -> str:
 
 
 def _pandaset_pose_to_matrix(pose):
-    translation = np.array(
+    translation = torch.tensor(
         [pose["position"]["x"], pose["position"]["y"], pose["position"]["z"]]
     )
-    quaternion = np.array(
+    quaternion = torch.tensor(
         [
             pose["heading"]["w"],
             pose["heading"]["x"],
@@ -232,62 +238,36 @@ def _pandaset_pose_to_matrix(pose):
             pose["heading"]["z"],
         ]
     )
-    pose = np.eye(4)
-    pose[:3, :3] = pyquaternion.Quaternion(quaternion).rotation_matrix
+    pose = torch.eye(4)
+    pose[:3, :3] = torch.from_numpy(pyquaternion.Quaternion(quaternion).rotation_matrix)
     pose[:3, 3] = translation
     return pose
 
 
-def create_cameras(cameras):
-    # TODO
-    if "all" in self.config.cameras:
-        self.config.cameras = AVAILABLE_CAMERAS
-    cameras = [cam + "_camera" for cam in self.config.cameras]
-    # get image filenames and camera data
-    image_filenames = []
-    times = []
-    intrinsics = []
-    poses = []
-    idxs = []
-    heights = []
-    for i in range(PANDASET_SEQ_LEN):
-        for camera in cameras:
-            curr_cam = self.sequence.camera[camera]
-            file_path = curr_cam._data_structure[i]
-            pose = _pandaset_pose_to_matrix(curr_cam.poses[i])
-            pose[:3, :3] = pose[:3, :3] @ OPENCV_TO_NERFSTUDIO
-            intrinsic_ = curr_cam.intrinsics
-            intrinsic = np.array(
-                [
-                    [intrinsic_.fx, 0, intrinsic_.cx],
-                    [0, intrinsic_.fy, intrinsic_.cy],
-                    [0, 0, 1],
-                ]
-            )
-            image_filenames.append(file_path)
-            intrinsics.append(intrinsic)
-            poses.append(pose)
-            times.append(curr_cam.timestamps[i])
-            idxs.append(cameras.index(camera))
-            heights.append(1080 - (250 if camera == "back_camera" else 0))
+def create_cameras_for_sequence(
+    poses: Tensor,
+    timestamps: Tensor,
+    intrinsics: Tensor,
+    scene_idxs: Tensor,
+    img_width=1920,
+    img_height=1080,
+):
+    assert len(poses) == len(timestamps) == len(intrinsics) == len(scene_idxs)
 
-    intrinsics = torch.tensor(np.array(intrinsics), dtype=torch.float32)
-    poses = torch.tensor(np.array(poses), dtype=torch.float32)
-    times = torch.tensor(times, dtype=torch.float64)  # need higher precision
-    idxs = torch.tensor(idxs).int().unsqueeze(-1)
+    timestamps = timestamps.to(dtype=torch.float64)  # need higher precision
     cameras = Cameras(
         fx=intrinsics[:, 0, 0],
         fy=intrinsics[:, 1, 1],
         cx=intrinsics[:, 0, 2],
         cy=intrinsics[:, 1, 2],
-        height=torch.tensor(heights),
-        width=1920,
-        camera_to_worlds=poses[:, :3, :4],
+        height=img_height,
+        width=img_width,
+        camera_to_worlds=(poses[:, :3, :4]),
         camera_type=CameraType.PERSPECTIVE,
-        times=times,
-        metadata={"sensor_idxs": idxs},
+        times=torch.tensor(timestamps),
+        metadata={"sensor_idxs": scene_idxs},
     )
-    return cameras, image_filenames
+    return cameras
 
 
 @dataclass
@@ -405,6 +385,9 @@ class PandasetInfoGetter(InfoGetter):
         elif data_type == "intrinsics":
             sample_path = sample_dir_path / "intrinsics"
 
+        elif data_type == "timestamp":
+            sample_path = sample_dir_path / "timestamps"
+
         suffix = suffixes[data_type, self.dataset_name]
         sample_path = sample_path.with_suffix(suffix)
 
@@ -473,6 +456,10 @@ class DataGetter(ABC):
     def get_data_path(self, dataset_path: Path, info: SampleInfo) -> Path:
         return self.info_getter.get_path(dataset_path, info, self.data_spec)
 
+    @property
+    def data_type(self) -> str:
+        return self.data_spec["data_type"]
+
     @abstractmethod
     def get_data(self, dataset_path: Path, info: SampleInfo):
         raise NotImplementedError
@@ -486,7 +473,7 @@ class MetaDataGetter(DataGetter):
     ):
         super().__init__(info_getter, data_spec, "meta")
 
-    def get_data(self, dataset_path: Path, info: SampleInfo):
+    def get_data(self, dataset_path: Path, info: SampleInfo) -> Dict[str, str]:
         result = {**asdict(info)}
         return result
 
@@ -507,7 +494,7 @@ class PromptDataGetter(DataGetter):
             case _:
                 raise NotImplementedError
 
-    def get_data(self, dataset_path: Path, info: SampleInfo):
+    def get_data(self, dataset_path: Path, info: SampleInfo) -> Dict[str, str]:
         return {
             "positive_prompt": self.positive_prompt,
             "negative_prompt": self.negative_prompt,
@@ -588,14 +575,13 @@ class PoseDataGetter(DataGetter):
     ):
         super().__init__(info_getter, data_spec, "pose")
 
-    def get_data(
-        self, dataset_path: Path, info: SampleInfo
-    ) -> dict[str, dict[str, float]]:
+    def get_data(self, dataset_path: Path, info: SampleInfo) -> Tensor:
         file_path = self.get_data_path(dataset_path, info)
         poses = load_json(file_path)
         pose_idx = int(info.sample)
         pose = poses[pose_idx]
         pose = _pandaset_pose_to_matrix(pose)
+        pose[:3, :3] = pose[:3, :3] @ OPENCV_TO_NERFSTUDIO
 
         return pose
 
@@ -608,13 +594,74 @@ class IntrinsicsDataGetter(DataGetter):
     ):
         super().__init__(info_getter, data_spec, "intrinsics")
 
-    def get_data(
-        self, dataset_path: Path, info: SampleInfo
-    ) -> dict[str, dict[str, float]]:
+    def get_data(self, dataset_path: Path, info: SampleInfo) -> Tensor:
         file_path = self.get_data_path(dataset_path, info)
 
         data = load_json(file_path)
-        return data
+        intrinsics = torch.tensor(
+            [
+                [data["fx"], 0, data["cx"]],
+                [0, data["fy"], data["cy"]],
+                [0, 0, 1],
+            ]
+        )
+        return intrinsics
+
+
+class TimestampDataGetter(DataGetter):
+    def __init__(
+        self,
+        info_getter: InfoGetter,
+        data_spec: Dict[str, Any],
+    ):
+        super().__init__(info_getter, data_spec, "timestamp")
+
+    def get_data(self, dataset_path: Path, info: SampleInfo) -> float:
+        file_path = self.get_data_path(dataset_path, info)
+
+        all_timestamps = load_json(file_path)
+        timestamp = all_timestamps[info.sample]
+        return timestamp
+
+
+class CameraDataGetter(DataGetter):
+    def __init__(self, info_getter, data_spec):
+        super().__init__(info_getter, data_spec, "camera")
+
+        self.is_loaded = False
+        self.cameras = None
+
+    def load_cameras(
+        self,
+        dataset_path: Path,
+        infos: Iterable[SampleInfo],
+        pose_getter: PoseDataGetter,
+        timestamp_getter: TimestampDataGetter,
+        intrinsics_getter: IntrinsicsDataGetter,
+        img_width: int = 1920,
+        img_height: int = 1080,
+    ):
+        poses = torch.stack(
+            [pose_getter.get_data(dataset_path, info) for info in infos]
+        )
+        timestamps = torch.tensor(
+            [timestamp_getter.get_data(dataset_path, info) for info in infos]
+        )
+        intrinsics = torch.stack(
+            [intrinsics_getter.get_data(dataset_path, info) for info in infos]
+        )
+        sensor_idxs = torch.tensor([int(info.sample) for info in infos])
+        self.cameras = create_cameras_for_sequence(
+            poses, timestamps, intrinsics, sensor_idxs, img_width, img_height
+        )
+
+    def get_data(self, dataset_path: Path, info: SampleInfo):
+        if not self.is_loaded:
+            raise ValueError(
+                f"Tried to call CameraDataGetter without loading data first."
+            )
+
+        return None
 
 
 info_getter_builders: Dict[str, Callable[[], InfoGetter]] = {
@@ -649,6 +696,21 @@ class DynamicDataset(Dataset):  # Dataset / Scene / Sample
         self.data_getters = data_getters
         self.dataset_path = dataset_path
         self.preprocess_func = preprocess_func
+
+        for data_name, getter in data_getters.items():
+            if getter.data_spec["data_type"] =
+        if "camera" in data_getters:
+            cam_getter: CameraDataGetter = data_getters["camera"]
+            cam = cam_getter.data_spec.get("camera", "front")
+            cam_getter.load_cameras(
+                dataset_path,
+                self.sample_infos,
+                PoseDataGetter(info_getter, {"data_type": "pose", "camera": cam}),
+                TimestampDataGetter(info_getter, {"data_type": "timestamp", "camera": cam}),
+                IntrinsicsDataGetter(info_getter, {"data_type": "intrinsics", "camera": cam}),
+                img_width=1920,     # Hardcoded for now
+                img_height=1080 if cam != "back" else 1080-250
+            )
 
         self.data_transforms = {**data_transforms} if data_transforms else {}
         for data_type in data_getters.keys():
