@@ -237,7 +237,7 @@ def _prepare_generator(sample: Dict["str", Any], batch_size: int):
 class ConditioningSignalInfo:
     type: str
     num_channels: int
-    note: str
+    camera: str
 
     @staticmethod
     def from_signal_name(name: str):
@@ -247,7 +247,7 @@ class ConditioningSignalInfo:
 
     @property
     def name(self):
-        return f"cn_{self.type}_{self.num_channels}_{self.note}"
+        return f"cn_{self.type}_{self.num_channels}_{self.camera}"
 
 
 @dataclass

@@ -24,7 +24,12 @@ import torch
 from jaxtyping import Float, Int, Shaped
 from torch import Tensor
 
-from nerfstudio.utils.math import Gaussians, GaussiansStd, conical_frustum_to_gaussian, multisampled_frustum_to_gaussian
+from nerfstudio.utils.math import (
+    Gaussians,
+    GaussiansStd,
+    conical_frustum_to_gaussian,
+    multisampled_frustum_to_gaussian,
+)
 from nerfstudio.utils.tensor_dataclass import TensorDataclass
 
 TORCH_DEVICE = Union[str, torch.device]
@@ -116,11 +121,17 @@ class Frustums(TensorDataclass):
         if self.offsets is not None:
             raise NotImplementedError()
         multisample_dist = (self.ends - self.starts) / (num_multisamples + 1)
-        ts = torch.arange(1, num_multisamples + 1, device=self.ends.device, dtype=self.ends.dtype)
+        ts = torch.arange(
+            1, num_multisamples + 1, device=self.ends.device, dtype=self.ends.dtype
+        )
         t = self.starts + ts.unsqueeze(0) * multisample_dist
-        mean = self.origins.unsqueeze(-2) + self.directions.unsqueeze(-2) * t.unsqueeze(-1)
+        mean = self.origins.unsqueeze(-2) + self.directions.unsqueeze(-2) * t.unsqueeze(
+            -1
+        )
         frust_crossection_area = self.pixel_area.unsqueeze(-2) * t.unsqueeze(-1).pow(2)
-        std = (frust_crossection_area * multisample_dist.unsqueeze(-2)).pow(1 / 3)  # TODO: * 0.5?
+        std = (frust_crossection_area * multisample_dist.unsqueeze(-2)).pow(
+            1 / 3
+        )  # TODO: * 0.5?
         return GaussiansStd(mean=mean, std=std)
 
     @classmethod
@@ -185,7 +196,9 @@ class RaySamples(TensorDataclass):
 
         self.__post_init__()
 
-    def get_weights(self, densities: Float[Tensor, "*batch num_samples 1"]) -> Float[Tensor, "*batch num_samples 1"]:
+    def get_weights(
+        self, densities: Float[Tensor, "*batch num_samples 1"]
+    ) -> Float[Tensor, "*batch num_samples 1"]:
         """Return weights based on predicted densities
 
         Args:
@@ -200,7 +213,11 @@ class RaySamples(TensorDataclass):
 
         transmittance = torch.cumsum(delta_density[..., :-1, :], dim=-2)
         transmittance = torch.cat(
-            [torch.zeros((*transmittance.shape[:1], 1, 1), device=densities.device), transmittance], dim=-2
+            [
+                torch.zeros((*transmittance.shape[:1], 1, 1), device=densities.device),
+                transmittance,
+            ],
+            dim=-2,
         )
         transmittance = torch.exp(-transmittance)  # [..., "num_samples"]
 
@@ -213,22 +230,25 @@ class RaySamples(TensorDataclass):
     @staticmethod
     def get_weights_and_transmittance_from_alphas(
         alphas: Float[Tensor, "*batch num_samples 1"], weights_only: Literal[True]
-    ) -> Float[Tensor, "*batch num_samples 1"]:
-        ...
+    ) -> Float[Tensor, "*batch num_samples 1"]: ...
 
     @overload
     @staticmethod
     def get_weights_and_transmittance_from_alphas(
-        alphas: Float[Tensor, "*batch num_samples 1"], weights_only: Literal[False] = False
-    ) -> Tuple[Float[Tensor, "*batch num_samples 1"], Float[Tensor, "*batch num_samples 1"]]:
-        ...
+        alphas: Float[Tensor, "*batch num_samples 1"],
+        weights_only: Literal[False] = False,
+    ) -> Tuple[
+        Float[Tensor, "*batch num_samples 1"], Float[Tensor, "*batch num_samples 1"]
+    ]: ...
 
     @staticmethod
     def get_weights_and_transmittance_from_alphas(
         alphas: Float[Tensor, "*batch num_samples 1"], weights_only: bool = False
     ) -> Union[
         Float[Tensor, "*batch num_samples 1"],
-        Tuple[Float[Tensor, "*batch num_samples 1"], Float[Tensor, "*batch num_samples 1"]],
+        Tuple[
+            Float[Tensor, "*batch num_samples 1"], Float[Tensor, "*batch num_samples 1"]
+        ],
     ]:
         """Return weights based on predicted alphas
         Args:
@@ -239,7 +259,14 @@ class RaySamples(TensorDataclass):
         """
 
         transmittance = torch.cumprod(
-            torch.cat([torch.ones((*alphas.shape[:1], 1, 1), device=alphas.device), 1.0 - alphas + 1e-7], 1), 1
+            torch.cat(
+                [
+                    torch.ones((*alphas.shape[:1], 1, 1), device=alphas.device),
+                    1.0 - alphas + 1e-7,
+                ],
+                1,
+            ),
+            1,
         )
 
         weights = alphas * transmittance[:, :-1, :]
@@ -265,7 +292,9 @@ class RayBundle(TensorDataclass):
     """Distance along ray to start sampling"""
     fars: Optional[Float[Tensor, "*batch 1"]] = None
     """Rays Distance along ray to stop sampling"""
-    metadata: Dict[str, Shaped[Tensor, "num_rays latent_dims"]] = field(default_factory=dict)
+    metadata: Dict[str, Shaped[Tensor, "num_rays latent_dims"]] = field(
+        default_factory=dict
+    )
     """Additional metadata or data needed for interpolation, will mimic shape of rays"""
     times: Optional[Float[Tensor, "*batch 1"]] = None
     """Times at which rays are sampled"""
@@ -278,7 +307,9 @@ class RayBundle(TensorDataclass):
         Args:
             camera_index: Camera index.
         """
-        self.camera_indices = torch.ones_like(self.origins[..., 0:1]).long() * camera_index
+        self.camera_indices = (
+            torch.ones_like(self.origins[..., 0:1]).long() * camera_index
+        )
 
     def __len__(self) -> int:
         num_rays = torch.numel(self.origins) // self.origins.shape[-1]
@@ -297,7 +328,9 @@ class RayBundle(TensorDataclass):
         indices = random.sample(range(len(self)), k=num_rays)
         return self[indices]
 
-    def get_row_major_sliced_ray_bundle(self, start_idx: int, end_idx: int) -> "RayBundle":
+    def get_row_major_sliced_ray_bundle(
+        self, start_idx: int, end_idx: int
+    ) -> "RayBundle":
         """Flattens RayBundle and extracts chunk given start and end indices.
 
         Args:
@@ -358,24 +391,32 @@ class RayBundle(TensorDataclass):
 
 
 @overload
-def merge_raysamples(ray_samples: List[RaySamples], sort: Literal[True]) -> Tuple[RaySamples, Int[Tensor, "num_rays"]]:
-    ...
+def merge_raysamples(
+    ray_samples: List[RaySamples], sort: Literal[True]
+) -> Tuple[RaySamples, Int[Tensor, "num_rays"]]: ...
 
 
 @overload
-def merge_raysamples(ray_samples: List[RaySamples], sort: Literal[False]) -> RaySamples:
-    ...
+def merge_raysamples(
+    ray_samples: List[RaySamples], sort: Literal[False]
+) -> RaySamples: ...
 
 
 def merge_raysamples(
     ray_samples: List[RaySamples], sort: bool = False
 ) -> Union[RaySamples, Tuple[RaySamples, Int[Tensor, "num_rays"]]]:
     """Merges two RaySamples objects, and make sure rays are nicely packed."""
-    assert len(ray_samples[0].shape) == 1, "This function is overkill for batched ray samples, use .cat() instead."
+    assert (
+        len(ray_samples[0].shape) == 1
+    ), "This function is overkill for batched ray samples, use .cat() instead."
     merged = ray_samples[0].cat(
-        ray_samples[1:], dim=0, ignore_fields={"spacing_to_euclidean_fn", "spacing_starts", "spacing_ends"}
+        ray_samples[1:],
+        dim=0,
+        ignore_fields={"spacing_to_euclidean_fn", "spacing_starts", "spacing_ends"},
     )
-    assert merged.metadata is not None and "ray_indices" in merged.metadata, "metadata must contain ray_indices"
+    assert (
+        merged.metadata is not None and "ray_indices" in merged.metadata
+    ), "metadata must contain ray_indices"
 
     if sort:
         if merged.frustums.ends.device.type == "mps":

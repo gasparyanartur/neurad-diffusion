@@ -1,3 +1,4 @@
+import typing
 from typing import Any, Dict, List, Union, Optional, Tuple
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
@@ -47,7 +48,9 @@ suffixes = {
     ("camera", "pandaset"): "",
 }
 RANGE_SEP = ":"
-CN_SIGNAL_PATTERN = re.compile(r"cn_(?P<type>\w+)_(?P<num_channels>\d+)_(?P<note>\w+)")
+CN_SIGNAL_PATTERN = re.compile(
+    r"cn_(?P<type>\w+)_(?P<num_channels>\d+)_(?P<camera>\w+)"
+)
 
 
 def get_dataset_from_path(path: Path) -> str:
@@ -226,20 +229,24 @@ def meta_to_str(meta: Dict[str, Any]) -> str:
     return f"{meta['dataset']} - {meta['scene']} - {meta['sample']}"
 
 
-def _pandaset_pose_to_matrix(pose):
-    translation = torch.tensor(
-        [pose["position"]["x"], pose["position"]["y"], pose["position"]["z"]]
-    )
-    quaternion = torch.tensor(
+def _pandaset_pose_to_matrix(pandaset_pose):
+    pose = torch.eye(4)
+    quaternion = np.array(
         [
-            pose["heading"]["w"],
-            pose["heading"]["x"],
-            pose["heading"]["y"],
-            pose["heading"]["z"],
+            pandaset_pose["heading"]["w"],
+            pandaset_pose["heading"]["x"],
+            pandaset_pose["heading"]["y"],
+            pandaset_pose["heading"]["z"],
         ]
     )
-    pose = torch.eye(4)
     pose[:3, :3] = torch.from_numpy(pyquaternion.Quaternion(quaternion).rotation_matrix)
+    translation = torch.tensor(
+        [
+            pandaset_pose["position"]["x"],
+            pandaset_pose["position"]["y"],
+            pandaset_pose["position"]["z"],
+        ]
+    )
     pose[:3, 3] = translation
     return pose
 
@@ -268,6 +275,27 @@ def create_cameras_for_sequence(
         metadata={"sensor_idxs": scene_idxs},
     )
     return cameras
+
+
+def crop_to_ray_idxs(cam_idxs, crop_top_left, crop_size) -> Tensor:
+    is_batched = len(cam_idxs) > 1
+    if is_batched:
+        raise NotImplementedError
+
+    device = crop_top_left.device
+    C = cam_idxs.size(-1)
+    H = crop_size[..., -2]
+    W = crop_size[..., -1]
+
+    idxs = torch.cartesian_prod(
+        torch.arange(C, device=device),
+        torch.arange(H, device=device),
+        torch.arange(W, device=device),
+    )
+    idxs[..., 0] = cam_idxs
+    idxs[..., 1:] += crop_top_left[..., :]
+
+    return idxs
 
 
 @dataclass
@@ -348,7 +376,7 @@ class PandasetInfoGetter(InfoGetter):
             camera = specs.get("camera", "front_camera")
 
         match data_type:
-            case "rgb" | "pose" | "intrinsics":
+            case "rgb" | "pose" | "intrinsics" | "timestamp" | "camera":
                 return dataset_path / scene / "camera" / camera
 
             case "lidar":
@@ -450,7 +478,7 @@ class DataGetter(ABC):
     ) -> None:
         super().__init__()
         self.info_getter = info_getter
-        self.data_spec = data_spec
+        self.data_spec = {**data_spec}
         self.data_spec["data_type"] = data_type
 
     def get_data_path(self, dataset_path: Path, info: SampleInfo) -> Path:
@@ -620,7 +648,7 @@ class TimestampDataGetter(DataGetter):
         file_path = self.get_data_path(dataset_path, info)
 
         all_timestamps = load_json(file_path)
-        timestamp = all_timestamps[info.sample]
+        timestamp = all_timestamps[int(info.sample)]
         return timestamp
 
 
@@ -629,31 +657,56 @@ class CameraDataGetter(DataGetter):
         super().__init__(info_getter, data_spec, "camera")
 
         self.is_loaded = False
-        self.cameras = None
+        self.cameras: Dict[str, Cameras] = {}
 
     def load_cameras(
         self,
         dataset_path: Path,
-        infos: Iterable[SampleInfo],
+        infos: List[SampleInfo],
         pose_getter: PoseDataGetter,
         timestamp_getter: TimestampDataGetter,
         intrinsics_getter: IntrinsicsDataGetter,
         img_width: int = 1920,
         img_height: int = 1080,
     ):
-        poses = torch.stack(
-            [pose_getter.get_data(dataset_path, info) for info in infos]
-        )
-        timestamps = torch.tensor(
-            [timestamp_getter.get_data(dataset_path, info) for info in infos]
-        )
-        intrinsics = torch.stack(
-            [intrinsics_getter.get_data(dataset_path, info) for info in infos]
-        )
-        sensor_idxs = torch.tensor([int(info.sample) for info in infos])
-        self.cameras = create_cameras_for_sequence(
-            poses, timestamps, intrinsics, sensor_idxs, img_width, img_height
-        )
+        # dataset / scene / sample
+        self.cameras = {}
+
+        poses = {}
+        timestamps = {}
+        intrinsics = {}
+        sensor_idxs = {}
+
+        # Assume const dataset
+        dataset = infos[0].dataset
+
+        unique_scenes = {info.scene for info in infos}
+        data_tree = {
+            scene: [
+                info
+                for info in infos
+                if info.scene == scene and info.dataset == dataset
+            ]
+            for scene in unique_scenes
+        }
+
+        for scene, samples in data_tree.items():
+            poses = torch.stack(
+                [pose_getter.get_data(dataset_path, info) for info in samples]
+            )
+            timestamps = torch.tensor(
+                [timestamp_getter.get_data(dataset_path, info) for info in samples]
+            )
+            intrinsics = torch.stack(
+                [intrinsics_getter.get_data(dataset_path, info) for info in samples]
+            )
+            sensor_idxs = torch.tensor([int(info.sample) for info in samples])
+
+            self.cameras[scene] = create_cameras_for_sequence(
+                poses, timestamps, intrinsics, sensor_idxs, img_width, img_height
+            )
+
+        self.is_loaded = True
 
     def get_data(self, dataset_path: Path, info: SampleInfo):
         if not self.is_loaded:
@@ -661,15 +714,16 @@ class CameraDataGetter(DataGetter):
                 f"Tried to call CameraDataGetter without loading data first."
             )
 
-        return None
+        cam = int(info.sample)
+        return self.cameras[cam]
 
 
-info_getter_builders: Dict[str, Callable[[], InfoGetter]] = {
+INFO_GETTER_BUILDERS: Dict[str, Callable[[], InfoGetter]] = {
     "pandaset": PandasetInfoGetter,
     "neurad": NeuRADInfoGetter,
 }
 
-data_getter_builders: Dict[str, Callable[[InfoGetter, Dict[str, Any]], DataGetter]] = {
+DATA_GETTER_BUILDERS: Dict[str, Callable[[InfoGetter, Dict[str, Any]], DataGetter]] = {
     "rgb": RGBDataGetter,
     "meta": MetaDataGetter,
     "lidar": LidarDataGetter,
@@ -697,21 +751,23 @@ class DynamicDataset(Dataset):  # Dataset / Scene / Sample
         self.dataset_path = dataset_path
         self.preprocess_func = preprocess_func
 
-        for data_name, getter in data_getters.items():
-            if getter.data_spec["data_type"] =  
-
-        if "camera" in data_getters:
-            cam_getter: CameraDataGetter = data_getters["camera"]
-            cam = cam_getter.data_spec.get("camera", "front")
-            cam_getter.load_cameras(
-                dataset_path,
-                self.sample_infos,
-                PoseDataGetter(info_getter, {"data_type": "pose", "camera": cam}),
-                TimestampDataGetter(info_getter, {"data_type": "timestamp", "camera": cam}),
-                IntrinsicsDataGetter(info_getter, {"data_type": "intrinsics", "camera": cam}),
-                img_width=1920,     # Hardcoded for now
-                img_height=1080 if cam != "back" else 1080-250
-            )
+        for getter in data_getters.values():
+            if getter.data_spec["data_type"] == "camera":
+                cam_getter = typing.cast(CameraDataGetter, getter)
+                cam = cam_getter.data_spec.get("camera", "front")
+                cam_getter.load_cameras(
+                    dataset_path,
+                    self.sample_infos,
+                    PoseDataGetter(info_getter, {"data_type": "pose", "camera": cam}),
+                    TimestampDataGetter(
+                        info_getter, {"data_type": "timestamp", "camera": cam}
+                    ),
+                    IntrinsicsDataGetter(
+                        info_getter, {"data_type": "intrinsics", "camera": cam}
+                    ),
+                    img_width=1920,  # Hardcoded for now
+                    img_height=1080 if cam != "back" else 1080 - 250,
+                )
 
         self.data_transforms = {**data_transforms} if data_transforms else {}
         for data_type in data_getters.keys():
@@ -748,7 +804,7 @@ class DynamicDataset(Dataset):  # Dataset / Scene / Sample
         data_tree = read_data_tree(dataset_config["data_tree"])
         dataset_name = dataset_config["dataset"]
 
-        info_getter_factory = info_getter_builders[dataset_name]
+        info_getter_factory = INFO_GETTER_BUILDERS[dataset_name]
         info_getter = info_getter_factory()
 
         data_getters = {}
@@ -756,7 +812,7 @@ class DynamicDataset(Dataset):  # Dataset / Scene / Sample
         for spec_name, spec in dataset_config["data_getters"].items():
             data_type = spec.get("data_type")
             if not data_type:
-                if spec_name in data_getter_builders:
+                if spec_name in DATA_GETTER_BUILDERS:
                     data_type = spec_name
 
                 elif cn_signal_match := CN_SIGNAL_PATTERN.match():
@@ -770,7 +826,7 @@ class DynamicDataset(Dataset):  # Dataset / Scene / Sample
 
             spec["name"] = spec_name
 
-            data_getter_factory = data_getter_builders[data_type]
+            data_getter_factory = DATA_GETTER_BUILDERS[data_type]
             data_getter = data_getter_factory(info_getter, spec)
 
             data_getters[spec_name] = data_getter

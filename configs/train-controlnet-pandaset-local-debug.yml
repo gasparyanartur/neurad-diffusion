@@ -8,7 +8,7 @@ datasets:
       rgb:
         camera: "front_left_camera"
 
-      cn_rgb_3_front:
+      cn_rgb_3_front_camera:
         data_type: rgb
         type: rgb
         camera: "front_camera"
@@ -39,7 +39,7 @@ datasets:
       rgb:
         camera: "front_left_camera"
 
-      cn_rgb_3_front:
+      cn_rgb_3_front_camera:
         type: rgb
         camera: "front_camera"
 
@@ -128,7 +128,7 @@ trainable_models:
   - controlnet
 
 conditioning_signals: 
-  - cn_rgb_3_front
+  - cn_rgb_3_front_camera
 
 logging_dir: logs/finetune/cn
 output_dir: output/finetune/cn
