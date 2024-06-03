@@ -698,7 +698,8 @@ class DynamicDataset(Dataset):  # Dataset / Scene / Sample
         self.preprocess_func = preprocess_func
 
         for data_name, getter in data_getters.items():
-            if getter.data_spec["data_type"] =
+            if getter.data_spec["data_type"] =  
+
         if "camera" in data_getters:
             cam_getter: CameraDataGetter = data_getters["camera"]
             cam = cam_getter.data_spec.get("camera", "front")
