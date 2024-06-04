@@ -34,7 +34,7 @@ norm_img_crop_pipeline = tvtf.Compose(
     [
         tvtf.ConvertImageDtype(torch.float32),
         tvtf.CenterCrop((1024, 1024)),
-        tvtf.Resize((512, 512)),
+        tvtf.Resize((512, 512), antialias=True),
     ]
 )
 DATA_SUFFIXES: Dict[Tuple[str, str], str] = {
@@ -551,7 +551,7 @@ class RGBDataGetter(DataGetter):
         self.base_transform = tvtf.Compose(
             [
                 tvtf.ConvertImageDtype(dtype) if rescale else tvtf.ToDtype(dtype),
-                tvtf.Resize((height, width)),
+                tvtf.Resize((height, width), antialias=True),
             ]
         )
         self.extra_transform: Optional[tvtf.Compose] = None

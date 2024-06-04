@@ -266,15 +266,12 @@ class DiffusionModelConfig:
     conditioning_signals: Tuple[str, ...] = ()
     """ The name of the conditioning signals used for the controlnet.
 
-        The signal should match the format `cn_{type}_{dim}_{note}`. 
-            Eg. cn_rgb_3_frontleft, cn_depth_1_frone.
+        The signal should match the format `cn_{cn_type}_{num_channels}_{camera}`. 
+            Eg. cn_rgb_3_front, cn_ray_6_front_left.
         During inference, the input must contain this signal as a key.
 
         Does nothing unless the model is a controlnet.
     """
-
-    lora_linear_rank: int = 4
-    lora_conv2d_rank: int = 4
 
 
 class DiffusionModel(ABC):

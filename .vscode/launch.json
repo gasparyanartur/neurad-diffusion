@@ -249,7 +249,7 @@
       "name": "Python: train controlnet pandaset local debug",
       "type": "debugpy",
       "request": "launch",
-      "program": "scripts/run_train_lora.py",
+      "program": "nerfstudio/scripts/run_train_lora.py",
       "env": {
           "PYTHONPATH":"${workspaceFolder}",
       },
@@ -261,7 +261,7 @@
       "name": "Python: train diffusion pandaset local debug",
       "type": "debugpy",
       "request": "launch",
-      "program": "scripts/run_train_lora.py",
+      "program": "nerfstudio/scripts/run_train_lora.py",
       "env": {
           "PYTHONPATH":"${workspaceFolder}",
       },

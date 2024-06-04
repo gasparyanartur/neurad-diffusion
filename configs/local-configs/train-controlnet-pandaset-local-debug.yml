@@ -1,5 +1,12 @@
 project_name: ImagineDriving
 
+
+conditioning_signals: 
+  - cn_rgb_3_front_camera
+  - cn_ray_6_front_left_camera
+  - cn_ray_6_front_camera
+
+
 datasets:
   train_data:
     dataset: pandaset
@@ -9,8 +16,8 @@ datasets:
         camera: "front_left_camera"
 
       cn_rgb_3_front_camera: {}
-      cn_ray_3_front_left_camera: {}
-      cn_ray_3_front_camera: {}
+      cn_ray_6_front_left_camera: {}
+      cn_ray_6_front_camera: {}
 
       prompt: {}
       meta: {}
@@ -30,8 +37,8 @@ datasets:
         camera: "front_left_camera"
 
       cn_rgb_3_front_camera: {}
-      cn_ray_3_front_left_camera: {}
-      cn_ray_3_front_camera: {}
+      cn_ray_6_front_left_camera: {}
+      cn_ray_6_front_camera: {}
 
       prompt: {}
       meta: {}
@@ -53,9 +60,9 @@ dataloader_num_workers: 0
 
 max_grad_norm: 1.0
 
-n_epochs: 50
+n_epochs: 1000
 val_freq: 1
-checkpointing_steps: 5
+checkpointing_steps: 50
 
 train_noise_strength: 0.1
 train_noise_num_steps: null
@@ -113,8 +120,6 @@ trainable_models:
   - unet
   - controlnet
 
-conditioning_signals: 
-  - cn_rgb_3_front_camera
 
 logging_dir: logs/finetune/cn
 output_dir: output/finetune/cn

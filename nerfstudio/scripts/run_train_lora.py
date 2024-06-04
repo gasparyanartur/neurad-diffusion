@@ -69,6 +69,8 @@ from nerfstudio.generative.dynamic_dataset import (
     SampleInfo,
     TimestampDataGetter,
     crop_to_ray_idxs,
+    read_data_tree,
+    save_yaml,
     setup_project,
     DynamicDataset,
     meta_to_str,
@@ -365,8 +367,9 @@ def preprocess_rgb(
         cx, cy = 0, 0
         h, w = h0, w0
 
-    original_size = h0, w0
-    crop_top_left = cy, cx
+    original_size = torch.tensor((h0, w0))
+    target_size = torch.tensor(target_size)
+    crop_top_left = torch.tensor((cy, cx), device=rgb.device)
 
     return {
         "rgb": rgb,
@@ -389,18 +392,26 @@ def preprocess_prompt(batch, models):
 
 
 def preprocess_ray(
-    batch: Dict[str, Any], ray_generators: Dict[str, RayGenerator]
-) -> Dict[str, RayBundle]:
+    batch: Dict[str, Any],
+    ray_generators: Dict[str, RayGenerator],
+    cam_to_idx: Dict[str, Dict[str, int]],
+) -> Dict[str, Tensor]:
     crop_size: Tensor = batch["target_size"]
     crop_top_left: Tensor = batch["crop_top_left"]
     meta: SampleInfo = batch["meta"]
 
     ray_generator = ray_generators[meta.scene]
-    cam_idxs = torch.tensor([int(meta.sample)], device=crop_top_left.device)
+    cam_idxs = torch.tensor(
+        [cam_to_idx[meta.scene][meta.sample]], device=crop_top_left.device
+    )
     ray_idxs = crop_to_ray_idxs(cam_idxs, crop_top_left, crop_size)
     rays = ray_generator.forward(ray_idxs)
 
-    return {"ray": rays}
+    ray = torch.concat([rays.origins, rays.directions], dim=-1)
+    ray = ray.reshape(int(crop_size[0].item()), int(crop_size[1].item()), 6).permute(
+        2, 0, 1
+    )
+    return {"ray": ray}
 
 
 def preprocess_sample(
@@ -408,25 +419,45 @@ def preprocess_sample(
     preprocessors: Dict[str, Callable],
     preprocessor_order: List[str],
 ) -> Dict[str, Any]:
-    sample = {"meta": batch["meta"]}
+    sample = {}
+    sample["meta"] = SampleInfo(**batch["meta"])
 
     for preprocess_name in preprocessor_order:
         processor = preprocessors[preprocess_name]
-        pp_out = processor(batch)
+
         if preprocess_name == "rgb":
+            pp_out = processor({"rgb": batch["rgb"]})
+
             sample["rgb"] = pp_out["rgb"]
             sample["original_size"] = pp_out["original_size"]
             sample["crop_top_left"] = pp_out["crop_top_left"]
             sample["target_size"] = pp_out["target_size"]
 
         elif preprocess_name == "prompt":
+            pp_out = processor({"prompt": batch["prompt"]})
             sample["input_ids"] = pp_out["input_ids"]
 
-        elif preprocess_name.startswith("cn_rgb"):
-            sample[preprocess_name] = pp_out["rgb"]
+        elif signal := ConditioningSignalInfo.from_signal_name(preprocess_name):
+            if signal.cn_type == "rgb":
+                pp_out = processor({"rgb": batch["rgb"]})
+                sample[preprocess_name] = pp_out["rgb"]
+                sample[preprocess_name + "_crop_top_left"] = pp_out["crop_top_left"]
 
-        elif preprocess_name.startswith("cn_ray"):
-            sample[preprocess_name] = pp_out["ray"]
+            elif signal.cn_type == "ray":
+                if (same_cam_rgb_name := f"cn_rgb_3_{signal.camera}") in preprocessors:
+                    crop_top_left_name = same_cam_rgb_name + "_crop_top_left"
+                else:
+                    crop_top_left_name = "crop_top_left"
+
+                pp_out = processor(
+                    {
+                        "rgb": batch["rgb"],
+                        "target_size": sample["target_size"],
+                        "crop_top_left": sample[crop_top_left_name],
+                        "meta": sample["meta"],
+                    }
+                )
+                sample[preprocess_name] = pp_out["ray"]
 
         else:
             raise NotImplementedError
@@ -457,7 +488,12 @@ def collate_fn(
 
 
 def save_model_hook(
-    loaded_models, weights, output_dir, accelerator, models, train_state
+    loaded_models,
+    weights,
+    output_dir: str,
+    accelerator: Accelerator,
+    models,
+    train_state: TrainState,
 ):
     if not accelerator.is_main_process:
         return
@@ -490,7 +526,7 @@ def save_model_hook(
             weights.pop()
 
     # TODO: Extend for more models
-    dst_dir = Path(output_dir, train_state.job_id)
+    dst_dir = Path(output_dir, "weights")
     if not dst_dir.exists():
         dst_dir.mkdir(exist_ok=True, parents=True)
 
@@ -499,8 +535,23 @@ def save_model_hook(
         unet_lora_layers=layers_to_save.get("unet"),
         text_encoder_lora_layers=layers_to_save.get("text_encoder"),
     )
+
+    # TODO: Save this properly once migrated to PEFT
     if "controlnet" in other_models:
         other_models["controlnet"].save_pretrained(str(dst_dir / "controlnet"))
+
+    configs = DiffusionModelConfig(
+        train_state.model_type,
+        train_state.model_id,
+        lora_weights=str(dst_dir / "pytorch_lora_weights.safetensors"),
+        controlnet_weights=str(dst_dir / "controlnet"),
+        noise_strength=train_state.val_noise_strength,
+        num_inference_steps=train_state.val_noise_num_steps,
+        conditioning_signals=tuple(
+            signal.name for signal in train_state.conditioning_signal_infos
+        ),
+    )
+    save_yaml(dst_dir / "config.yml", asdict(configs))
 
 
 def load_model_hook(
@@ -526,7 +577,9 @@ def load_model_hook(
         else:
             raise ValueError(f"unexpected save model: {loaded_model.__class__}")
 
-    lora_state_dict, _ = LoraLoaderMixin.lora_state_dict(input_dir)
+    lora_state_dict, _ = LoraLoaderMixin.lora_state_dict(
+        str(Path(input_dir) / "weights" / "pytorch_lora_weights.safetensors")
+    )
 
     if "unet" in loaded_models_dict:
         unet_state_dict = {
@@ -557,7 +610,7 @@ def load_model_hook(
 
     if "controlnet" in loaded_models_dict:
         loaded_controlnet = ControlLoRAModel.from_pretrained(
-            input_dir, subfolder="controlnet"
+            str(Path(input_dir) / "weights"), subfolder="controlnet"
         )
         loaded_models_dict["controlnet"].load_state_dict(loaded_controlnet.state_dict())
         loaded_models_dict["controlnet"].tie_weights(models["unet"])
@@ -584,7 +637,9 @@ def prepare_rgb_preprocess_steps(
     steps = {}
 
     steps["resizer"] = transforms.Resize(
-        downsample_size, interpolation=transforms.InterpolationMode.BILINEAR
+        downsample_size,
+        interpolation=transforms.InterpolationMode.BILINEAR,
+        antialias=True,
     )
 
     if is_split_train:
@@ -619,9 +674,16 @@ def prepare_preprocessors(models, train_state: TrainState):
     dataset = train_state.datasets["train_data"]  # Assume train and val the same
 
     dataset_path = Path(dataset["path"])
+    data_tree = read_data_tree(dataset["data_tree"])
     info_getter = INFO_GETTER_BUILDERS[dataset["dataset"]]()
-    infos = info_getter.parse_tree(dataset_path, dataset["data_tree"])
+    infos = info_getter.parse_tree(dataset_path, data_tree)
     unique_scenes = {info.scene for info in infos}
+    cam_to_idx = {}
+    for info in infos:
+        if info.scene not in cam_to_idx:
+            cam_to_idx[info.scene] = {}
+
+        cam_to_idx[info.scene][info.sample] = len(cam_to_idx[info.scene])
 
     preprocessors = {"train": {}, "val": {}}
 
@@ -690,10 +752,10 @@ def prepare_preprocessors(models, train_state: TrainState):
         }
 
         preprocessors["train"][key] = functools.partial(
-            preprocess_ray, ray_generators=ray_generators
+            preprocess_ray, ray_generators=ray_generators, cam_to_idx=cam_to_idx
         )
         preprocessors["val"][key] = functools.partial(
-            preprocess_ray, ray_generators=ray_generators
+            preprocess_ray, ray_generators=ray_generators, cam_to_idx=cam_to_idx
         )
 
     for key in prompt_keys:
@@ -836,13 +898,13 @@ def save_checkpoint(accelerator: Accelerator, train_state: TrainState) -> None:
 
 
 def resume_from_checkpoint(accelerator, train_state: TrainState):
-    raise NotImplementedError
-    # TOOD: Update with new codebaie
     if train_state.resume_from_checkpoint:
 
         if train_state.resume_from_checkpoint == "latest":
             # Get the most recent checkpoint
-            cp_paths = find_checkpoint_paths(train_state.output_dir)
+            cp_paths = find_checkpoint_paths(
+                Path(train_state.output_dir, train_state.job_id)
+            )
 
             if len(cp_paths) == 0:
                 accelerator.print(
@@ -856,15 +918,15 @@ def resume_from_checkpoint(accelerator, train_state: TrainState):
             path = os.path.basename(train_state.resume_from_checkpoint)
 
         accelerator.print(f"Resuming from checkpoint {path}")
-        accelerator.load_state(Path(args.output_dir, path))
+        accelerator.load_state(Path(train_state.output_dir, train_state.job_id, path))
 
-        train_state.global_step = int(path.split("-")[1])
+        train_state.global_step = int(path.split("-")[-1])
         train_state.epoch = (
             train_state.global_step // train_state.num_update_steps_per_epoch
         )
 
     else:
-        train_state.initial_global_step = 0
+        train_state.global_step = 0
 
 
 def prepare_models(train_state: TrainState, device):
@@ -1025,7 +1087,7 @@ def validate_model(
         model_id=train_state.model_id,
         noise_strength=train_state.val_noise_strength,
         num_inference_steps=train_state.val_noise_num_steps,
-        conditioning_signals=train_state.conditioning_signals,
+        conditioning_signals=tuple(train_state.conditioning_signals),
         low_mem_mode=False,
         compile_model=False,
         lora_weights=None,
@@ -1180,9 +1242,6 @@ def train_epoch(
     train_loss = 0.0
     for batch in dataloader:
         assert "rgb" in batch
-        if "controlnet" in models:
-            for signal in train_state.conditioning_signal_infos:
-                assert signal.name in batch
 
         with accelerator.accumulate(models[m] for m in train_state.trainable_models):
             rgb = models["image_processor"].preprocess(
