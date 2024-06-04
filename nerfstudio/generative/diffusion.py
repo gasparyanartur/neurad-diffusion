@@ -52,11 +52,11 @@ from nerfstudio.generative.utils import (
     validate_same_len,
     batch_if_not_iterable,
 )
-from nerfstudio.generative.data import (
-    CN_SIGNAL_PATTERN,
+from nerfstudio.generative.dynamic_dataset import (
+    ConditioningSignalInfo,
     save_image,
     DynamicDataset,
-    suffixes,
+    DATA_SUFFIXES,
 )
 
 
@@ -131,7 +131,7 @@ def prep_hf_pipe(
 
 
 def _prepare_image(kwargs):
-    image = kwargs["image"]
+    image: Tensor = kwargs["image"]
     image = batch_if_not_iterable(image)
     batch_size = len(image)
 
@@ -231,23 +231,6 @@ def _prepare_generator(sample: Dict["str", Any], batch_size: int):
         sample["generator"] = batch_if_not_iterable(sample["generator"])
         if len(sample["generator"]) <= 1 and batch_size > 1:
             raise ValueError(f"Number of generators must match number of images")
-
-
-@dataclass(init=True, slots=True, frozen=True)
-class ConditioningSignalInfo:
-    type: str
-    num_channels: int
-    camera: str
-
-    @staticmethod
-    def from_signal_name(name: str):
-        group = CN_SIGNAL_PATTERN.match(name).groupdict()
-        group["num_channels"] = int(group["num_channels"])
-        return ConditioningSignalInfo(**group)
-
-    @property
-    def name(self):
-        return f"cn_{self.type}_{self.num_channels}_{self.camera}"
 
 
 @dataclass

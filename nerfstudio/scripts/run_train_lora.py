@@ -1,6 +1,6 @@
 # Adapted from https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image_lora.py
 
-from typing import Any, Callable, Dict, Tuple, List, Optional
+from typing import Any, Callable, Dict, Tuple, List, Optional, Union, Sequence
 from collections.abc import Iterable
 from pathlib import Path
 from argparse import ArgumentParser
@@ -60,9 +60,10 @@ from peft.utils import get_peft_model_state_dict
 from torchmetrics.image import StructuralSimilarityIndexMeasure
 
 from nerfstudio.cameras.rays import RayBundle
-from nerfstudio.generative.data import (
+from nerfstudio.generative.dynamic_dataset import (
     INFO_GETTER_BUILDERS,
     CameraDataGetter,
+    ConditioningSignalInfo,
     IntrinsicsDataGetter,
     PoseDataGetter,
     SampleInfo,
@@ -76,7 +77,6 @@ from nerfstudio.generative.diffusion import (
     get_noised_img,
     tokenize_prompt,
     encode_tokens,
-    ConditioningSignalInfo,
     StableDiffusionModel,
     DiffusionModelConfig,
     DiffusionModel,
@@ -618,7 +618,7 @@ def prepare_preprocessors(models, train_state: TrainState):
 
     dataset = train_state.datasets["train_data"]  # Assume train and val the same
 
-    dataset_path = Path(dataset["paths"])
+    dataset_path = Path(dataset["path"])
     info_getter = INFO_GETTER_BUILDERS[dataset["dataset"]]()
     infos = info_getter.parse_tree(dataset_path, dataset["data_tree"])
     unique_scenes = {info.scene for info in infos}
@@ -639,7 +639,7 @@ def prepare_preprocessors(models, train_state: TrainState):
     ray_cams = {}
 
     for signal_info in train_state.conditioning_signal_infos:
-        match signal_info.type:
+        match signal_info.cn_type:
             case "rgb":
                 rgb_keys.append(signal_info.name)
             case "ray":
@@ -651,10 +651,10 @@ def prepare_preprocessors(models, train_state: TrainState):
                 raise NotImplementedError
 
     # It is important that the Ray preprocesors occur after the RGB ones, since they need the output
-    key_order = []
+    preprocessor_order = []
 
     for key in rgb_keys:
-        key_order.append(key_order)
+        preprocessor_order.append(key)
         preprocessors["train"][key] = functools.partial(
             preprocess_rgb,
             preprocessors=_train_rgb_preprocess_steps,
@@ -670,7 +670,7 @@ def prepare_preprocessors(models, train_state: TrainState):
         )
 
     for key in ray_keys:
-        key_order.append(key_order)
+        preprocessor_order.append(key)
 
         cam = ray_cams[key]
         cam_getter = CameraDataGetter(info_getter, {"camera": cam})
@@ -697,38 +697,58 @@ def prepare_preprocessors(models, train_state: TrainState):
         )
 
     for key in prompt_keys:
-        key_order.append(key)
+        preprocessor_order.append(key)
         preprocessors["train"][key] = functools.partial(
             preprocess_prompt, models=models
         )
 
         preprocessors["val"][key] = functools.partial(preprocess_prompt, models=models)
 
-    return preprocessors, key_order
+    return preprocessors, preprocessor_order
 
 
 def save_lora_weights(
     accelerator: Accelerator, models, train_state: TrainState
 ) -> None:
-    lora_state_dicts = {}
+    if not accelerator.is_main_process:
+        return
 
-    if "unet" in train_state.trainable_models:
-        lora_state_dicts["unet_lora_layers"] = convert_state_dict_to_diffusers(
-            get_peft_model_state_dict(unwrap_model(accelerator, models["unet"]))
+    trainable_models = {model: models[model] for model in train_state.trainable_models}
+    layers_to_save: Dict[str, Dict[str, Union[nn.Module, Tensor]]] = {}
+    other_models = {}
+
+    for model_name, loaded_model in trainable_models.items():
+        # Map the list of loaded_models given by accelerator to keys given in train_state.
+        # NOTE: This mapping is done by type, so two objects of the same type will be treated as the same object.
+        # TODO: Find a better way of mapping this.
+
+        unwrapped_model = unwrap_model(accelerator, loaded_model)
+
+        if isinstance(
+            unwrapped_model, ControlLoRAModel
+        ):  # This one has special saving logic that we handle later
+            other_models["controlnet"] = unwrapped_model
+            continue
+
+        state_model_dict = convert_state_dict_to_diffusers(
+            get_peft_model_state_dict(loaded_model)
         )
+        layers_to_save[model_name] = state_model_dict
 
-    if "text_encoder" in train_state.trainable_models:
-        lora_state_dicts["text_encoder_lora_layers"] = convert_state_dict_to_diffusers(
-            get_peft_model_state_dict(unwrap_model(accelerator, models["text_encoder"]))
-        )
+    dst_dir = Path(train_state.output_dir, train_state.job_id, "weights")
+    dst_dir.mkdir(exist_ok=True, parents=True)
 
-    get_diffusion_cls(train_state.model_id).save_lora_weights(
-        save_directory=train_state, **lora_state_dicts
+    StableDiffusionImg2ImgPipeline.save_lora_weights(
+        save_directory=str(dst_dir),
+        unet_lora_layers=layers_to_save.get("unet"),
+        text_encoder_lora_layers=layers_to_save.get("text_encoder"),
     )
+    if "controlnet" in other_models:
+        other_models["controlnet"].save_pretrained(str(dst_dir / "controlnet"))
 
 
 def get_diffusion_noise(
-    size: Iterable[int], device: torch.device, train_state: TrainState
+    size: Sequence[int], device: torch.device, train_state: TrainState
 ) -> Tensor:
     noise = torch.randn(size, device=device)
 
@@ -1422,13 +1442,17 @@ def main(args):
     train_dataset = DynamicDataset.from_config(
         train_state.datasets["train_data"],
         preprocess_func=functools.partial(
-            preprocess_sample, preprocessors=preprocessors["train"], key_order=key_order
+            preprocess_sample,
+            preprocessors=preprocessors["train"],
+            preprocessor_order=key_order,
         ),
     )
     val_dataset = DynamicDataset.from_config(
         train_state.datasets["val_data"],
         preprocess_func=functools.partial(
-            preprocess_sample, preprocessors=preprocessors["val"], key_order=key_order
+            preprocess_sample,
+            preprocessors=preprocessors["val"],
+            preprocessor_order=key_order,
         ),
     )
 
@@ -1601,7 +1625,7 @@ def main(args):
         )
 
         # Save the lora layers
-        save_lora_weights(accelerator, train_state)
+        save_lora_weights(accelerator, models, train_state)
 
     accelerator.end_training()
 

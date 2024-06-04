@@ -1,4 +1,4 @@
-from typing import Optional, List, Any, Tuple
+from typing import Optional, List, Any, Tuple, Union
 from collections.abc import Iterable
 from pathlib import Path
 import os
@@ -58,7 +58,9 @@ def show_img(img: Tensor, save_path: Optional[Path] = None):
     plt.show()
 
 
-def batch_if_not_iterable(item: Any, single_dim: int = 3) -> Iterable[Any]:
+def batch_if_not_iterable(
+    item: Union[Tensor, np.ndarray, Iterable], single_dim: int = 3
+) -> Iterable[Any]:
     if item is None:
         return item
 
@@ -141,7 +143,7 @@ def set_env(key: str, val: Any) -> None:
     os.environ[key] = str(val)
 
 
-def get_env(key: str, default_val: Any = None) -> str | Path:
+def get_env(key: str, default_val: Any = None) -> Union[str, Path]:
     val = os.environ.get(key, default_val)
 
     if (
@@ -162,5 +164,5 @@ def set_if_no_key(config, key, val):
     return val
 
 
-def nearest_multiple(x: float | int, m: int) -> int:
+def nearest_multiple(x: Union[float, int], m: int) -> int:
     return int(int(x / m) * m)

@@ -37,7 +37,7 @@ norm_img_crop_pipeline = tvtf.Compose(
         tvtf.Resize((512, 512)),
     ]
 )
-suffixes = {
+DATA_SUFFIXES: Dict[Tuple[str, str], str] = {
     ("rgb", "pandaset"): ".jpg",
     ("rgb", "neurad"): ".jpg",
     ("lidar", "pandaset"): ".pkl.gz",
@@ -49,7 +49,7 @@ suffixes = {
 }
 RANGE_SEP = ":"
 CN_SIGNAL_PATTERN = re.compile(
-    r"cn_(?P<type>\w+)_(?P<num_channels>\d+)_(?P<camera>\w+)"
+    r"cn_(?P<cn_type>\w+)_(?P<num_channels>\d+)_(?P<camera>\w+)"
 )
 
 
@@ -156,7 +156,7 @@ def iter_numeric_names(
         yield num
 
 
-def read_yaml(path: Path):
+def read_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
@@ -391,7 +391,7 @@ class PandasetInfoGetter(InfoGetter):
         sample_dir_path = self._get_sample_dir_path(dataset_path, scene, specs)
 
         data_type = "rgb" if specs is None else specs.get("data_type", "rgb")
-        suffix = suffixes[data_type, self.dataset_name]
+        suffix = DATA_SUFFIXES[data_type, self.dataset_name]
 
         for sample_path in sample_dir_path.glob(f"*{suffix}"):
             yield sample_path.stem
@@ -416,7 +416,7 @@ class PandasetInfoGetter(InfoGetter):
         elif data_type == "timestamp":
             sample_path = sample_dir_path / "timestamps"
 
-        suffix = suffixes[data_type, self.dataset_name]
+        suffix = DATA_SUFFIXES[data_type, self.dataset_name]
         sample_path = sample_path.with_suffix(suffix)
 
         return sample_path
@@ -454,7 +454,7 @@ class NeuRADInfoGetter(InfoGetter):
         sample_dir_path = self._get_sample_dir_path(dataset_path, scene, specs)
 
         data_type = "rgb" if specs is None else specs.get("data_type", "rgb")
-        suffix = suffixes[data_type, self.dataset_name]
+        suffix = DATA_SUFFIXES[data_type, self.dataset_name]
 
         for sample_path in sample_dir_path.glob(f"*{suffix}"):
             yield sample_path.stem
@@ -465,8 +465,8 @@ class NeuRADInfoGetter(InfoGetter):
         assert isinstance(info.sample, str)
 
         sample_dir_path = self._get_sample_dir_path(dataset_path, info.scene, specs)
-        data_type = "rgb" if specs is None else specs.get("data_type", "rgb")
-        suffix = suffixes[data_type, self.dataset_name]
+        data_type: str = "rgb" if specs is None else specs.get("data_type", "rgb")
+        suffix = DATA_SUFFIXES[data_type, self.dataset_name]
 
         sample_path = (sample_dir_path / info.sample).with_suffix(suffix)
         return sample_path
@@ -554,7 +554,7 @@ class RGBDataGetter(DataGetter):
                 tvtf.Resize((height, width)),
             ]
         )
-        self.extra_transform: tvtf.Compose = None
+        self.extra_transform: Optional[tvtf.Compose] = None
 
     def set_extra_transforms(self, *transforms: tvtf.Transform) -> None:
         self.extra_transform = tvtf.Compose(transforms)
@@ -715,7 +715,7 @@ class CameraDataGetter(DataGetter):
             )
 
         cam = int(info.sample)
-        return self.cameras[cam]
+        return self.cameras[info.scene][cam]
 
 
 INFO_GETTER_BUILDERS: Dict[str, Callable[[], InfoGetter]] = {
@@ -731,6 +731,31 @@ DATA_GETTER_BUILDERS: Dict[str, Callable[[InfoGetter, Dict[str, Any]], DataGette
     "intrinsics": IntrinsicsDataGetter,
     "pose": PoseDataGetter,
 }
+
+
+@dataclass(init=True, slots=True, frozen=True)
+class ConditioningSignalInfo:
+    cn_type: str
+    num_channels: int
+    camera: str
+    data_type: Optional[str] = None
+
+    @staticmethod
+    def from_signal_name(name: str) -> Optional["ConditioningSignalInfo"]:
+        pattern_match = CN_SIGNAL_PATTERN.match(name)
+        if not pattern_match:
+            return None
+
+        group = pattern_match.groupdict()
+        group["num_channels"] = int(group["num_channels"])
+        if group["cn_type"] in DATA_GETTER_BUILDERS:
+            group["data_type"] = group["cn_type"]
+
+        return ConditioningSignalInfo(**group)
+
+    @property
+    def name(self):
+        return f"cn_{self.cn_type}_{self.num_channels}_{self.camera}"
 
 
 class DynamicDataset(Dataset):  # Dataset / Scene / Sample
@@ -796,9 +821,10 @@ class DynamicDataset(Dataset):  # Dataset / Scene / Sample
         return len(self.sample_infos)
 
     @classmethod
-    def from_config(cls, dataset_config: Union[Path, dict[str, Any]], **kwargs):
+    def from_config(cls, dataset_config: Union[Path, Dict[str, Any]], **kwargs):
         if isinstance(dataset_config, Path):
             dataset_config = read_yaml(dataset_config)
+            dataset_config = typing.cast(Dict[str, Any], dataset_config)
 
         dataset_path = Path(dataset_config["path"])
         data_tree = read_data_tree(dataset_config["data_tree"])
@@ -815,9 +841,11 @@ class DynamicDataset(Dataset):  # Dataset / Scene / Sample
                 if spec_name in DATA_GETTER_BUILDERS:
                     data_type = spec_name
 
-                elif cn_signal_match := CN_SIGNAL_PATTERN.match():
-                    groups = cn_signal_match.groupdict()
-                    data_type = groups["data_type"]
+                elif signal_info := ConditioningSignalInfo.from_signal_name(spec_name):
+                    if not signal_info.data_type:
+                        continue
+
+                    data_type = signal_info.data_type
 
                 else:
                     raise NotImplementedError(
@@ -875,7 +903,7 @@ class DynamicDataset(Dataset):  # Dataset / Scene / Sample
     def __len__(self) -> int:
         return len(self.idxs)
 
-    def __iter__(self) -> Generator[Dict[str, Any]]:
+    def __iter__(self) -> Generator[Dict[str, Any], None, None]:
         for i in range(len(self)):
             yield self[i]
 
@@ -898,7 +926,9 @@ class DynamicDataset(Dataset):  # Dataset / Scene / Sample
 
         return sample
 
-    def iter_attrs(self, attrs: Iterable[str]) -> Generator[Tuple[any]]:
+    def iter_attrs(
+        self, attrs: Iterable[str]
+    ) -> Generator[Tuple[Any, ...], None, None]:
         for sample in self:
             yield tuple(sample[attr] for attr in attrs)
 
