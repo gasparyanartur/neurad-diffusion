@@ -122,6 +122,6 @@ trainable_models:
 
 
 logging_dir: logs/finetune/cn
-output_dir: output/finetune/cn
+output_dir: outputs/finetune/cn
 #loggers: ["wandb"]
 loggers: []
