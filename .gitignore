@@ -193,6 +193,5 @@ camera_paths/
 */**/._.DS_Store
 masks/
 *.sif
-.vscode*
 neurad-env/*
 wandb

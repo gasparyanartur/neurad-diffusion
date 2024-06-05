@@ -73,7 +73,6 @@ from nerfstudio.generative.dynamic_dataset import (
     save_yaml,
     setup_project,
     DynamicDataset,
-    meta_to_str,
 )
 from nerfstudio.generative.diffusion import (
     get_noised_img,
@@ -126,9 +125,11 @@ class TrainState:
     checkpointing_steps: int = 500
     checkpoints_total_limit: int = 0
     resume_from_checkpoint: bool = False
+
     n_epochs: int = 100
     max_train_samples: Optional[int] = None
     val_freq: int = 10
+    frac_dataset_per_epoch: float = 1.0
 
     train_noise_strength: float = 0.5
     train_noise_num_steps: Optional[int] = None
@@ -1068,6 +1069,7 @@ def validate_model(
     accelerator,
     train_state: TrainState,
     dataloader: torch.utils.data.DataLoader,
+    render_dataloader: torch.utils.data.DataLoader,
     models,
     metrics: dict[str, Any],
     run_prefix: str,
@@ -1157,18 +1159,6 @@ def validate_model(
             diffusion_kwargs,
         )["rgb"]
 
-        val_start_timestep = int(
-            (1 - train_state.val_noise_strength)
-            * len(models["noise_scheduler"].timesteps)
-        )
-        rgb_noised = get_noised_img(
-            rgb,
-            timestep=val_start_timestep,
-            vae=pipeline.pipe.vae,
-            img_processor=pipeline.pipe.image_processor,
-            noise_scheduler=models["noise_scheduler"],
-        )
-
         # Benchmark
         for metric_name, metric in metrics.items():
             values = metric(rgb_out, rgb)
@@ -1180,6 +1170,52 @@ def validate_model(
                 {f"{run_prefix}_{metric_name}": value_dict},
                 step=train_state.global_step,
             )
+
+    for step, batch in enumerate(render_dataloader):
+        diffusion_inputs = {}
+        diffusion_kwargs = {"strength": train_state.val_noise_strength}
+
+        rgb = batch["rgb"].to(dtype=vae_dtype, device=accelerator.device)
+        diffusion_inputs["rgb"] = rgb
+        batch_size = len(rgb)
+        random_seeds = np.arange(batch_size * step, batch_size * (step + 1))
+
+        if "controlnet" in models:
+            for conditioning in train_state.conditioning_signal_infos:
+                signal_name = conditioning.name
+                diffusion_inputs[signal_name] = batch[signal_name]
+
+        diffusion_inputs["generator"] = [
+            torch.Generator(device=accelerator.device).manual_seed(int(seed))
+            for seed in random_seeds
+        ]
+
+        if "input_ids" in batch:
+            with torch.no_grad():
+                diffusion_inputs["prompt_embeds"] = encode_tokens(
+                    pipeline.pipe.text_encoder,
+                    batch["input_ids"].to(device=accelerator.device),
+                    use_cache=True,
+                )
+
+        rgb_out = pipeline.get_diffusion_output(
+            diffusion_inputs,
+            diffusion_kwargs,
+        )["rgb"]
+
+        # Renders
+        val_start_timestep = int(
+            (1 - train_state.val_noise_strength)
+            * len(models["noise_scheduler"].timesteps)
+        )
+
+        rgb_noised = get_noised_img(
+            rgb,
+            timestep=val_start_timestep,
+            vae=pipeline.pipe.vae,
+            img_processor=pipeline.pipe.image_processor,
+            noise_scheduler=models["noise_scheduler"],
+        )
 
         for tracker in accelerator.trackers:
             if tracker.name == "tensorboard":
@@ -1196,21 +1232,21 @@ def validate_model(
                         "ground_truth": [
                             wandb.Image(
                                 img,
-                                caption=meta_to_str(meta),
+                                caption=str(meta),
                             )
                             for (img, meta) in (zip(rgb, batch["meta"]))
                         ],
                         f"{run_prefix}_images": [
                             wandb.Image(
                                 img,
-                                caption=meta_to_str(meta),
+                                caption=str(meta),
                             )
                             for (img, meta) in (zip(rgb_out, batch["meta"]))
                         ],
                         "noised_images": [
                             wandb.Image(
                                 img,
-                                caption=meta_to_str(meta),
+                                caption=str(meta),
                             )
                             for (img, meta) in (zip(rgb_noised, batch["meta"]))
                         ],
@@ -1240,7 +1276,11 @@ def train_epoch(
         models["text_encoder"].train()
 
     train_loss = 0.0
-    for batch in dataloader:
+
+    for i_batch, batch in enumerate(dataloader):
+        if i_batch >= train_state.num_update_steps_per_epoch:
+            break
+
         assert "rgb" in batch
 
         with accelerator.accumulate(models[m] for m in train_state.trainable_models):
@@ -1325,7 +1365,7 @@ def train_epoch(
             if train_state.use_debug_loss and "meta" in batch:
                 for meta in batch["meta"]:
                     accelerator.log(
-                        {"loss_for_" + meta_to_str(meta): loss},
+                        {"loss_for_" + str(meta): loss},
                         step=train_state.global_step,
                     )
 
@@ -1350,6 +1390,7 @@ def train_epoch(
         if accelerator.sync_gradients:
             progress_bar.update(1)
             train_state.global_step += 1
+            train_state.epoch += 1
             accelerator.log({"train_loss": train_loss}, step=train_state.global_step)
             train_loss = 0.0
 
@@ -1515,6 +1556,15 @@ def main(args):
         ),
     )
 
+    render_dataset = DynamicDataset.from_config(
+        train_state.datasets["render_data"],
+        preprocess_func=functools.partial(
+            preprocess_sample,
+            preprocessors=preprocessors["val"],
+            preprocessor_order=key_order,
+        ),
+    )
+
     train_dataloader = DataLoader(
         train_dataset,
         shuffle=True,
@@ -1526,6 +1576,15 @@ def main(args):
 
     val_dataloader = DataLoader(
         val_dataset,
+        shuffle=False,
+        batch_size=train_state.train_batch_size,
+        num_workers=train_state.dataloader_num_workers,
+        collate_fn=functools.partial(collate_fn, accelerator=accelerator),
+        pin_memory=train_state.pin_memory,
+    )
+
+    render_dataloader = DataLoader(
+        render_dataset,
         shuffle=False,
         batch_size=train_state.train_batch_size,
         num_workers=train_state.dataloader_num_workers,
@@ -1566,7 +1625,9 @@ def main(args):
 
     # Scheduler and math around the number of training steps.
     train_state.num_update_steps_per_epoch = math.ceil(
-        len(train_dataloader) / train_state.gradient_accumulation_steps
+        train_state.frac_dataset_per_epoch
+        * len(train_dataloader)
+        / train_state.gradient_accumulation_steps
     )
     train_state.max_train_steps = (
         train_state.n_epochs * train_state.num_update_steps_per_epoch
@@ -1590,7 +1651,9 @@ def main(args):
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     train_state.num_update_steps_per_epoch = math.ceil(
-        len(train_dataloader) / train_state.gradient_accumulation_steps
+        train_state.frac_dataset_per_epoch
+        * len(train_dataloader)
+        / train_state.gradient_accumulation_steps
     )
     train_state.max_train_steps = (
         train_state.n_epochs * train_state.num_update_steps_per_epoch
@@ -1616,7 +1679,8 @@ def main(args):
     )
 
     logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(train_dataset)}")
+    logger.info(f"  Num training samples = {len(train_dataset)}")
+    logger.info(f"  Num validation samples = {len(val_dataset)}")
     logger.info(f"  Num Epochs = {train_state.n_epochs}")
     logger.info(
         f"  Instantaneous batch size per device = {train_state.train_batch_size}"
@@ -1628,6 +1692,7 @@ def main(args):
         f"  Gradient Accumulation steps = {train_state.gradient_accumulation_steps}"
     )
     logger.info(f"  Total optimization steps = {train_state.max_train_steps}")
+    logger.info(f"Configuration: {train_state}")
 
     if train_state.resume_from_checkpoint:
         resume_from_checkpoint(accelerator, train_state)
@@ -1658,6 +1723,7 @@ def main(args):
                 accelerator,
                 train_state,
                 val_dataloader,
+                render_dataloader,
                 models,
                 metrics,
                 "val",
@@ -1672,12 +1738,12 @@ def main(args):
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-
         # Final inference
         validate_model(
             accelerator,
             train_state,
             val_dataloader,
+            render_dataloader,
             models,
             metrics,
             "test",

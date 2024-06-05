@@ -225,10 +225,6 @@ def read_data_tree(
     return dataset_dict
 
 
-def meta_to_str(meta: Dict[str, Any]) -> str:
-    return f"{meta['dataset']} - {meta['scene']} - {meta['sample']}"
-
-
 def _pandaset_pose_to_matrix(pandaset_pose):
     pose = torch.eye(4)
     quaternion = np.array(
@@ -303,6 +299,9 @@ class SampleInfo:
     dataset: str
     scene: str
     sample: str
+
+    def __str__(self) -> str:
+        return f"{self.dataset} - {self.scene} - {self.sample}"
 
 
 class InfoGetter(ABC):

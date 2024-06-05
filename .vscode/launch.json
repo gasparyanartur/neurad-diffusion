@@ -268,6 +268,18 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "args": "configs/local-configs/train-diffusion-pandaset-local-debug.yml"
-  }
+  },
+  {
+    "name": "Python: train diffusion pandaset local full",
+    "type": "debugpy",
+    "request": "launch",
+    "program": "nerfstudio/scripts/run_train_lora.py",
+    "env": {
+        "PYTHONPATH":"${workspaceFolder}",
+    },
+    "cwd": "${workspaceFolder}",
+    "console": "integratedTerminal",
+    "args": "configs/full-training/sd-pandaset-full.yml"
+},
   ]
 }
