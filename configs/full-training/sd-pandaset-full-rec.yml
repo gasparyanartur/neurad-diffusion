@@ -11,8 +11,6 @@ datasets:
       rgb:
         camera: "front_camera"
 
-      cn_ray_6_front_camera: {}
-
       prompt: {}
       meta: {}
 
@@ -31,8 +29,6 @@ datasets:
     data_getters:
       rgb:
         camera: "front_left_camera"
-
-      cn_ray_6_front_left_camera: {}
 
       prompt: {}
       meta: {}
@@ -70,7 +66,7 @@ datasets:
         #123: "20::50"
         #158: "20::50"
 
-model_type: cn
+model_type: sd
 model_id: stabilityai/stable-diffusion-2-1
 
 seed: 0
@@ -113,9 +109,9 @@ flip_prob: 0
 #flip_prob: 0.5
 
 use_debug_loss: False
-use_recreation_loss: False
+use_recreation_loss: True
 
-use_controlnet: True
+use_controlnet: False
 
 control_lora_rank_linear: 4
 control_lora_rank_conv2d: 4
@@ -141,10 +137,9 @@ lora_target_ranks:
 
 trainable_models:
   - unet
-  - controlnet
 
-logging_dir: logs/finetune/cn
-output_dir: outputs/finetune/cn
+logging_dir: logs/finetune/sd
+output_dir: outputs/finetune/sd
 
 loggers: ["wandb"]
 #loggers: []

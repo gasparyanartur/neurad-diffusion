@@ -113,7 +113,7 @@ flip_prob: 0
 #flip_prob: 0.5
 
 use_debug_loss: False
-use_recreation_loss: False
+use_recreation_loss: True
 
 use_controlnet: True
 

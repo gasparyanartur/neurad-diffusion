@@ -70,13 +70,13 @@ model_type: sd
 model_id: stabilityai/stable-diffusion-2-1
 
 seed: 0
-train_batch_size: 4
+train_batch_size: 1
 dataloader_num_workers: 0
 frac_dataset_per_epoch: 1.0
 
 max_grad_norm: 1.0
 
-n_epochs: 1000
+n_epochs: 10000
 val_freq: 100
 checkpointing_steps: 2000
 
