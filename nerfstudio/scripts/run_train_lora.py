@@ -57,7 +57,8 @@ from accelerate.utils import (
 )
 from peft import LoraConfig, set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
-from torchmetrics.image import StructuralSimilarityIndexMeasure
+from torchmetrics.image import StructuralSimilarityIndexMeasure, PeakSignalNoiseRatio
+from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.generative.dynamic_dataset import (
@@ -74,7 +75,7 @@ from nerfstudio.generative.dynamic_dataset import (
     setup_project,
     DynamicDataset,
 )
-from nerfstudio.generative.diffusion import (
+from nerfstudio.generative.diffusion_model import (
     get_noised_img,
     tokenize_prompt,
     encode_tokens,
@@ -122,9 +123,13 @@ class TrainState:
     prediction_type: Optional[str] = None
 
     enable_gradient_checkpointing: bool = False
+
+    checkpoint_strategy: str = "best"
     checkpointing_steps: int = 500
-    checkpoints_total_limit: int = 0
-    resume_from_checkpoint: bool = False
+    checkpoints_total_limit: int = (
+        0  # How many checkpoints, besides the latest, that will be stored
+    )
+    resume_from_checkpoint: bool = False  # Does not work atm
 
     n_epochs: int = 100
     max_train_samples: Optional[int] = None
@@ -148,7 +153,7 @@ class TrainState:
 
     scale_lr: bool = False
     gradient_accumulation_steps: int = 1
-    train_batch_size: int = 16
+    train_batch_size: int = 1
     dataloader_num_workers: int = 0
     pin_memory: bool = True
     learning_rate: float = 1e-4
@@ -169,9 +174,9 @@ class TrainState:
     lora_target_ranks: Dict[str, Any] = field(
         default_factory=lambda: {
             "unet": {
-                "downblocks": {"attn": 4, "resnet": 4, "ff": 8, "proj": 8},
-                "midblocks": {"attn": 8, "resnet": 8, "ff": 16, "proj": 16},
-                "upblocks": {"attn": 8, "resnet": 8, "ff": 16, "proj": 16},
+                "downblocks": {"attn": 8, "resnet": 8, "ff": 4, "proj": 4},
+                "midblocks": {"attn": 8, "resnet": 8, "ff": 4, "proj": 4},
+                "upblocks": {"attn": 8, "resnet": 8, "ff": 4, "proj": 4},
             },
             "controlnet": {
                 "downblocks": {"attn": 8, "resnet": 8, "ff": 16, "proj": 16},
@@ -179,7 +184,7 @@ class TrainState:
             },  # ControlNet not implemented atm, refer to `control_lora_rank_linear` and `control_lora_rank_conv2d`
         }
     )
-    lora_peft_type: str = (
+    lora_peft_type: str = (  # CURRENTLY NOT IN USE
         "LORA"  # LORA, LOHA, or LOKR. LOKR seems best for this task https://arxiv.org/pdf/2309.14859
     )
 
@@ -194,7 +199,10 @@ class TrainState:
     num_update_steps_per_epoch: Optional[int] = None  # Gets set later
 
     global_step: int = 0
-    epoch = 0
+    epoch: int = 0
+
+    best_ssim: float = 0
+    best_saved_ssim: float = 0
 
     compile_models: List[str] = field(default_factory=list)
 
@@ -226,7 +234,7 @@ class TrainState:
     push_to_hub: bool = False  # Not Implemented
     hub_token: Optional[str] = None
 
-    use_debug_loss: bool = False
+    use_debug_metrics: bool = False
     use_recreation_loss: bool = False
 
     seed: Optional[int] = None
@@ -771,7 +779,7 @@ def prepare_preprocessors(models, train_state: TrainState):
 
 
 def save_lora_weights(
-    accelerator: Accelerator, models, train_state: TrainState
+    accelerator: Accelerator, models, train_state: TrainState, dir_name: str = "weights"
 ) -> None:
     if not accelerator.is_main_process:
         return
@@ -798,7 +806,7 @@ def save_lora_weights(
         )
         layers_to_save[model_name] = state_model_dict
 
-    dst_dir = Path(train_state.output_dir, train_state.job_id, "weights")
+    dst_dir = Path(train_state.output_dir, train_state.job_id, dir_name)
     dst_dir.mkdir(exist_ok=True, parents=True)
 
     StableDiffusionImg2ImgPipeline.save_lora_weights(
@@ -1015,7 +1023,7 @@ def prepare_models(train_state: TrainState, device):
                     lora_alpha=train_state.lora_rank_linear,
                     init_lora_weights="gaussian",
                     target_modules="|".join(unet_ranks.keys()),
-                    peft_type=unet_ranks,
+                    rank_pattern=unet_ranks,
                     use_dora=train_state.use_dora,
                 )
             )
@@ -1065,6 +1073,7 @@ def prepare_models(train_state: TrainState, device):
     return models
 
 
+@torch.no_grad
 def validate_model(
     accelerator,
     train_state: TrainState,
@@ -1127,6 +1136,11 @@ def validate_model(
         pipe_models=pipeline_models,
     )
 
+    running_metrics = {
+        name: torch.zeros(1, dtype=torch.float32) for name in metrics.keys()
+    }
+    running_count = 0
+
     for step, batch in enumerate(dataloader):
         diffusion_inputs = {}
         diffusion_kwargs = {"strength": train_state.val_noise_strength}
@@ -1158,12 +1172,11 @@ def validate_model(
         ]
 
         if "input_ids" in batch:
-            with torch.no_grad():
-                diffusion_inputs["prompt_embeds"] = encode_tokens(
-                    pipeline.pipe.text_encoder,
-                    batch["input_ids"].to(device=accelerator.device),
-                    use_cache=True,
-                )
+            diffusion_inputs["prompt_embeds"] = encode_tokens(
+                pipeline.pipe.text_encoder,
+                batch["input_ids"].to(device=accelerator.device),
+                use_cache=True,
+            )
 
         rgb_out = pipeline.get_diffusion_output(
             diffusion_inputs,
@@ -1171,16 +1184,38 @@ def validate_model(
         )["rgb"]
 
         # Benchmark
+        running_count += len(rgb)
         for metric_name, metric in metrics.items():
-            values = metric(rgb_out, rgb)
+            values: Tensor = metric(rgb_out, rgb).detach().cpu()
             if len(values.shape) == 0:
-                values = [values.item()]
+                values = torch.tensor([values.item()])
 
-            value_dict = {str(i): float(v) for i, v in enumerate(values)}
-            accelerator.log(
-                {f"{run_prefix}_{metric_name}": value_dict},
-                step=train_state.global_step,
-            )
+            running_metrics[metric_name] += torch.sum(values)
+
+            if train_state.use_debug_metrics:
+                value_dict = {str(i): float(v) for i, v in enumerate(values)}
+                accelerator.log(
+                    {f"{run_prefix}_{metric_name}_{str(batch['meta'])}": value_dict},
+                    step=train_state.global_step,
+                )
+
+    mean_metrics = {}
+    for metric_name, metric in metrics.items():
+        mean_metric = (running_metrics[metric_name] / running_count).item()
+        mean_metrics[f"{run_prefix}_{metric_name}"] = mean_metric
+
+        if metric_name == "ssim" and mean_metric > train_state.best_ssim:
+            train_state.best_ssim = mean_metric
+
+    accelerator.log(
+        mean_metrics,
+        step=train_state.global_step,
+    )
+
+    render_rgbs = []
+    render_rgbs_noisy = []
+    render_metas = []
+    render_outs = []
 
     for step, batch in enumerate(render_dataloader):
         diffusion_inputs = {}
@@ -1228,42 +1263,47 @@ def validate_model(
             noise_scheduler=models["noise_scheduler"],
         )
 
-        for tracker in accelerator.trackers:
-            if tracker.name == "tensorboard":
-                tracker.writer.add_images(
-                    f"{run_prefix}_images",
-                    np.stack([np.asarray(img) for img in rgb_out]),
-                    train_state.epoch,
-                    dataformats="NHWC",
-                )
+        render_rgbs.extend(list(rgb.detach().cpu()))
+        render_outs.extend(list(rgb_out.detach().cpu()))
+        render_rgbs_noisy.extend(list(rgb_noised.detach().cpu()))
+        render_metas.extend(batch["meta"])
 
-            if tracker.name == "wandb" and using_wandb:
-                tracker.log_images(
-                    {
-                        "ground_truth": [
-                            wandb.Image(
-                                img,
-                                caption=str(meta),
-                            )
-                            for (img, meta) in (zip(rgb, batch["meta"]))
-                        ],
-                        f"{run_prefix}_images": [
-                            wandb.Image(
-                                img,
-                                caption=str(meta),
-                            )
-                            for (img, meta) in (zip(rgb_out, batch["meta"]))
-                        ],
-                        "noised_images": [
-                            wandb.Image(
-                                img,
-                                caption=str(meta),
-                            )
-                            for (img, meta) in (zip(rgb_noised, batch["meta"]))
-                        ],
-                    },
-                    step=train_state.global_step,
-                )
+    for tracker in accelerator.trackers:
+        if tracker.name == "tensorboard":
+            tracker.writer.add_images(
+                f"{run_prefix}_images",
+                np.stack([np.asarray(img) for img in render_outs]),
+                train_state.epoch,
+                dataformats="NHWC",
+            )
+
+        if tracker.name == "wandb" and using_wandb:
+            tracker.log_images(
+                {
+                    "ground_truth": [
+                        wandb.Image(
+                            img,
+                            caption=str(meta),
+                        )
+                        for (img, meta) in (zip(render_rgbs, render_metas))
+                    ],
+                    f"{run_prefix}_images": [
+                        wandb.Image(
+                            img,
+                            caption=str(meta),
+                        )
+                        for (img, meta) in (zip(render_outs, render_metas))
+                    ],
+                    "noised_images": [
+                        wandb.Image(
+                            img,
+                            caption=str(meta),
+                        )
+                        for (img, meta) in (zip(render_rgbs_noisy, render_metas))
+                    ],
+                },
+                step=train_state.global_step,
+            )
 
 
 def train_epoch(
@@ -1373,7 +1413,7 @@ def train_epoch(
                 )
                 loss += rec_loss
 
-            if train_state.use_debug_loss and "meta" in batch:
+            if train_state.use_debug_metrics and "meta" in batch:
                 for meta in batch["meta"]:
                     accelerator.log(
                         {"loss_for_" + str(meta): loss},
@@ -1401,17 +1441,13 @@ def train_epoch(
         if accelerator.sync_gradients:
             progress_bar.update(1)
             train_state.global_step += 1
-            train_state.epoch += 1
             accelerator.log({"train_loss": train_loss}, step=train_state.global_step)
             train_loss = 0.0
 
-            if accelerator.is_main_process and (
-                train_state.global_step % train_state.checkpointing_steps == 0
-            ):
-                save_checkpoint(accelerator, train_state)
-
         logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
         progress_bar.set_postfix(**logs)
+
+    train_state.epoch += 1
 
 
 def main(args):
@@ -1519,7 +1555,11 @@ def main(args):
     metrics = {
         "ssim": StructuralSimilarityIndexMeasure(
             data_range=(0.0, 1.0), reduction="none"
-        ).to(accelerator.device)
+        ).to(accelerator.device),
+        "psnr": PeakSignalNoiseRatio(data_range=1.0).to(accelerator.device),
+        "lpips": LearnedPerceptualImagePatchSimilarity(normalize=True).to(
+            accelerator.device
+        ),
     }
 
     models = prepare_models(train_state, accelerator.device)
@@ -1741,6 +1781,23 @@ def main(args):
             )
         torch.cuda.empty_cache()
 
+        # if accelerator.is_main_process and (
+        #    train_state.global_step % train_state.checkpointing_steps == 0
+        # ):
+        if accelerator.is_main_process:
+            if (
+                train_state.checkpoint_strategy == "best"
+                and train_state.best_ssim > train_state.best_saved_ssim
+            ):
+                save_checkpoint(accelerator, train_state)
+                train_state.best_saved_ssim = train_state.best_ssim
+
+            elif (
+                train_state.checkpoint_strategy == "latest"
+                and train_state.global_step % train_state.checkpointing_steps == 0
+            ):
+                save_checkpoint(accelerator, train_state)
+
         if (
             train_state.global_step >= train_state.max_train_steps
             or train_state.epoch > train_state.n_epochs
@@ -1761,7 +1818,7 @@ def main(args):
         )
 
         # Save the lora layers
-        save_lora_weights(accelerator, models, train_state)
+        save_lora_weights(accelerator, models, train_state, "final_weights")
 
     accelerator.end_training()
 

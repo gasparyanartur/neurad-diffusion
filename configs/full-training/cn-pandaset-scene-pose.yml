@@ -11,6 +11,8 @@ datasets:
       rgb:
         camera: "front_camera"
 
+      cn_ray_6_front_camera: {}
+
       prompt: {}
       meta: {}
 
@@ -18,7 +20,7 @@ datasets:
       pandaset: 
         #001-124: "0::1"
         #001-030: "0::1"
-        001: "0::"
+        001: "*"
         #001: "16::"
         #001: [01]
           
@@ -30,6 +32,8 @@ datasets:
       rgb:
         camera: "front_left_camera"
 
+      cn_ray_6_front_left_camera: {}
+
       prompt: {}
       meta: {}
 
@@ -39,7 +43,7 @@ datasets:
         #030-050: "0::16"
         #139-158: "0::16"
         #101: "0::16"
-        001: "0::8"
+        001: "0:80:4"
         #001: "0:16:2"
         #001: [01]
 
@@ -55,7 +59,7 @@ datasets:
 
     data_tree: 
       pandaset: 
-        001: "::20"
+        001: "0:80:10"
         #011: "20::50"
         #016: "20::50"
         #028: "20::50"
@@ -66,7 +70,7 @@ datasets:
         #123: "20::50"
         #158: "20::50"
 
-model_type: sd
+model_type: cn
 model_id: stabilityai/stable-diffusion-2-1
 
 seed: 0
@@ -111,7 +115,7 @@ flip_prob: 0
 use_debug_loss: False
 use_recreation_loss: False
 
-use_controlnet: False
+use_controlnet: True
 
 control_lora_rank_linear: 4
 control_lora_rank_conv2d: 4
@@ -137,9 +141,10 @@ lora_target_ranks:
 
 trainable_models:
   - unet
+  - controlnet
 
-logging_dir: logs/finetune/sd
-output_dir: outputs/finetune/sd
+logging_dir: logs/finetune/cn
+output_dir: outputs/finetune/cn
 
 loggers: ["wandb"]
 #loggers: []
