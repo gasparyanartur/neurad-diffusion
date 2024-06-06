@@ -51,6 +51,8 @@ singularity exec --nv \
     $subcommand \
     --load-config $configpath \
     --output-path $outputpath \
+    --pose_source "train+test" \
+    --calculate_and_save_metrics True \
     ${@:1} \
 
 #

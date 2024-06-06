@@ -1139,7 +1139,18 @@ def validate_model(
         if "controlnet" in models:
             for conditioning in train_state.conditioning_signal_infos:
                 signal_name = conditioning.name
-                diffusion_inputs[signal_name] = batch[signal_name]
+
+                if signal_name in batch:
+                    signal_value = batch[signal_name]
+
+                else:
+                    for name, value in batch.items():
+                        if (signal := ConditioningSignalInfo.from_signal_name(name)) and signal.cn_type == conditioning.cn_type:
+                            signal_value = value
+                    else:
+                        raise ValueError(f"Failed to match conditioning signal {conditioning} with data {batch.keys()}")
+
+                diffusion_inputs[signal_name] = signal_value
 
         diffusion_inputs["generator"] = [
             torch.Generator(device=accelerator.device).manual_seed(int(seed))

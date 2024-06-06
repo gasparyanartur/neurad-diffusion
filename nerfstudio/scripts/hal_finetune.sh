@@ -1,10 +1,10 @@
 #!/bin/bash
 #
 #SBATCH --nodes 1
-#SBATCH --gpus 4
+#SBATCH --gpus 1
 #SBATCH --cpus-per-task 8
 #SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/finetune/slurm/%j.out
-#SBATCH --partition=zprodlow 
+#SBATCH --partition=zprod 
 #SBATCH --job-name=finetune
 
 main_process_port=${MAIN_PROCESS_PORT:-29500}
