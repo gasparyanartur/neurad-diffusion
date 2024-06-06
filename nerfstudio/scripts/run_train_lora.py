@@ -75,7 +75,7 @@ from nerfstudio.generative.dynamic_dataset import (
     setup_project,
     DynamicDataset,
 )
-from nerfstudio.generative.diffusion import (
+from nerfstudio.generative.diffusion_model import (
     get_noised_img,
     tokenize_prompt,
     encode_tokens,

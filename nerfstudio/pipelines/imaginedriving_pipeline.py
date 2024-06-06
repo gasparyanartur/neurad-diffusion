@@ -19,6 +19,7 @@ from time import time
 from typing import Dict, List, Optional, Tuple, Type, Any
 import random
 from copy import deepcopy
+import typing
 
 import torch
 from torch import Tensor, FloatTensor
@@ -44,11 +45,12 @@ from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.utils import profiler
 from nerfstudio.generative.diffusion_model import (
-    read_yaml,
+    DTYPE_CONVERSION,
     DiffusionModel,
     DiffusionModelConfig,
     StableDiffusionModel,
 )
+from nerfstudio.generative.dynamic_dataset import ConditioningSignalInfo, read_yaml
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.model_components.losses import (
@@ -108,6 +110,8 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     )
     """The range in which shifts and rotations get uniformly sampled from. (-x, x)"""
 
+    max_steps: int = 20001
+
     def __post_init__(self) -> None:
         assert (
             self.ray_patch_size[0] == self.ray_patch_size[1]
@@ -128,7 +132,9 @@ class ImagineDrivingPipeline(VanillaPipeline):
         self.datamanager: ADDataManager = self.datamanager
         self.model: ADModel = self.model
         self.config: ImagineDrivingPipelineConfig = self.config
-        self.diffusion_model: DiffusionModel = self.config.diffusion_model.setup()
+        self.diffusion_model: DiffusionModel = self.config.diffusion_model.setup(
+            device=self.device,
+        )
 
         # Disable ray drop classification if we do not add missing points
         if not self.datamanager.dataparser.config.add_missing_points:
@@ -194,6 +200,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
         return model_outputs, loss_dict, metrics_dict
 
     def _strategy_augment_full_prob(self, ray_bundle, batch, step: int):
+        raise NotImplementedError
         if not (
             self._is_augment_phase(step)
             and (
@@ -241,7 +248,37 @@ class ImagineDrivingPipeline(VanillaPipeline):
         aug_ray_bundle = augment_ray_bundle(ray_bundle, aug_strength, cameras)
         aug_outputs = self.model(aug_ray_bundle, patch_size=self.config.ray_patch_size)
 
-        aug_batch = self.diffusion_model.get_diffusion_output(model_outputs)
+        aug_input = {
+            **model_outputs,
+        }
+        for signal_name in self.diffusion_model.config.conditioning_signals:
+            signal = ConditioningSignalInfo.from_signal_name(signal_name)
+            if not signal:
+                continue
+
+            if signal.cn_type == "ray":
+                ray = torch.concat(
+                    [aug_ray_bundle.origins, aug_ray_bundle.directions], dim=-1
+                )
+                ray = ray.reshape(
+                    int(
+                        self.config.ray_patch_size[0]
+                        * self.model.config.rgb_upsample_factor
+                    ),
+                    int(
+                        self.config.ray_patch_size[1]
+                        * self.model.config.rgb_upsample_factor
+                    ),
+                    6,
+                ).permute(2, 0, 1)
+                aug_input[signal.name] = ray
+
+            else:
+                raise NotImplementedError
+
+        aug_batch = self.diffusion_model.get_diffusion_output(
+            aug_input, pipeline_kwargs={"strength": self._get_diffusion_strength(step)}
+        )
         aug_metrics_dict = self.diffusion_model.get_diffusion_metrics(
             aug_outputs, aug_batch
         )
@@ -269,6 +306,12 @@ class ImagineDrivingPipeline(VanillaPipeline):
         strength *= event
 
         return 1.0 * strength
+
+    def _get_diffusion_strength(self, step: int) -> float:
+        start_strength: float = typing.cast(
+            float, self.diffusion_model.config.noise_strength
+        )
+        return start_strength * (1 - step / self.config.max_steps)
 
     def _is_augment_phase(self, step: int) -> bool:
         return step >= self.config.augment_phase_step
@@ -700,7 +743,9 @@ def augment_ray_bundle(
 
     cam_idxs = ray_bundle.camera_indices[is_cam, 0].cpu()  # Bc
     c2w = cameras.camera_to_worlds[cam_idxs].to(device=device)  # Bc, 3, 4
-    c2w[:3, :3] = c2w[:3, :3] @ OPENCV_TO_NERFSTUDIO
+    c2w[..., :3, :3] = c2w[..., :3, :3] @ torch.from_numpy(OPENCV_TO_NERFSTUDIO).to(
+        dtype=torch.float32, device=c2w.device
+    )
     translation = c2w[..., :3] @ aug_translation + c2w[..., :3, 3]
 
     rotation = (  # Chain together rotations, X -> Y -> Z

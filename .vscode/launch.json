@@ -141,7 +141,6 @@
         "--pipeline.diffusion_model.low_mem_mode", "False",
         "--pipeline.diffusion_model.compile_model", "False",
         "--pipeline.augment_phase_step", "0",
-        "--pipeline.ray_patch_size", "32", "32",
         "--pipeline.model.eval_num_rays_per_chunk", "2048",
         "--pipeline.model.field.grid.static.hashgrid_dim", "2",
         "--pipeline.model.field.grid.static.num_levels", "4",
@@ -152,11 +151,12 @@
         "--pipeline.datamanager.num_processes", "0",
         "--pipeline.datamanager.train-num-lidar-rays-per-batch", "1280",
         "--pipeline.datamanager.eval-num-lidar-rays-per-batch", "128",
-        "--pipeline.datamanager.train-num-rays-per_batch", "32768",
-        "--pipeline.datamanager.eval-num-rays_per_batch", "32768",
+        "--pipeline.datamanager.train-num-rays-per_batch", "16384",
+        "--pipeline.datamanager.eval-num-rays_per_batch", "16384",
         "pandaset-data",
         "--data", "./data/pandaset",
-        "--sequence", "002"
+        "--cameras", "front",
+        "--sequence", "001"
       ]
     },
     {
@@ -270,7 +270,7 @@
       "args": "configs/local-configs/train-diffusion-pandaset-local-debug.yml"
   },
   {
-    "name": "Python: train diffusion pandaset local full",
+    "name": "Python: train diffusion pandaset local scene",
     "type": "debugpy",
     "request": "launch",
     "program": "nerfstudio/scripts/run_train_lora.py",
@@ -279,7 +279,7 @@
     },
     "cwd": "${workspaceFolder}",
     "console": "integratedTerminal",
-    "args": "configs/full-training/sd-pandaset-full.yml"
+    "args": "configs/full-training/sd-pandaset-scene.yml"
 },
   ]
 }

@@ -608,7 +608,8 @@ class PoseDataGetter(DataGetter):
         pose_idx = int(info.sample)
         pose = poses[pose_idx]
         pose = _pandaset_pose_to_matrix(pose)
-        pose[:3, :3] = pose[:3, :3] @ OPENCV_TO_NERFSTUDIO
+        
+        pose[..., :3, :3] = pose[..., :3, :3] @ torch.from_numpy(OPENCV_TO_NERFSTUDIO).to(dtype=torch.float32, device=pose.device)
 
         return pose
 
