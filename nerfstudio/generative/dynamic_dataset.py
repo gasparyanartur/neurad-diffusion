@@ -40,6 +40,8 @@ norm_img_crop_pipeline = tvtf.Compose(
 DATA_SUFFIXES: Dict[Tuple[str, str], str] = {
     ("rgb", "pandaset"): ".jpg",
     ("rgb", "neurad"): ".jpg",
+    ("ref-rgb", "pandaset"): ".jpg",
+    ("gt-rgb", "neurad"): ".jpg",
     ("lidar", "pandaset"): ".pkl.gz",
     ("lidar", "neurad"): ".pkl.gz",
     ("pose", "pandaset"): ".json",
@@ -398,12 +400,10 @@ class PandasetInfoGetter(InfoGetter):
     def get_path(
         self, dataset_path: Path, info: SampleInfo, specs: Dict[str, Any]
     ) -> Path:
-        assert isinstance(info.sample, str)
-
         sample_dir_path = self._get_sample_dir_path(dataset_path, info.scene, specs)
         data_type = "rgb" if specs is None else specs.get("data_type", "rgb")
 
-        if data_type in {"rgb", "lidar"}:
+        if data_type in {"rgb", "lidar", "ref-rgb"}:
             sample_path = sample_dir_path / info.sample
 
         elif data_type == "pose":
@@ -414,6 +414,9 @@ class PandasetInfoGetter(InfoGetter):
 
         elif data_type == "timestamp":
             sample_path = sample_dir_path / "timestamps"
+
+        else:
+            raise NotImplementedError
 
         suffix = DATA_SUFFIXES[data_type, self.dataset_name]
         sample_path = sample_path.with_suffix(suffix)
@@ -426,23 +429,19 @@ class NeuRADInfoGetter(InfoGetter):
         super().__init__("neurad")
 
     def _get_sample_dir_path(
-        self, dataset_path: Path, scene: str, specs: dict[str, Any] = None
+        self, dataset_path: Path, scene: str, specs: Optional[Dict[str, Any]] = None
     ) -> Path:
         if specs is None:
-            shift = "0meter"
-            data_type = "rgb"
-            split = "test"
-            camera = "front_camera"
+            specs = {}
 
-        else:
-            shift = specs.get("shift", "0meter")
-            data_type = specs.get("data_type", "rgb")
-            split = specs.get("split", "test")
-            camera = specs.get("camera", "front_camera")
+        shift = specs.get("shift", "0m")
+        data_type = specs.get("data_type", "rgb")
+        split = specs.get("split", "test")
+        camera = specs.get("camera", "front_left_camera")
 
         match data_type:
-            case "rgb":
-                return dataset_path / scene / shift / split / data_type / camera
+            case "rgb" | "gt-rgb":
+                return dataset_path / scene / camera / shift / split / data_type
 
             case _:
                 raise NotImplementedError
@@ -459,15 +458,20 @@ class NeuRADInfoGetter(InfoGetter):
             yield sample_path.stem
 
     def get_path(
-        self, dataset_path: Path, info: SampleInfo, specs: dict[str, Any]
+        self, dataset_path: Path, info: SampleInfo, specs: Dict[str, Any]
     ) -> Path:
-        assert isinstance(info.sample, str)
-
         sample_dir_path = self._get_sample_dir_path(dataset_path, info.scene, specs)
         data_type: str = "rgb" if specs is None else specs.get("data_type", "rgb")
-        suffix = DATA_SUFFIXES[data_type, self.dataset_name]
 
-        sample_path = (sample_dir_path / info.sample).with_suffix(suffix)
+        if data_type in {"rgb", "gt-rgb"}:
+            sample_path = sample_dir_path / info.sample
+
+        else:
+            raise NotImplementedError
+
+        suffix = DATA_SUFFIXES[data_type, self.dataset_name]
+        sample_path = sample_path.with_suffix(suffix)
+
         return sample_path
 
 
@@ -534,7 +538,7 @@ class RGBDataGetter(DataGetter):
         info_getter: InfoGetter,
         data_spec: Dict[str, Any],
     ):
-        super().__init__(info_getter, data_spec, "rgb")
+        super().__init__(info_getter, data_spec, data_spec.get("data_type", "rgb"))
 
         dtype = self.data_spec.get("dtype", torch.float32)
         rescale = self.data_spec.get("rescale", True)
@@ -608,8 +612,10 @@ class PoseDataGetter(DataGetter):
         pose_idx = int(info.sample)
         pose = poses[pose_idx]
         pose = _pandaset_pose_to_matrix(pose)
-        
-        pose[..., :3, :3] = pose[..., :3, :3] @ torch.from_numpy(OPENCV_TO_NERFSTUDIO).to(dtype=torch.float32, device=pose.device)
+
+        pose[..., :3, :3] = pose[..., :3, :3] @ torch.from_numpy(
+            OPENCV_TO_NERFSTUDIO
+        ).to(dtype=torch.float32, device=pose.device)
 
         return pose
 
@@ -634,6 +640,66 @@ class IntrinsicsDataGetter(DataGetter):
             ]
         )
         return intrinsics
+
+
+class PathRgbGetter(DataGetter):
+    def __init__(
+        self,
+        info_getter: InfoGetter,
+        data_spec: Dict[str, Any],
+    ):
+        super().__init__(info_getter, data_spec, "intrinsics")
+        self.path_format = data_spec.get(
+            "path_format",
+            "data/reference_neurad/{scene}/{camera}/{shift}/{split}/{data_name}/{sample}{suffix}",
+        )
+        self.camera = data_spec.get("camera", "front_left_camera")
+        self.shift = data_spec.get("shift", "0m")
+        self.suffix = data_spec.get("suffix", ".jpg")
+
+        self.transform = tvtf.Compose(
+            [
+                tvtf.ConvertImageDtype(torch.float32),
+                tvtf.CenterCrop((1024, 1024)),
+                tvtf.Resize((512, 512), antialias=True),
+            ]
+        )
+
+    def get_data(self, dataset_path: Path, info: SampleInfo) -> Dict[str, Tensor]:
+        # TODO: Generalize, this is very pandaset specific
+
+        sample = int(info.sample)
+        split = (
+            "train"
+            if (
+                (sample == 79) or ((sample % 2 == 0) and sample != 78)
+            )  # For some reason, 78 and 79 are swapped
+            else "test"
+        )
+        # sample = sample // 2
+
+        path_rgb = self.path_format.format(
+            scene=info.scene,
+            camera=self.camera,
+            shift=self.shift,
+            split=split,
+            data_name="rgb",
+            sample=str(sample).rjust(2, "0"),
+            suffix=self.suffix,
+        )
+        path_gt = self.path_format.format(
+            scene=info.scene,
+            camera=self.camera,
+            shift=self.shift,
+            split=split,
+            data_name="gt-rgb",
+            sample=str(sample).rjust(2, "0"),
+            suffix=self.suffix,
+        )
+        rgb = read_image(path_rgb, self.transform)
+        gt = read_image(path_gt, self.transform)
+
+        return {"rgb": rgb, "gt": gt}
 
 
 class TimestampDataGetter(DataGetter):
@@ -724,6 +790,9 @@ INFO_GETTER_BUILDERS: Dict[str, Callable[[], InfoGetter]] = {
 }
 
 DATA_GETTER_BUILDERS: Dict[str, Callable[[InfoGetter, Dict[str, Any]], DataGetter]] = {
+    "ref-rgb": PathRgbGetter,
+    "gt-rgb": RGBDataGetter,
+    "gt": RGBDataGetter,
     "rgb": RGBDataGetter,
     "meta": MetaDataGetter,
     "lidar": LidarDataGetter,

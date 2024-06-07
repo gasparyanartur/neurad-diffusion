@@ -48,6 +48,9 @@ datasets:
       rgb:
         camera: "front_left_camera"
 
+      gt:
+        camera: front_left_camera
+
       prompt: {}
       meta: {}
 
@@ -63,6 +66,24 @@ datasets:
         #106: "20::50"
         #123: "20::50"
         #158: "20::50"
+
+  ref_data:
+    dataset: pandaset
+    path: "data/pandaset"
+    data_getters:
+      rgb: 
+        camera: front_left_camera
+      
+      ref-rgb:
+        camera: front_left_camera
+        path_format: "data/reference_neurad/{scene}/{camera}/{shift}/{split}/{data_name}/{sample}{suffix}"
+
+      meta: {}
+      prompt: {}
+
+    data_tree:
+      pandaset:
+        001: "0:80:10"
 
 model_type: sd
 model_id: stabilityai/stable-diffusion-2-1

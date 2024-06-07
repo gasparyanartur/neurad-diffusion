@@ -432,9 +432,9 @@ def preprocess_sample(
     sample["meta"] = SampleInfo(**batch["meta"])
 
     for preprocess_name in preprocessor_order:
-        processor = preprocessors[preprocess_name]
 
         if preprocess_name == "rgb":
+            processor = preprocessors[preprocess_name]
             pp_out = processor({"rgb": batch["rgb"]})
 
             sample["rgb"] = pp_out["rgb"]
@@ -442,11 +442,21 @@ def preprocess_sample(
             sample["crop_top_left"] = pp_out["crop_top_left"]
             sample["target_size"] = pp_out["target_size"]
 
+        elif preprocess_name == "ref-rgb":
+            if "ref-rgb" not in batch:
+                continue
+
+            ref = batch["ref-rgb"]
+            sample["ref_rgb"] = ref["rgb"]
+            sample["ref_gt"] = ref["gt"]
+
         elif preprocess_name == "prompt":
+            processor = preprocessors[preprocess_name]
             pp_out = processor({"prompt": batch["prompt"]})
             sample["input_ids"] = pp_out["input_ids"]
 
         elif signal := ConditioningSignalInfo.from_signal_name(preprocess_name):
+            processor = preprocessors[preprocess_name]
             if signal.cn_type == "rgb":
                 pp_out = processor({"rgb": batch["rgb"]})
                 sample[preprocess_name] = pp_out["rgb"]
@@ -704,6 +714,7 @@ def prepare_preprocessors(models, train_state: TrainState):
     )
 
     rgb_keys = ["rgb"]
+    ref_keys = ["ref-rgb"]
     ray_keys = []
     prompt_keys = ["prompt"]
 
@@ -739,6 +750,9 @@ def prepare_preprocessors(models, train_state: TrainState):
             target_size=crop_size,
             center_crop=True,
         )
+
+    for key in ref_keys:
+        preprocessor_order.append(key)
 
     for key in ray_keys:
         preprocessor_order.append(key)
@@ -1078,9 +1092,10 @@ def validate_model(
     accelerator,
     train_state: TrainState,
     dataloader: torch.utils.data.DataLoader,
-    render_dataloader: torch.utils.data.DataLoader,
+    vis_dataloader: torch.utils.data.DataLoader,
+    ref_dataloader: torch.utils.data.DataLoader,
     models,
-    metrics: dict[str, Any],
+    metrics: Dict[str, Any],
     run_prefix: str,
 ) -> None:
     assert "noise_scheduler" in models and "unet" in models
@@ -1159,10 +1174,14 @@ def validate_model(
 
                 else:
                     for name, value in batch.items():
-                        if (signal := ConditioningSignalInfo.from_signal_name(name)) and signal.cn_type == conditioning.cn_type:
+                        if (
+                            signal := ConditioningSignalInfo.from_signal_name(name)
+                        ) and signal.cn_type == conditioning.cn_type:
                             signal_value = value
                     else:
-                        raise ValueError(f"Failed to match conditioning signal {conditioning} with data {batch.keys()}")
+                        raise ValueError(
+                            f"Failed to match conditioning signal {conditioning} with data {batch.keys()}"
+                        )
 
                 diffusion_inputs[signal_name] = signal_value
 
@@ -1212,12 +1231,12 @@ def validate_model(
         step=train_state.global_step,
     )
 
-    render_rgbs = []
-    render_rgbs_noisy = []
-    render_metas = []
-    render_outs = []
+    vis_rgbs = []
+    vis_rgbs_noisy = []
+    vis_metas = []
+    vis_outs = []
 
-    for step, batch in enumerate(render_dataloader):
+    for step, batch in enumerate(vis_dataloader):
         diffusion_inputs = {}
         diffusion_kwargs = {"strength": train_state.val_noise_strength}
 
@@ -1229,7 +1248,18 @@ def validate_model(
         if "controlnet" in models:
             for conditioning in train_state.conditioning_signal_infos:
                 signal_name = conditioning.name
-                diffusion_inputs[signal_name] = batch[signal_name]
+                if signal_name in batch:
+                    diffusion_inputs[signal_name] = batch[signal_name]
+                else:
+                    for other_signal_name, signal in batch.items():
+                        other_signal = ConditioningSignalInfo.from_signal_name(
+                            other_signal_name
+                        )
+                        if (
+                            other_signal
+                            and other_signal.cn_type == conditioning.cn_type
+                        ):
+                            diffusion_inputs[signal_name] = signal
 
         diffusion_inputs["generator"] = [
             torch.Generator(device=accelerator.device).manual_seed(int(seed))
@@ -1263,16 +1293,129 @@ def validate_model(
             noise_scheduler=models["noise_scheduler"],
         )
 
-        render_rgbs.extend(list(rgb.detach().cpu()))
-        render_outs.extend(list(rgb_out.detach().cpu()))
-        render_rgbs_noisy.extend(list(rgb_noised.detach().cpu()))
-        render_metas.extend(batch["meta"])
+        vis_rgbs.extend(list(rgb.detach().cpu()))
+        vis_outs.extend(list(rgb_out.detach().cpu()))
+        vis_rgbs_noisy.extend(list(rgb_noised.detach().cpu()))
+        vis_metas.extend(batch["meta"])
+
+    ref_neurad_running_metrics = {
+        name: torch.zeros(1, dtype=torch.float32) for name in metrics.keys()
+    }
+    ref_running_metrics = {
+        name: torch.zeros(1, dtype=torch.float32) for name in metrics.keys()
+    }
+    ref_running_count = 0
+    ref_gts = []
+    ref_rgbs = []
+    ref_outs = []
+    ref_metas = []
+
+    for step, batch in enumerate(ref_dataloader):
+        diffusion_inputs = {}
+        diffusion_kwargs = {"strength": train_state.val_noise_strength}
+
+        ref_rgb = batch["ref_rgb"].to(dtype=vae_dtype, device=accelerator.device)
+        ref_gt = batch["ref_gt"].to(dtype=vae_dtype, device=accelerator.device)
+
+        diffusion_inputs["rgb"] = ref_rgb
+        batch_size = len(ref_rgb)
+        random_seeds = np.arange(batch_size * step, batch_size * (step + 1))
+
+        if "controlnet" in models:
+            for conditioning in train_state.conditioning_signal_infos:
+                signal_name = conditioning.name
+                if signal_name in batch:
+                    diffusion_inputs[signal_name] = batch[signal_name]
+                else:
+                    for other_signal_name, signal in batch.items():
+                        other_signal = ConditioningSignalInfo.from_signal_name(
+                            other_signal_name
+                        )
+                        if (
+                            other_signal
+                            and other_signal.cn_type == conditioning.cn_type
+                        ):
+                            diffusion_inputs[signal_name] = signal
+
+        diffusion_inputs["generator"] = [
+            torch.Generator(device=accelerator.device).manual_seed(int(seed))
+            for seed in random_seeds
+        ]
+
+        if "input_ids" in batch:
+            with torch.no_grad():
+                diffusion_inputs["prompt_embeds"] = encode_tokens(
+                    pipeline.pipe.text_encoder,
+                    batch["input_ids"].to(device=accelerator.device),
+                    use_cache=True,
+                )
+
+        ref_out = pipeline.get_diffusion_output(
+            diffusion_inputs,
+            diffusion_kwargs,
+        )["rgb"]
+
+        ref_running_count += len(rgb)
+        for metric_name, metric in metrics.items():
+            values: Tensor = metric(ref_out, ref_gt).detach().cpu()
+            if len(values.shape) == 0:
+                values = torch.tensor([values.item()])
+
+            ref_running_metrics[metric_name] += torch.sum(values)
+
+            if train_state.use_debug_metrics:
+                value_dict = {str(i): float(v) for i, v in enumerate(values)}
+                accelerator.log(
+                    {
+                        f"{run_prefix}_ref_{metric_name}_{str(batch['meta'])}": value_dict
+                    },
+                    step=train_state.global_step,
+                )
+
+            values_neurad: Tensor = metric(ref_rgb, ref_gt).detach().cpu()
+            if len(values_neurad.shape) == 0:
+                values_neurad = torch.tensor([values_neurad.item()])
+
+            ref_neurad_running_metrics[metric_name] += torch.sum(values_neurad)
+
+            if train_state.use_debug_metrics:
+                value_dict = {str(i): float(v) for i, v in enumerate(values_neurad)}
+                accelerator.log(
+                    {
+                        f"{run_prefix}_ref_neurad_{metric_name}_{str(batch['meta'])}": value_dict
+                    },
+                    step=train_state.global_step,
+                )
+
+        ref_rgbs.extend(list(ref_rgb.detach().cpu()))
+        ref_outs.extend(list(ref_out.detach().cpu()))
+        ref_gts.extend(list(ref_gt.detach().cpu()))
+        ref_metas.extend(batch["meta"])
+
+    mean_ref_metrics = {}
+    mean_ref_neurad_metrics = {}
+    for metric_name, metric in metrics.items():
+        mean_ref_metrics[f"{run_prefix}_ref_{metric_name}"] = (
+            ref_running_metrics[metric_name] / ref_running_count
+        ).item()
+        mean_ref_neurad_metrics[f"{run_prefix}_ref_neurad_{metric_name}"] = (
+            ref_neurad_running_metrics[metric_name] / ref_running_count
+        ).item()
+
+    accelerator.log(
+        mean_ref_metrics,
+        step=train_state.global_step,
+    )
+    accelerator.log(
+        mean_ref_neurad_metrics,
+        step=train_state.global_step,
+    )
 
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
             tracker.writer.add_images(
                 f"{run_prefix}_images",
-                np.stack([np.asarray(img) for img in render_outs]),
+                np.stack([np.asarray(img) for img in vis_outs]),
                 train_state.epoch,
                 dataformats="NHWC",
             )
@@ -1285,21 +1428,42 @@ def validate_model(
                             img,
                             caption=str(meta),
                         )
-                        for (img, meta) in (zip(render_rgbs, render_metas))
+                        for (img, meta) in (zip(vis_rgbs, vis_metas))
                     ],
                     f"{run_prefix}_images": [
                         wandb.Image(
                             img,
                             caption=str(meta),
                         )
-                        for (img, meta) in (zip(render_outs, render_metas))
+                        for (img, meta) in (zip(vis_outs, vis_metas))
                     ],
                     "noised_images": [
                         wandb.Image(
                             img,
                             caption=str(meta),
                         )
-                        for (img, meta) in (zip(render_rgbs_noisy, render_metas))
+                        for (img, meta) in (zip(vis_rgbs_noisy, vis_metas))
+                    ],
+                    "ref_ground_truth": [
+                        wandb.Image(
+                            img,
+                            caption=str(meta),
+                        )
+                        for (img, meta) in (zip(ref_gt, ref_metas))
+                    ],
+                    "ref_neurad": [
+                        wandb.Image(
+                            img,
+                            caption=str(meta),
+                        )
+                        for (img, meta) in (zip(ref_rgb, ref_metas))
+                    ],
+                    f"ref_{run_prefix}": [
+                        wandb.Image(
+                            img,
+                            caption=str(meta),
+                        )
+                        for (img, meta) in (zip(ref_out, ref_metas))
                     ],
                 },
                 step=train_state.global_step,
@@ -1616,6 +1780,15 @@ def main(args):
         ),
     )
 
+    ref_dataset = DynamicDataset.from_config(
+        train_state.datasets["ref_data"],
+        preprocess_func=functools.partial(
+            preprocess_sample,
+            preprocessors=preprocessors["val"],
+            preprocessor_order=key_order,
+        ),
+    )
+
     train_dataloader = DataLoader(
         train_dataset,
         shuffle=True,
@@ -1636,6 +1809,15 @@ def main(args):
 
     render_dataloader = DataLoader(
         render_dataset,
+        shuffle=False,
+        batch_size=train_state.train_batch_size,
+        num_workers=train_state.dataloader_num_workers,
+        collate_fn=functools.partial(collate_fn, accelerator=accelerator),
+        pin_memory=train_state.pin_memory,
+    )
+
+    ref_dataloader = DataLoader(
+        ref_dataset,
         shuffle=False,
         batch_size=train_state.train_batch_size,
         num_workers=train_state.dataloader_num_workers,
@@ -1775,6 +1957,7 @@ def main(args):
                 train_state,
                 val_dataloader,
                 render_dataloader,
+                ref_dataloader,
                 models,
                 metrics,
                 "val",
@@ -1812,6 +1995,7 @@ def main(args):
             train_state,
             val_dataloader,
             render_dataloader,
+            ref_dataloader,
             models,
             metrics,
             "test",
