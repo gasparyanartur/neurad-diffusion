@@ -76,6 +76,7 @@ from nerfstudio.generative.dynamic_dataset import (
     DynamicDataset,
 )
 from nerfstudio.generative.diffusion_model import (
+    generate_noise_pattern,
     get_noised_img,
     tokenize_prompt,
     encode_tokens,
@@ -235,6 +236,7 @@ class TrainState:
 
     use_debug_metrics: bool = False
     use_recreation_loss: bool = False
+    use_noise_augment: bool = True
 
     seed: Optional[int] = None
 
@@ -1513,6 +1515,11 @@ def train_epoch(
             rgb = models["image_processor"].preprocess(
                 batch["rgb"].to(dtype=vae_dtype, device=accelerator.device)
             )
+
+            # HARDCODE
+            if train_state.use_noise_augment:
+                rgb = generate_noise_pattern(n_clusters=256, cluster_size_min=2, cluster_size_max=8, noise_strength=0.2, pattern=rgb)
+
             model_input = (
                 models["vae"].encode(rgb).latent_dist.sample()
                 * models["vae"].config.scaling_factor
