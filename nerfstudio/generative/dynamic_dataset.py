@@ -64,13 +64,16 @@ def save_yaml(path: Path, data: Dict[str, Any]):
         yaml.dump(data, f, default_flow_style=False)
 
 
-def setup_project(config_path: Path):
+def setup_project(config_path: Path, override_values: Dict[str, Any] = {}):
     logging.getLogger().setLevel(logging.INFO)
 
     if not torch.cuda.is_available():
         logging.warning(
             f"CUDA not detected. Running on CPU. The code is not supported for CPU and will most likely give incorrect results. Proceed with caution."
         )
+
+    if "config_path" in override_values:
+        config_path = Path(override_values.pop("config_path"))
 
     if config_path is None:
         project_dir = get_env("PROJECT_DIR") or Path.cwd()
@@ -83,6 +86,8 @@ def setup_project(config_path: Path):
             raise ValueError(f"Could not find config at specified path: {config_path}")
 
     config = read_yaml(config_path)
+    config.update(override_values)
+
     project_dir = config.get("project_path") or get_env("PROJECT_DIR", Path.cwd())
     cache_dir = config.get("cache_dir") or get_env("CACHE_DIR", project_dir / ".cache")
 
@@ -376,15 +381,14 @@ class PandasetInfoGetter(InfoGetter):
             data_type = specs.get("data_type", "rgb")
             camera = specs.get("camera", "front_camera")
 
-        match data_type:
-            case "rgb" | "pose" | "intrinsics" | "timestamp" | "camera":
-                return dataset_path / scene / "camera" / camera
+        if data_type in {"rgb" , "pose" , "intrinsics" , "timestamp" , "camera"}:
+            return dataset_path / scene / "camera" / camera
 
-            case "lidar":
-                return dataset_path / scene / "lidar"
+        elif data_type == "lidar":
+            return dataset_path / scene / "lidar"
 
-            case _:
-                return None
+        else:
+            return None
 
     def get_sample_names_in_scene(
         self, dataset_path: Path, scene: str, specs: Optional[Dict[str, Any]] = None
@@ -439,12 +443,11 @@ class NeuRADInfoGetter(InfoGetter):
         split = specs.get("split", "test")
         camera = specs.get("camera", "front_left_camera")
 
-        match data_type:
-            case "rgb" | "gt-rgb":
-                return dataset_path / scene / camera / shift / split / data_type
+        if data_type in {"rgb", "gt-rgb"}:
+            return dataset_path / scene / camera / shift / split / data_type
 
-            case _:
-                raise NotImplementedError
+        else:
+            raise NotImplementedError
 
     def get_sample_names_in_scene(
         self, dataset_path: Path, scene: str, specs: Dict[str, Any] = None
@@ -517,13 +520,13 @@ class PromptDataGetter(DataGetter):
     ):
         super().__init__(info_getter, data_spec, "prompt")
 
-        match self.data_spec.get("type", "static"):
-            case "static":
-                self.positive_prompt = self.data_spec.get("positive_prompt", "")
-                self.negative_prompt = self.data_spec.get("negative_prompt", "")
+        type_ = self.data_spec.get("type", "static")
+        if type_ == "static":
+            self.positive_prompt = self.data_spec.get("positive_prompt", "")
+            self.negative_prompt = self.data_spec.get("negative_prompt", "")
 
-            case _:
-                raise NotImplementedError
+        else:
+            raise NotImplementedError
 
     def get_data(self, dataset_path: Path, info: SampleInfo) -> Dict[str, str]:
         return {

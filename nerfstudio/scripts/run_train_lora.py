@@ -3,7 +3,7 @@
 from typing import Any, Callable, Dict, Tuple, List, Optional, Union, Sequence
 from collections.abc import Iterable
 from pathlib import Path
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 import logging
 import os
 from dataclasses import dataclass, asdict, field
@@ -168,7 +168,6 @@ class TrainState:
     lora_rank_conv2d: int = 4
     use_dora: bool = True
 
-    use_controlnet: bool = False
     control_lora_rank_linear: int = 4
     control_lora_rank_conv2d: int = 4
     lora_target_ranks: Dict[str, Any] = field(
@@ -269,30 +268,29 @@ def import_encoder_class_from_model_name_or_path(
     )
     model_class = encoder_config.architectures[0]
 
-    match model_class:
-        case "CLIPTextModel":
-            from transformers import CLIPTextModel
+    if model_class == "CLIPTextModel":
+        from transformers import CLIPTextModel
 
-            return CLIPTextModel
+        return CLIPTextModel
 
-        case "CLIPTextModelWithProjection":
-            from transformers import CLIPTextModelWithProjection
+    elif model_class == "CLIPTextModelWithProjection":
+        from transformers import CLIPTextModelWithProjection
 
-            return CLIPTextModelWithProjection
+        return CLIPTextModelWithProjection
 
-        case "CLIPVisionModel":
-            from transformers import CLIPVisionModel
+    elif model_class == "CLIPVisionModel":
+        from transformers import CLIPVisionModel
 
-            return CLIPVisionModel
+        return CLIPVisionModel
 
-        case "CLIPVisionModelWithProjection":
+    elif model_class ==  "CLIPVisionModelWithProjection":
 
-            from transformers import CLIPVisionModelWithProjection
+        from transformers import CLIPVisionModelWithProjection
 
-            return CLIPVisionModelWithProjection
+        return CLIPVisionModelWithProjection
 
-        case _:
-            raise ValueError(f"{model_class} is not supported.")
+    else:
+        raise ValueError(f"{model_class} is not supported.")
 
 
 def parse_args():
@@ -300,6 +298,17 @@ def parse_args():
         "train_model", description="Finetune a given model on a dataset"
     )
     parser.add_argument("config_path", type=Path)
+    parser.add_argument("--n_epochs", type=int, default=None)
+    parser.add_argument("--scene", type=str, default=None)
+    parser.add_argument("--model_type", type=str, default=None)
+    parser.add_argument("--snr_gamma", type=float, default=None)
+    parser.add_argument("--learning_rate", type=float, default=None)
+    parser.add_argument("--lora_rank", type=int, default=None)
+    parser.add_argument("--control_lora_rank", type=int, default=None)
+    parser.add_argument("--dataloader_num_workers", type=int, default=None)
+    parser.add_argument("--use_debug_metrics", action="store_true")
+    parser.add_argument("--use_recreation_loss", action="store_true")
+    parser.add_argument("--conditioning", nargs="*", default=None)
 
     args = parser.parse_args()
     return args
@@ -1000,7 +1009,7 @@ def prepare_models(train_state: TrainState, device):
 
     models["image_processor"] = VaeImageProcessor()
 
-    if train_state.use_controlnet:
+    if train_state.model_type == "cn":
         models["controlnet"] = ControlLoRAModel.from_unet(
             unet=models["unet"],
             conditioning_channels=sum(
@@ -1059,6 +1068,9 @@ def prepare_models(train_state: TrainState, device):
             )
 
     if "controlnet" in models:
+        if "controlnet" in train_state.trainable_models:
+            models["controlnet"].train()
+
         if "vae" in models:
             models["controlnet"].bind_vae(models["vae"])
         else:
@@ -1066,8 +1078,7 @@ def prepare_models(train_state: TrainState, device):
                 f"Could not find a VAE in models to bind with ControlNet. Current models: {models.keys()}"
             )
 
-        if "controlnet" in train_state.trainable_models:
-            models["controlnet"].train()
+        models["controlnet"].to(device=device, dtype=weights_dtype)
 
     # Sanity check
     for model_name in train_state.trainable_models:
@@ -1087,7 +1098,7 @@ def prepare_models(train_state: TrainState, device):
     return models
 
 
-@torch.no_grad
+@torch.no_grad()
 def validate_model(
     accelerator,
     train_state: TrainState,
@@ -1535,7 +1546,7 @@ def train_epoch(
             if "controlnet" in models:
                 conditioning = combine_conditioning_info(
                     batch, train_state.conditioning_signal_infos
-                )
+                ).to(noisy_model_input.device)
 
                 down_block_res_samples, mid_block_res_sample = models["controlnet"](
                     noisy_model_input,
@@ -1614,15 +1625,76 @@ def train_epoch(
     train_state.epoch += 1
 
 
-def main(args):
+def main(args: Namespace) -> None:
     # ========================
     # ===   Setup script   ===
     # ========================
+    
     config = setup_project(args.config_path)
+
     train_state = TrainState(
         **config
     )  # TODO: Implement `from_config` to enable support for dataclasses
 
+    if args.n_epochs is not None:
+        train_state.n_epochs = args.n_epochs
+
+    if args.scene is not None:
+        new_datasets = {}
+        for dataset_name, dataset in train_state.datasets:
+            scene_list = list(dataset.keys())
+            if not len(scene_list) == 1:
+                raise ValueError(f"Cannot override scene if there is more than one scene per dataset")
+
+            new_datasets[dataset_name] = {}
+            for scene in scene_list:
+                new_datasets[dataset_name][args.scene] = dataset[scene]
+        train_state.datasets = new_datasets
+
+    if args.model_type is not None:
+        train_state.model_type = args.model_type
+        if args.model_type == "cn" and "controlnet" not in train_state.trainable_models:
+            train_state.trainable_models.append("controlnet")
+        elif args.model_type == "sd" and "controlnet" in train_state.trainable_models:
+            train_state.trainable_models.pop(train_state.trainable_models.index("controlnet"))
+
+        if args.model_type == "sd":
+            train_state.conditioning_signals = []
+            train_state.conditioning_signal_infos = []
+
+        if args.model_type == "cn"  and len(train_state.conditioning_signals) == 0 and (args.conditioning is None):
+            raise ValueError(f"Cannot run controlnet with no conditioning signals")
+            
+    if args.snr_gamma is not None:
+        train_state.snr_gamma = args.snr_gamma
+
+    if args.learning_rate is not None:
+        train_state.learning_rate = args.learning_rate
+
+    if args.lora_rank is not None:
+        train_state.lora_rank_linear = args.lora_rank
+        train_state.lora_rank_conv2d = args.lora_rank
+        for model_name, model in train_state.lora_target_ranks.items():
+            for block_name, block in model.items():
+                for layer_name, layer_rank in block.items():
+                    train_state.lora_target_ranks[model_name][block_name][layer_name] = args.lora_rank
+            
+    if args.control_lora_rank is not None:
+        train_state.control_lora_rank_linear = args.control_lora_rank
+        train_state.control_lora_rank_conv2d = args.control_lora_rank
+
+    if args.dataloader_num_workers is not None: 
+        train_state.dataloader_num_workers = args.dataloader_num_workers
+
+    if args.use_debug_metrics:
+        train_state.use_debug_metrics = True
+
+    if args.use_recreation_loss:
+        train_state.use_recreation_loss = True
+
+    if args.conditioning is not None:
+        train_state.conditioning_signals = args.conditioning
+    
     accelerator = Accelerator(
         gradient_accumulation_steps=train_state.gradient_accumulation_steps,
         mixed_precision=(

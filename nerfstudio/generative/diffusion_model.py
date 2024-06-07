@@ -75,15 +75,14 @@ DTYPE_CONVERSION = {
 
 
 def _make_metric(name, device, **kwargs):
-    match name:
-        case "psnr":
-            metric = PeakSignalNoiseRatio(data_range=1.0).to(device)
+    if name == "psnr":
+        metric = PeakSignalNoiseRatio(data_range=1.0).to(device)
 
-        case "mse":
-            metric = nn.MSELoss().to(device)
+    elif name == "mse":
+        metric = nn.MSELoss().to(device)
 
-        case _:
-            raise NotImplementedError
+    else:
+        raise NotImplementedError
 
     return metric
 
