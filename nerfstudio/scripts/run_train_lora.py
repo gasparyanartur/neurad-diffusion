@@ -1512,13 +1512,13 @@ def train_epoch(
         assert "rgb" in batch
 
         with accelerator.accumulate(models[m] for m in train_state.trainable_models):
-            rgb = models["image_processor"].preprocess(
-                batch["rgb"].to(dtype=vae_dtype, device=accelerator.device)
-            )
+            rgb = batch["rgb"].to(dtype=vae_dtype, device=accelerator.device)
+            rgb_gt = rgb
 
-            # HARDCODE
             if train_state.use_noise_augment:
                 rgb = generate_noise_pattern(n_clusters=256, cluster_size_min=2, cluster_size_max=8, noise_strength=0.2, pattern=rgb)
+
+            rgb = models["image_processor"].preprocess(rgb)
 
             model_input = (
                 models["vae"].encode(rgb).latent_dist.sample()
@@ -1588,7 +1588,7 @@ def train_epoch(
                 rec_loss = (
                     torch.mean(
                         train_state.rec_loss_strength
-                        * nn.functional.mse_loss(pred_rgb, rgb, reduce=None)
+                        * nn.functional.mse_loss(pred_rgb, rgb_gt, reduce=None)
                         * (1 - (timesteps + 1) / noise_scheduler.num_train_timesteps)
                     )
                     ** 2
