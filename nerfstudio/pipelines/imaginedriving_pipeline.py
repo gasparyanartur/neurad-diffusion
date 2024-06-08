@@ -68,6 +68,10 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     """specifies the datamanager config"""
     model: ADModelConfig = field(default_factory=ADModelConfig)
     """specifies the model config"""
+
+    model_checkpoint = Optional[str]
+    """Checkpoint path of the NeRF model."""
+
     calc_fid_steps: Tuple[int, ...] = (
         5000,
         10000,
@@ -141,6 +145,12 @@ class ImagineDrivingPipeline(VanillaPipeline):
             self.model.disable_ray_drop()
 
         self.fid = None
+        if self.config.model_checkpoint:
+            # TODO
+            with open(self.config.model_checkpoint, "rb") as f:
+                loaded_state = torch.load(f, map_location="cpu")
+
+            self.model.load_model(loaded_state)
 
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
