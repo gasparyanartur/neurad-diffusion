@@ -69,7 +69,7 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     model: ADModelConfig = field(default_factory=ADModelConfig)
     """specifies the model config"""
 
-    model_checkpoint = Optional[str]
+    nerf_checkpoint = Optional[str]
     """Checkpoint path of the NeRF model."""
 
     calc_fid_steps: Tuple[int, ...] = (
@@ -145,9 +145,8 @@ class ImagineDrivingPipeline(VanillaPipeline):
             self.model.disable_ray_drop()
 
         self.fid = None
-        if self.config.model_checkpoint:
-            # TODO
-            with open(self.config.model_checkpoint, "rb") as f:
+        if self.config.nerf_checkpoint:
+            with open(self.config.nerf_checkpoint, "rb") as f:
                 loaded_state = torch.load(f, map_location="cpu")
 
             self.model.load_model(loaded_state)
