@@ -160,6 +160,34 @@
       ]
     },
     {
+      "name": "Python: ImagineDriving local-checkpoint",
+      "type": "python",
+      "request": "launch",
+      "program": "nerfstudio/scripts/train.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "args": [
+        "imaginedriving",
+        "--vis=tensorboard",
+        "--pipeline.diffusion_model.low_mem_mode", "False",
+        "--pipeline.diffusion_model.compile_model", "False",
+        "--pipeline.diffusion_model.dtype", "fp16",
+        "--pipeline.diffusion_model.lora_weights", "/home/gasparyanartur/dev/outputs/finetune/331982/finetune/final_weights/pytorch_lora_weights.safetensors",
+        "--pipeline.augment_strategy", "partial_const",
+        "--pipeline.augment_phase_step", "0",
+        "--pipeline.nerf_checkpoint", "/home/gasparyanartur/dev/outputs/imaginedriving/imaginedriving-001-331982-1/imaginedriving/2024-05-25_130744/nerfstudio_models/step-000020000.ckpt",
+        "--pipeline.datamanager.num_processes", "0",
+        "--pipeline.datamanager.train-num-lidar-rays-per-batch", "1280",
+        "--pipeline.datamanager.eval-num-lidar-rays-per-batch", "128",
+        "--pipeline.datamanager.train-num-rays-per_batch", "16384",
+        "--pipeline.datamanager.eval-num-rays_per_batch", "16384",
+        "pandaset-data",
+        "--data", "./data/pandaset",
+        "--cameras", "front",
+        "--sequence", "001"
+      ]
+    },
+    {
       "name": "Python: ImagineDriving train help",
       "type": "python",
       "request": "launch",

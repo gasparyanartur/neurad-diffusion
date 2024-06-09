@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import OrderedDict
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -91,18 +92,18 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     augment_loss_mult: float = 1.0
     augment_strategy: str = "partial_const"
     """ Which diffusion augmentation strategy to use.
-        Can choose between `none`, `partial_const`, and `full_prob`.
+        Can choose between `none`, `partial_const`, `partial_linear`.
     """
     augment_probs: Tuple[float, float, float, float, float, float] = (
-        0.25,
+        0.3333,
         0,
         0,
         0,
         0,
-        0.25,
+        0.3333,
     )
     """Probability of augmenting each dimension if using `full_prob` (Px, Py, Pz, Rx, Ry, Rz)"""
-    # Note: rotate left/right is Px, horizontal shift is Rz
+    # Note: shift left/right is Px, horizontal rotation is Rz
 
     augment_max_strength: Tuple[float, float, float, float, float, float] = (
         5.0,
@@ -110,7 +111,7 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
         0,
         0,
         0,
-        torch.pi / 4,
+        torch.pi / 2,
     )
     """The range in which shifts and rotations get uniformly sampled from. (-x, x)"""
 
@@ -152,15 +153,21 @@ class ImagineDrivingPipeline(VanillaPipeline):
     def load_nerf_checkpoint(self, checkpoint_path: Union[Path, str]):
         checkpoint_path = Path(checkpoint_path)
 
-        with open(self.config.nerf_checkpoint, "rb") as f:
-            loaded_nerf_state = torch.load(f, map_location="cpu")
+        curr_state_dict = OrderedDict(self.state_dict().items())
 
-        loaded_nerf_state = {
+        with open(self.config.nerf_checkpoint, "rb") as f:
+            loaded_state_dict = torch.load(f, map_location="cpu")
+
+        loaded_state_dict = {
             key.replace("module.", ""): value
-            for key, value in loaded_nerf_state.items()
+            for key, value in loaded_state_dict.items()
         }
 
-        self.model.load_state_dict(loaded_nerf_state)
+        for key, val in loaded_state_dict["pipeline"].items():
+            if key.startswith("model.") or key.startswith("_model."):
+                curr_state_dict[key] = deepcopy(val)
+
+        self.load_state_dict(curr_state_dict)
 
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
@@ -315,13 +322,15 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
         return model_outputs, loss_dict, metrics_dict
 
-    def _get_augment_strength(self, step, event: Tensor = None) -> Tensor:
-        # TODO: Implement augment strength scheduling
-
+    def _get_augment_strength(self, step, event: Optional[Tensor] = None) -> Tensor:
         if event is None:
             event = torch.ones(6, dtype=torch.bool)
 
         max_strength = torch.tensor(self.config.augment_max_strength)
+
+        if self.config.augment_strategy == "partial_linear":
+            max_strength *= step / self.config.max_steps
+
         strength = max_strength - 2 * torch.rand_like(max_strength) * max_strength
         strength *= event
 
