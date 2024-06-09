@@ -1,5 +1,48 @@
 project_name: ImagineDriving
 
+n_epochs: 1000
+
+model_type: sd
+conditioning_signals: []
+
+use_debug_metrics: False
+use_recreation_loss: False
+use_noise_augment: False
+
+#snr_gamma: 5.0
+snr_gamma: null
+
+train_noise_strength: 0.3
+val_noise_strength: 0.3
+dataloader_num_workers: 0
+learning_rate: 0.00008
+
+lora_rank_linear: 4
+lora_rank_conv2d: 4
+control_lora_rank_linear: 4
+control_lora_rank_conv2d: 4
+lora_target_ranks: 
+  unet: 
+    downblocks: 
+      attn: 4
+      resnet: 4
+      ff: 4
+      proj: 4
+      
+    midblocks:
+      attn: 4
+      resnet: 4
+      ff: 4
+      proj: 4
+
+    upblocks:
+      attn: 4
+      resnet: 4
+      ff: 4
+      proj: 4
+
+trainable_models:
+  - unet
 
 datasets:
   train_data:
@@ -8,6 +51,8 @@ datasets:
     data_getters:
       rgb:
         camera: "front_camera"
+
+      cn_ray_6_front_camera: {}
 
       prompt: {}
       meta: {}
@@ -19,7 +64,6 @@ datasets:
         001: "0:80:4"
         #001: "16::"
         #001: [01]
-          
 
   val_data: 
     dataset: pandaset
@@ -28,6 +72,7 @@ datasets:
       rgb:
         camera: "front_left_camera"
 
+      cn_ray_6_front_left_camera: {}
       prompt: {}
       meta: {}
 
@@ -50,6 +95,8 @@ datasets:
 
       gt:
         camera: front_left_camera
+
+      cn_ray_6_front_left_camera: {}
 
       prompt: {}
       meta: {}
@@ -78,6 +125,8 @@ datasets:
         camera: front_left_camera
         path_format: "data/reference_neurad/{scene}/{camera}/{shift}/{split}/{data_name}/{sample}{suffix}"
 
+      cn_ray_6_front_left_camera: {}
+
       meta: {}
       prompt: {}
 
@@ -85,29 +134,19 @@ datasets:
       pandaset:
         001: "0:80:10"
 
-model_type: sd
 model_id: stabilityai/stable-diffusion-2-1
 
 seed: 0
 train_batch_size: 1
-dataloader_num_workers: 0
 
-max_grad_norm: 10.0
+max_grad_norm: 1.0
 
-n_epochs: 1000
 val_freq: 1
 checkpointing_steps: 2000
 
-train_noise_strength: 0.1
 train_noise_num_steps: null
-
 val_noise_num_steps: 50
-val_noise_strength: 0.1
 
-#snr_gamma: 5.0
-snr_gamma: null
-
-learning_rate: 0.0001
 adam_beta1: 0.9
 adam_beta2: 0.999
 adam_weight_decay: 0.01
@@ -129,39 +168,6 @@ flip_prob: 0
 #center_crop: False
 #flip_prob: 0
 #flip_prob: 0.5
-
-use_debug_metrics: False
-use_recreation_loss: False
-
-use_controlnet: False
-
-lora_rank_linear: 4
-lora_rank_conv2d: 4
-control_lora_rank_linear: 4
-control_lora_rank_conv2d: 4
-lora_target_ranks: 
-  unet: 
-    downblocks: 
-      attn: 4
-      resnet: 4
-      ff: 4
-      proj: 4
-      
-    midblocks:
-      attn: 4
-      resnet: 4
-      ff: 4
-      proj: 4
-
-    upblocks:
-      attn: 4
-      resnet: 4
-      ff: 4
-      proj: 4
-
-
-trainable_models:
-  - unet
 
 logging_dir: logs/finetune/sd
 output_dir: outputs/finetune/sd

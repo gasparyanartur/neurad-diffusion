@@ -723,15 +723,14 @@ def rotate_around(theta, dim: int, device=None) -> torch.Tensor:
     c = torch.cos(theta)
     s = torch.sin(theta)
 
-    match dim:
-        case 0:
-            r = [[1, 0, 0], [0, c, -s], [0, s, c]]
-        case 1:
-            r = [[c, 0, s], [0, 1, 0], [-s, 0, c]]
-        case 2:
-            r = [[c, -s, 0], [s, c, 0], [0, 0, 1]]
-        case _:
-            raise ValueError
+    if dim == 0:
+        r = [[1, 0, 0], [0, c, -s], [0, s, c]]
+    elif dim == 1:
+        r = [[c, 0, s], [0, 1, 0], [-s, 0, c]]
+    elif dim == 2:
+        r = [[c, -s, 0], [s, c, 0], [0, 0, 1]]
+    else:
+        raise ValueError
 
     return torch.tensor(r, device=device, dtype=torch.float32)
 

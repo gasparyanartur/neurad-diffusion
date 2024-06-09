@@ -75,15 +75,14 @@ DTYPE_CONVERSION = {
 
 
 def _make_metric(name, device, **kwargs):
-    match name:
-        case "psnr":
-            metric = PeakSignalNoiseRatio(data_range=1.0).to(device)
+    if name == "psnr":
+        metric = PeakSignalNoiseRatio(data_range=1.0).to(device)
 
-        case "mse":
-            metric = nn.MSELoss().to(device)
+    elif name == "mse":
+        metric = nn.MSELoss().to(device)
 
-        case _:
-            raise NotImplementedError
+    else:
+        raise NotImplementedError
 
     return metric
 
@@ -234,6 +233,72 @@ def _prepare_generator(sample: Dict["str", Any], batch_size: int):
         sample["generator"] = batch_if_not_iterable(sample["generator"])
         if len(sample["generator"]) <= 1 and batch_size > 1:
             raise ValueError(f"Number of generators must match number of images")
+
+
+def generate_noise_pattern(
+    n_clusters: int = 10,
+    cluster_size_min: float = 2,
+    cluster_size_max: float = 8,
+    noise_strength: float = 0.2,
+    pattern: Optional[Tensor] = None,
+    batch_size: Optional[int] = None,
+    img_h: Optional[int] = None,
+    img_w: Optional[int] = None,
+    use_monocolor: bool = False,
+):
+    if pattern is None:
+        assert batch_size
+        assert img_w
+        assert img_h
+        pattern = torch.zeros((batch_size, img_h, img_w, 3), dtype=torch.float32)
+        original_device = pattern.device
+
+    else:
+        original_device = pattern.device
+        pattern = torch.clone(pattern).to("cpu")
+        pattern = typing.cast(Tensor, batch_if_not_iterable(pattern))
+        batch_size, _, img_h, img_w = pattern.shape
+
+    is_channel_first = pattern.size(-3) == 3 and pattern.size(-1)
+    if is_channel_first:
+        pattern = pattern.permute(0, 2, 3, 1)
+
+    size_min = torch.tensor([cluster_size_min]).expand(batch_size, n_clusters)
+    min_to_max = cluster_size_max - cluster_size_min
+    szs = size_min + min_to_max * torch.rand(batch_size, n_clusters)
+
+    yc = torch.randint(img_h, size=(batch_size, n_clusters))
+    xc = torch.randint(img_w, size=(batch_size, n_clusters))
+
+    ymin = torch.clamp_min(yc - szs, 0)
+    ymax = torch.clamp_max(yc + szs, img_h)
+    xmin = torch.clamp_min(xc - szs, 0)
+    xmax = torch.clamp_max(xc + szs, img_w)
+
+    for b in range(batch_size):
+        for c in range(n_clusters):
+            x1 = int(xmin[b, c])
+            x2 = int(xmax[b, c]) + 1
+            y1 = int(ymin[b, c])
+            y2 = int(ymax[b, c]) + 1
+
+            if use_monocolor:
+                noise_pattern = noise_strength * torch.rand([1, 1, 3])
+
+            else:
+                noise_pattern = noise_strength * torch.rand_like(
+                    pattern[b, y1:y2, x1:x2]
+                )
+
+            pattern[b, y1:y2, x1:x2] += noise_pattern
+
+    pattern[pattern < 0] = 0
+    pattern[pattern > 1] = 1
+
+    if is_channel_first:
+        pattern = pattern.permute(0, 3, 1, 2)
+
+    return pattern.to(device=original_device)
 
 
 @dataclass
@@ -666,7 +731,7 @@ class ControlNetDiffusionModel(DiffusionModel):
         )
 
         channel_first, batch_size = _prepare_image(pipeline_kwargs)
-        
+
         _prepare_conditioning(pipeline_kwargs, sample, self.conditioning_signal_infos)
         _prepare_generator(pipeline_kwargs, batch_size)
         _prepare_prompt(

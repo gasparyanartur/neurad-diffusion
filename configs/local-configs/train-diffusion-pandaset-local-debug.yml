@@ -97,7 +97,6 @@ flip_prob: 0
 use_debug_loss: False
 use_recreation_loss: False
 
-use_controlnet: False
 
 control_lora_rank_linear: 8
 control_lora_rank_conv2d: 8

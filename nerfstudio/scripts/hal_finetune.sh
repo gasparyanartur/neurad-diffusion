@@ -19,7 +19,6 @@ if [ -z ${wandb_api_key} ]; then
     exit 1;
 fi
 
-#image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/nerf-thesis.sif"}
 image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-24_05_24.sif"}
 config_path=${CONFIG_PATH:-"configs/hal-configs/train_model.yml"}
 
@@ -40,4 +39,5 @@ singularity exec --nv \
         --mixed_precision=$mixed_precision \
         --main_process_port=$main_process_port \
     nerfstudio/scripts/run_train_lora.py \
-        $config_path
+        $config_path \
+        ${@:1} 
