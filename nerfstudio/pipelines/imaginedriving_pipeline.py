@@ -16,7 +16,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import time
-from typing import Dict, List, Optional, Tuple, Type, Any
+from typing import Dict, List, Optional, Tuple, Type, Any, Union
 import random
 from copy import deepcopy
 import typing
@@ -69,7 +69,7 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     model: ADModelConfig = field(default_factory=ADModelConfig)
     """specifies the model config"""
 
-    nerf_checkpoint = Optional[str]
+    nerf_checkpoint: Optional[str] = None
     """Checkpoint path of the NeRF model."""
 
     calc_fid_steps: Tuple[int, ...] = (
@@ -145,11 +145,22 @@ class ImagineDrivingPipeline(VanillaPipeline):
             self.model.disable_ray_drop()
 
         self.fid = None
-        if self.config.nerf_checkpoint:
-            with open(self.config.nerf_checkpoint, "rb") as f:
-                loaded_state = torch.load(f, map_location="cpu")
 
-            self.model.load_model(loaded_state)
+        if self.config.nerf_checkpoint:
+            self.load_nerf_checkpoint(self.config.nerf_checkpoint)
+
+    def load_nerf_checkpoint(self, checkpoint_path: Union[Path, str]):
+        checkpoint_path = Path(checkpoint_path)
+
+        with open(self.config.nerf_checkpoint, "rb") as f:
+            loaded_nerf_state = torch.load(f, map_location="cpu")
+
+        loaded_nerf_state = {
+            key.replace("module.", ""): value
+            for key, value in loaded_nerf_state.items()
+        }
+
+        self.model.load_state_dict(loaded_nerf_state)
 
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
