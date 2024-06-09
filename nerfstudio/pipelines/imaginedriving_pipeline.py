@@ -69,7 +69,7 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     model: ADModelConfig = field(default_factory=ADModelConfig)
     """specifies the model config"""
 
-    nerf_checkpoint = Optional[str]
+    nerf_checkpoint: Optional[str] = None
     """Checkpoint path of the NeRF model."""
 
     calc_fid_steps: Tuple[int, ...] = (
