@@ -6,5 +6,14 @@ augment_strategy="partial_const"
 #augment_strategy="partial_linear"
 #augment_strategy="none"
 
+max_shift=5
+#max_shift=3
+#max_shift=0
+
+max_rot=3.141
+#max_rot=1.571
+#max_rot=0.785
+#max_rot=0
+
 #WANDB_API_KEY=$WANDB_API_KEY PYTHONPATH='.' python3.10 nerfstudio/scripts/train.py imaginedriving --output-dir outputs/imaginedriving --vis wandb --experiment-name "test-run" --pipeline.augment_strategy $augment_strategy --pipeline.nerf_checkpoint $neurad_checkpoint_path pandaset-data --data data/pandaset --sequence 001 --cameras front 
-WANDB_API_KEY=$WANDB_API_KEY PYTHONPATH='.' sbatch nerfstudio/scripts/halnew.sh imaginedriving --pipeline.augment_strategy $augment_strategy --pipeline.nerf_checkpoint $neurad_checkpoint_path --pipeline.augment_phase_step 0 --pipeline.diffusion_model.lora_weights $lora_weights --pipeline.diffusion_model.dtype" "fp16" 
+WANDB_API_KEY=$WANDB_API_KEY PYTHONPATH='.' sbatch nerfstudio/scripts/halnew.sh imaginedriving --pipeline.augment_strategy $augment_strategy --pipeline.nerf_checkpoint $neurad_checkpoint_path --pipeline.augment_phase_step 0 --pipeline.diffusion_model.lora_weights $lora_weights --pipeline.diffusion_model.dtype" "fp16" --pipeline.augment_max_strength $max_shift 0 0 0 0 $max_rot
