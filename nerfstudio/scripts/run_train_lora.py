@@ -167,7 +167,7 @@ class TrainState:
 
     lora_rank_linear: int = 4
     lora_rank_conv2d: int = 4
-    use_dora: bool = True
+    use_dora: bool = False
 
     control_lora_rank_linear: int = 4
     control_lora_rank_conv2d: int = 4
