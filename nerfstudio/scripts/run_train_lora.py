@@ -285,7 +285,7 @@ def import_encoder_class_from_model_name_or_path(
 
         return CLIPVisionModel
 
-    elif model_class ==  "CLIPVisionModelWithProjection":
+    elif model_class == "CLIPVisionModelWithProjection":
 
         from transformers import CLIPVisionModelWithProjection
 
@@ -301,6 +301,7 @@ def parse_args():
     )
     parser.add_argument("config_path", type=Path)
     parser.add_argument("--n_epochs", type=int, default=None)
+    parser.add_argument("--noise_strength", type=float, default=None)
     parser.add_argument("--scene", type=str, default=None)
     parser.add_argument("--model_type", type=str, default=None)
     parser.add_argument("--snr_gamma", type=float, default=None)
@@ -1516,7 +1517,13 @@ def train_epoch(
             rgb_gt = rgb
 
             if train_state.use_noise_augment:
-                rgb = generate_noise_pattern(n_clusters=256, cluster_size_min=2, cluster_size_max=8, noise_strength=0.2, pattern=rgb)
+                rgb = generate_noise_pattern(
+                    n_clusters=256,
+                    cluster_size_min=2,
+                    cluster_size_max=8,
+                    noise_strength=0.2,
+                    pattern=rgb,
+                )
 
             rgb = models["image_processor"].preprocess(rgb)
 
@@ -1636,7 +1643,7 @@ def main(args: Namespace) -> None:
     # ========================
     # ===   Setup script   ===
     # ========================
-    
+
     config = setup_project(args.config_path)
 
     train_state = TrainState(
@@ -1646,12 +1653,18 @@ def main(args: Namespace) -> None:
     if args.n_epochs is not None:
         train_state.n_epochs = args.n_epochs
 
+    if args.noise_strength is not None:
+        train_state.train_noise_strength = args.noise_strength
+        train_state.val_noise_strength = args.noise_strength
+
     if args.scene is not None:
         new_datasets = {}
         for dataset_name, dataset in train_state.datasets:
             scene_list = list(dataset.keys())
             if not len(scene_list) == 1:
-                raise ValueError(f"Cannot override scene if there is more than one scene per dataset")
+                raise ValueError(
+                    f"Cannot override scene if there is more than one scene per dataset"
+                )
 
             new_datasets[dataset_name] = {}
             for scene in scene_list:
@@ -1663,15 +1676,21 @@ def main(args: Namespace) -> None:
         if args.model_type == "cn" and "controlnet" not in train_state.trainable_models:
             train_state.trainable_models.append("controlnet")
         elif args.model_type == "sd" and "controlnet" in train_state.trainable_models:
-            train_state.trainable_models.pop(train_state.trainable_models.index("controlnet"))
+            train_state.trainable_models.pop(
+                train_state.trainable_models.index("controlnet")
+            )
 
         if args.model_type == "sd":
             train_state.conditioning_signals = []
             train_state.conditioning_signal_infos = []
 
-        if args.model_type == "cn"  and len(train_state.conditioning_signals) == 0 and (args.conditioning is None):
+        if (
+            args.model_type == "cn"
+            and len(train_state.conditioning_signals) == 0
+            and (args.conditioning is None)
+        ):
             raise ValueError(f"Cannot run controlnet with no conditioning signals")
-            
+
     if args.snr_gamma is not None:
         train_state.snr_gamma = args.snr_gamma
 
@@ -1684,13 +1703,15 @@ def main(args: Namespace) -> None:
         for model_name, model in train_state.lora_target_ranks.items():
             for block_name, block in model.items():
                 for layer_name, layer_rank in block.items():
-                    train_state.lora_target_ranks[model_name][block_name][layer_name] = args.lora_rank
-            
+                    train_state.lora_target_ranks[model_name][block_name][
+                        layer_name
+                    ] = args.lora_rank
+
     if args.control_lora_rank is not None:
         train_state.control_lora_rank_linear = args.control_lora_rank
         train_state.control_lora_rank_conv2d = args.control_lora_rank
 
-    if args.dataloader_num_workers is not None: 
+    if args.dataloader_num_workers is not None:
         train_state.dataloader_num_workers = args.dataloader_num_workers
 
     if args.use_debug_metrics:
@@ -1701,7 +1722,7 @@ def main(args: Namespace) -> None:
 
     if args.conditioning is not None:
         train_state.conditioning_signals = args.conditioning
-    
+
     accelerator = Accelerator(
         gradient_accumulation_steps=train_state.gradient_accumulation_steps,
         mixed_precision=(
