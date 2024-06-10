@@ -194,7 +194,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
                     ray_bundle, batch, step, cameras, use_actor_shift=True
                 )
 
-            case "partial_const":
+            case "partial_const" | "partial_linear":
                 return self._strategy_augment_partial_const(
                     ray_bundle, batch, step, cameras, use_actor_shift=True
                 )
