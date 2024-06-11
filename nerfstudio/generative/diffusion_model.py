@@ -316,19 +316,19 @@ class DiffusionModelConfig(InstantiateConfig):
     compile_model: bool = False
     """If applicable, compile Diffusion pipeline using available torch backend."""
 
-    lora_weights: Optional[str] = None
-    """Path to lora weights for the base diffusion model. Loads if applicable."""
-
     dtype: str = "fp32"
     """Data type of the underlying diffusion model. Options (fp32, fp16 (untested), bf16 (untested))"""
+
+    lora_weights: Optional[str] = None
+    """Path to lora weights for the base diffusion model. Loads if applicable."""
 
     controlnet_weights: Optional[str] = None
     """Path to lora weights for the base diffusion model. Loads if applicable."""
 
-    noise_strength: Optional[float] = 0.2
+    noise_strength: float = 0.2
     """How much noise to apply during inference. 1.0 means complete gaussian."""
 
-    num_inference_steps: Optional[int] = 50
+    num_inference_steps: int = 50
     """Across how many timesteps the diffusion denoising occurs. Higher number gives better diffusion at expense of performance."""
 
     enable_progress_bar: bool = False

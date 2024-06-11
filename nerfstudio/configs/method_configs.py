@@ -431,7 +431,9 @@ method_configs["imaginedriving"] = TrainerConfig(
         calc_fid_steps=tuple(range(0, 20001, 5000)),
         ray_patch_size=(128, 128),
         datamanager=ADDataManagerConfig(
-            dataparser=PandaSetDataParserConfig(add_missing_points=True)
+            dataparser=PandaSetDataParserConfig(add_missing_points=True),
+            train_num_lidar_rays_per_batch=16384,
+            eval_num_lidar_rays_per_batch=16384,
         ),
         model=NeuRADModelConfig(
             eval_num_rays_per_chunk=1 << 15,
@@ -448,7 +450,7 @@ method_configs["imaginedriving"] = TrainerConfig(
             num_inference_steps=50,
         ),
         augment_phase_step=1000,
-        augment_strategy="partial_const",
+        augment_strategy="partial_linear",
     ),
     optimizers={
         "trajectory_opt": {

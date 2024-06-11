@@ -169,7 +169,7 @@
       "args": [
         "imaginedriving",
         "--vis=tensorboard",
-        "--pipeline.diffusion_model.low_mem_mode", "False",
+        "--pipeline.diffusion_model.low_mem_mode", "True",
         "--pipeline.diffusion_model.compile_model", "False",
         "--pipeline.diffusion_model.dtype", "fp16",
         "--pipeline.diffusion_model.lora_weights", "/home/gasparyanartur/dev/outputs/finetune/331982/finetune/final_weights/pytorch_lora_weights.safetensors",

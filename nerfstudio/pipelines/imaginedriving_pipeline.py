@@ -88,7 +88,11 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
     diffusion_model: DiffusionModelConfig = field(default_factory=DiffusionModelConfig)
     """Configuration for the diffusion model used for augmentation."""
 
-    augment_phase_step: int = 500
+    augment_phase_step: int = 0
+    max_aug_phase_step: int = 10000
+    noise_start_phase_step: int = 10000
+    noise_end_phase_step: int = 20001
+
     augment_loss_mult: float = 1.0
     augment_strategy: str = "partial_const"
     """ Which diffusion augmentation strategy to use.
@@ -111,7 +115,7 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
         0,
         0,
         0,
-        torch.pi / 2,
+        45,
     )
     """The range in which shifts and rotations get uniformly sampled from. (-x, x)"""
 
@@ -153,21 +157,15 @@ class ImagineDrivingPipeline(VanillaPipeline):
     def load_nerf_checkpoint(self, checkpoint_path: Union[Path, str]):
         checkpoint_path = Path(checkpoint_path)
 
-        curr_state_dict = OrderedDict(self.state_dict().items())
-
         with open(self.config.nerf_checkpoint, "rb") as f:
-            loaded_state_dict = torch.load(f, map_location="cpu")
+            loaded_state_dict = torch.load(f, map_location="cpu")["pipeline"]
 
         loaded_state_dict = {
             key.replace("module.", ""): value
             for key, value in loaded_state_dict.items()
         }
 
-        for key, val in loaded_state_dict["pipeline"].items():
-            if key.startswith("model.") or key.startswith("_model."):
-                curr_state_dict[key] = deepcopy(val)
-
-        self.load_state_dict(curr_state_dict)
+        self.load_state_dict(loaded_state_dict, strict=True)
 
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
@@ -189,11 +187,6 @@ class ImagineDrivingPipeline(VanillaPipeline):
                     ray_bundle, batch, use_actor_shift=True
                 )
 
-            case "full_prob":
-                return self._strategy_augment_full_prob(
-                    ray_bundle, batch, step, cameras, use_actor_shift=True
-                )
-
             case "partial_const" | "partial_linear":
                 return self._strategy_augment_partial_const(
                     ray_bundle, batch, step, cameras, use_actor_shift=True
@@ -205,7 +198,9 @@ class ImagineDrivingPipeline(VanillaPipeline):
                 )
 
     def _strategy_augment_none(self, ray_bundle, batch, use_actor_shift=True):
-        model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
+        model_outputs = self._model(
+            deepcopy(ray_bundle), patch_size=self.config.ray_patch_size
+        )
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
 
         if (
@@ -226,47 +221,16 @@ class ImagineDrivingPipeline(VanillaPipeline):
 
         return model_outputs, loss_dict, metrics_dict
 
-    def _strategy_augment_full_prob(self, ray_bundle, batch, step: int):
-        raise NotImplementedError
-        if not (
-            self._is_augment_phase(step)
-            and (
-                augment_event := (
-                    torch.rand(6) < torch.tensor(self.config.augment_probs)
-                ).any()
-            )
-        ):
-            return self._strategy_no_augment(ray_bundle, batch, step)
-
-        device = ray_bundle.origins.device
-
-        ray_bundle = augment_ray_bundle(
-            ray_bundle,
-            self._get_augment_strength(step, augment_event).to(device),
-            self.datamanager.train_dataset.cameras,
-        )
-        model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
-        reduced_model_outputs = {"rgb": model_outputs["rgb"]}
-        batch = self.diffusion_model.get_diffusion_output(model_outputs)
-
-        metrics_dict = self.diffusion_model.get_diffusion_metrics(
-            reduced_model_outputs, batch
-        )
-        loss_dict = self.diffusion_model.get_diffusion_losses(
-            reduced_model_outputs, batch, metrics_dict
-        )
-
-        model_outputs.update({("aug_" + k): v for k, v in model_outputs.items()})
-        loss_dict.update({("aug_" + k): v for k, v in loss_dict.items()})
-        metrics_dict.update({("aug_" + k): v for k, v in metrics_dict.items()})
-
-        return model_outputs, loss_dict, metrics_dict
-
     def _strategy_augment_partial_const(
-        self, ray_bundle, batch, step: int, cameras, use_actor_shift: bool = False
+        self,
+        ray_bundle: RayBundle,
+        batch,
+        step: int,
+        cameras,
+        use_actor_shift: bool = False,
     ):
         model_outputs, loss_dict, metrics_dict = self._strategy_augment_none(
-            ray_bundle, batch, use_actor_shift
+            ray_bundle.to(ray_bundle.origins.device), batch, use_actor_shift
         )
         if not self._is_augment_phase(step):
             return model_outputs, loss_dict, metrics_dict
@@ -327,8 +291,12 @@ class ImagineDrivingPipeline(VanillaPipeline):
             event = torch.ones(6, dtype=torch.bool)
 
         max_strength = torch.tensor(self.config.augment_max_strength)
+        max_strength[3:] = torch.deg2rad(max_strength[3:])
 
-        if self.config.augment_strategy == "partial_linear":
+        if (
+            self.config.augment_strategy == "partial_linear"
+            and step < self.config.max_aug_phase_step
+        ):
             max_strength *= step / self.config.max_steps
 
         strength = max_strength - 2 * torch.rand_like(max_strength) * max_strength
@@ -337,10 +305,17 @@ class ImagineDrivingPipeline(VanillaPipeline):
         return 1.0 * strength
 
     def _get_diffusion_strength(self, step: int) -> float:
+        if step < self.config.noise_start_phase_step:
+            return 1.0
+
         start_strength: float = typing.cast(
             float, self.diffusion_model.config.noise_strength
         )
-        return start_strength * (1 - step / self.config.max_steps)
+
+        return max(
+            start_strength * (1 - step / self.config.max_steps),
+            1 / self.config.diffusion_model.num_inference_steps + 1e-10,
+        )
 
     def _is_augment_phase(self, step: int) -> bool:
         return step >= self.config.augment_phase_step
@@ -774,7 +749,7 @@ def augment_ray_bundle(
     c2w[..., :3, :3] = c2w[..., :3, :3] @ torch.from_numpy(OPENCV_TO_NERFSTUDIO).to(
         dtype=torch.float32, device=c2w.device
     )
-    translation = c2w[..., :3] @ aug_translation + c2w[..., :3, 3]
+    translation = c2w[..., :3] @ aug_translation
 
     rotation = (  # Chain together rotations, X -> Y -> Z
         rotate_around(aug_rotation[2], 2)
