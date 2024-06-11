@@ -501,7 +501,7 @@ class StableDiffusionModel(DiffusionModel):
             num_inference_steps=config.num_inference_steps,
         )
 
-        if config.lora_weights and config.lora_weights != "":
+        if config.lora_weights and config.lora_weights != "" and config.lora_weights != "_":
             self.pipe.load_lora_weights(config.lora_weights)
 
         if verbose and kwargs:
