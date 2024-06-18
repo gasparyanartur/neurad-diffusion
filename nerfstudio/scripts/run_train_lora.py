@@ -119,7 +119,7 @@ class TrainState:
     weights_dtype: str = "fp32"
     vae_dtype: Optional[str] = "fp32"
 
-    revision: Optional[str] = None
+    revision: Optional[str] = "main"
     variant: Optional[str] = None
     prediction_type: Optional[str] = None
 
@@ -263,10 +263,13 @@ def find_checkpoint_paths(cp_dir: str, cp_prefix: str = "checkpoint", cp_delim="
 
 
 def import_encoder_class_from_model_name_or_path(
-    pretrained_model_name_or_path: str, revision: str, subfolder: str
+    pretrained_model_name_or_path: str, revision: Optional[str], subfolder: Optional[str]
 ):
+    if revision is None:
+        revision = "main"
+
     encoder_config = PretrainedConfig.from_pretrained(
-        pretrained_model_name_or_path, subfolder=subfolder, revision=revision
+        pretrained_model_name_or_path, subfolder=subfolder, revision=revision, resume_download=False
     )
     model_class = encoder_config.architectures[0]
 
