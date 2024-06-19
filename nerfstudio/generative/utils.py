@@ -27,6 +27,8 @@ def show_img(img: Tensor, save_path: Optional[Path] = None):
         img = torch.stack(img)
 
     img = img.detach().cpu()
+    if img.dtype in {torch.float16, torch.bfloat16}:
+        img = img.to(torch.float32)
 
     batch_size = len(img.shape)
     if batch_size == 4:

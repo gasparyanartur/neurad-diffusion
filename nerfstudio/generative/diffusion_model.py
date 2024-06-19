@@ -17,6 +17,7 @@ from diffusers import (
     StableDiffusionControlNetImg2ImgPipeline,
     UNet2DConditionModel,
     AutoencoderKL,
+    DDPMScheduler,
 )
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import (
     retrieve_latents,
@@ -29,7 +30,6 @@ from diffusers.schedulers import KarrasDiffusionSchedulers
 
 from diffusers import StableDiffusionImg2ImgPipeline
 from diffusers.image_processor import VaeImageProcessor
-from diffusers import AutoencoderKL
 
 
 import torchvision
@@ -501,7 +501,11 @@ class StableDiffusionModel(DiffusionModel):
             num_inference_steps=config.num_inference_steps,
         )
 
-        if config.lora_weights and config.lora_weights != "" and config.lora_weights != "_":
+        if (
+            config.lora_weights
+            and config.lora_weights != ""
+            and config.lora_weights != "_"
+        ):
             self.pipe.load_lora_weights(config.lora_weights)
 
         if verbose and kwargs:
@@ -787,8 +791,8 @@ def encode_img(
     img_processor: VaeImageProcessor,
     vae: AutoencoderKL,
     img: Tensor,
-    device,
-    seed: int = None,
+    device: torch.device,
+    seed: Optional[int] = None,
     sample_mode: str = "sample",
 ) -> Tensor:
     img = img_processor.preprocess(img)
@@ -839,6 +843,30 @@ def upcast_vae(vae):
     vae.decoder.mid_block.to(dtype)
 
     return vae
+
+
+def add_noise_to_latent(
+    latent: Tensor,
+    timestep: Union[int, List[int], torch.Tensor],
+    noise_scheduler: DDPMScheduler,
+    seed: Optional[int] = None,
+):
+    if isinstance(timestep, int):
+        timestep = [timestep]
+
+    if isinstance(timestep, list):
+        timestep = torch.tensor(timestep)
+
+    noise = torch.randn(
+        size=latent.shape,
+        device=latent.device,
+        dtype=latent.dtype,
+        generator=torch.manual_seed(seed) if (seed is not None) else None,
+    )
+    timestep = noise_scheduler.timesteps[timestep]
+    timesteps = torch.tensor([timestep], device=latent.device, dtype=torch.int)
+    noisy_latents = noise_scheduler.add_noise(latent, noise, timesteps)
+    return noisy_latents
 
 
 def get_noised_img(img, timestep, vae, img_processor, noise_scheduler, seed=None):

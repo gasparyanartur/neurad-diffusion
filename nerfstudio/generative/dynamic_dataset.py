@@ -37,6 +37,62 @@ norm_img_crop_pipeline = tvtf.Compose(
         tvtf.Resize((512, 512), antialias=True),
     ]
 )
+norm_img_rand_crop_pipeline = tvtf.Compose(
+    [
+        tvtf.ConvertImageDtype(torch.float32),
+        tvtf.RandomCrop((1024, 1024)),
+        tvtf.Resize((512, 512), antialias=True),
+    ]
+)
+
+
+def make_img_tf_pipe(
+    crop_size: Optional[Tuple[int, int]] = (1024, 1024),
+    resize_factor: Optional[float] = 2,
+    crop_type: str = "center",
+    dtype: Optional[torch.dtype] = torch.float32,
+    device: Union[str, torch.device] = "cpu",
+):
+    pipe = []
+
+    if dtype:
+        pipe.append(tvtf.ConvertImageDtype(dtype))
+
+    if crop_size:
+        if crop_type == "random":
+            pipe.append(tvtf.RandomCrop(crop_size))
+
+        elif crop_type == "center":
+            pipe.append(tvtf.CenterCrop(crop_size))
+
+        elif crop_type == "none":
+            ...
+
+        else:
+            logging.warning(
+                f"Could not recognize crop type `{crop_type}`, skipping cropping."
+            )
+
+    if resize_factor:
+        if not crop_size:
+            logging.warning(
+                f"Could not set resize factor when `crop_size` is set to `None`."
+            )
+
+        else:
+            pipe.append(
+                tvtf.Resize(
+                    (
+                        int(crop_size[0] // resize_factor),
+                        int(crop_size[1] // resize_factor),
+                    ),
+                    antialias=True,
+                )
+            )
+
+    return tvtf.Compose(pipe).to(device=device)
+
+
 DATA_SUFFIXES: Dict[Tuple[str, str], str] = {
     ("rgb", "pandaset"): ".jpg",
     ("rgb", "neurad"): ".jpg",
@@ -117,8 +173,12 @@ def load_img_paths_from_dir(dir_path: Path):
     return img_paths
 
 
-def read_image(img_path: Path, tf_pipeline: tvtf.Compose = norm_img_pipeline) -> Tensor:
-    img = torchvision.io.read_image(str(img_path))
+def read_image(
+    img_path: Path,
+    tf_pipeline: tvtf.Compose = norm_img_pipeline,
+    device: Union[str, torch.device] = "cpu",
+) -> Tensor:
+    img = torchvision.io.read_image(str(img_path)).to(device=device)
     img = tf_pipeline(img)
 
     return img
@@ -381,7 +441,7 @@ class PandasetInfoGetter(InfoGetter):
             data_type = specs.get("data_type", "rgb")
             camera = specs.get("camera", "front_camera")
 
-        if data_type in {"rgb" , "pose" , "intrinsics" , "timestamp" , "camera"}:
+        if data_type in {"rgb", "pose", "intrinsics", "timestamp", "camera"}:
             return dataset_path / scene / "camera" / camera
 
         elif data_type == "lidar":
