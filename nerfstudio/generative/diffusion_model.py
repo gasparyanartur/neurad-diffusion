@@ -1039,15 +1039,17 @@ def get_ordered_timesteps(
     total_num_timesteps: int = 1000,
     num_timesteps: Optional[int] = None,
     sample_from_bins: bool = True,
+    low_noise_high_step: bool = False,
 ):
     if num_timesteps is None:
         num_timesteps = total_num_timesteps
 
-    # start_step = int((1 - noise_strength) * total_num_timesteps)
-    # end_step = total_num_timesteps - 1
-
-    start_step = 0
-    end_step = int(noise_strength * total_num_timesteps)
+    if low_noise_high_step:
+        start_step = int((1 - noise_strength) * total_num_timesteps)
+        end_step = total_num_timesteps
+    else:
+        start_step = 0
+        end_step = int(noise_strength * total_num_timesteps)
     # start_step = int((1 - noise_strength) * total_num_timesteps)
     # end_step = total_num_timesteps - 1
 
