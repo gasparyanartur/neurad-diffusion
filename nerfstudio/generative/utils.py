@@ -168,3 +168,18 @@ def set_if_no_key(config, key, val):
 
 def nearest_multiple(x: Union[float, int], m: int) -> int:
     return int(int(x / m) * m)
+
+
+def modules_equal(m1, m2) -> bool:
+    names_1, values_1 = zip(*m1.named_modules())
+    names_2, values_2 = zip(*m2.named_modules())
+
+    if not names_1 == names_2:
+        return False
+
+    for l1, l2 in zip(values_1, values_2):
+        for p1, p2 in zip(l1.parameters(), l2.parameters()):
+            if not torch.allclose(p1, p2):
+                return False
+
+    return True
