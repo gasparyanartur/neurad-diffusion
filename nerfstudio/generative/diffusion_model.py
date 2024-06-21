@@ -10,7 +10,7 @@ import itertools as it
 import typing
 
 import torch
-from torch import nn, Tensor
+from torch import FloatTensor, nn, Tensor
 
 from diffusers import (
     StableDiffusionImg2ImgPipeline,
@@ -813,6 +813,7 @@ def encode_img(
 
     if needs_upcasting:
         vae.to(original_vae_dtype)
+        latents = latents.to(original_vae_dtype)
 
     return latents
 
@@ -863,10 +864,54 @@ def add_noise_to_latent(
         dtype=latent.dtype,
         generator=torch.manual_seed(seed) if (seed is not None) else None,
     )
-    timestep = noise_scheduler.timesteps[timestep]
+
     timesteps = torch.tensor([timestep], device=latent.device, dtype=torch.int)
     noisy_latents = noise_scheduler.add_noise(latent, noise, timesteps)
     return noisy_latents
+
+
+# TODO: Denoise latent
+def denoise_latent(
+    latent: Tensor,
+    unet: UNet2DConditionModel,
+    timesteps: Union[List[int], Tensor],
+    noise_scheduler: DDPMScheduler,
+    encoder_hidden_states,
+    timestep_cond=None,
+    cross_attention_kwargs=None,
+    added_cond_kwargs=None,
+    extra_step_kwargs: Optional[Dict[str, Any]] = None,
+    do_classifier_free_guidance: bool = True,
+    guidance_scale: float = 7.5,
+):
+    if extra_step_kwargs is None:
+        extra_step_kwargs = {}
+
+    if timesteps[0] < timesteps[-1]:
+        timesteps = reversed(timesteps)
+
+    for t in timesteps:
+        noise_pred = unet(
+            torch.cat([latent, latent]) if do_classifier_free_guidance else latent,
+            t,
+            encoder_hidden_states=encoder_hidden_states,
+            timestep_cond=timestep_cond,
+            cross_attention_kwargs=cross_attention_kwargs,
+            added_cond_kwargs=added_cond_kwargs,
+            return_dict=False,
+        )[0]
+
+        if do_classifier_free_guidance:
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + guidance_scale * (
+                noise_pred_text - noise_pred_uncond
+            )
+
+        latent = noise_scheduler.step(
+            noise_pred, t, latent, **extra_step_kwargs, return_dict=False
+        )[0]
+
+    return latent
 
 
 def get_noised_img(img, timestep, vae, img_processor, noise_scheduler, seed=None):
@@ -989,17 +1034,22 @@ def draw_from_bins(start, end, n_draws, device, include_last: bool = False):
 
 
 def get_ordered_timesteps(
-    noise_strength,
-    total_num_timesteps,
-    device,
-    num_timesteps=None,
+    noise_strength: float,
+    device: Union[torch.device, str],
+    total_num_timesteps: int = 1000,
+    num_timesteps: Optional[int] = None,
     sample_from_bins: bool = True,
 ):
     if num_timesteps is None:
         num_timesteps = total_num_timesteps
 
-    start_step = int((1 - noise_strength) * total_num_timesteps)
-    end_step = total_num_timesteps - 1
+    # start_step = int((1 - noise_strength) * total_num_timesteps)
+    # end_step = total_num_timesteps - 1
+
+    start_step = 0
+    end_step = int(noise_strength * total_num_timesteps)
+    # start_step = int((1 - noise_strength) * total_num_timesteps)
+    # end_step = total_num_timesteps - 1
 
     # Make sure the last one is total_num_timesteps-1
     if sample_from_bins:
