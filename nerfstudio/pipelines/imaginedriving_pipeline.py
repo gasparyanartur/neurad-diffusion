@@ -49,7 +49,7 @@ from nerfstudio.generative.diffusion_model import (
     DTYPE_CONVERSION,
     DiffusionModel,
     DiffusionModelConfig,
-    StableDiffusionModel,
+    HFStableDiffusionModel,
 )
 from nerfstudio.generative.dynamic_dataset import ConditioningSignalInfo, read_yaml
 from nerfstudio.cameras.rays import RayBundle

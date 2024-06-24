@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from pathlib import Path
 from nerfstudio.generative.diffusion_model import (
-    StableDiffusionModel,
+    HFStableDiffusionModel,
     read_yaml,
     read_image,
 )
@@ -40,7 +40,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     diff_config = read_yaml(args.config_path)
 
-    pipe = StableDiffusionModel(diff_config)
+    pipe = HFStableDiffusionModel(diff_config)
     img_transform = tvtf.Compose(
         (
             tvtf.ConvertImageDtype(torch.float32),

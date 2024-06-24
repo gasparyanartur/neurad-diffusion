@@ -23,7 +23,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 import transformers
 import torchvision.transforms.v2 as transforms
-from transformers import AutoTokenizer, PretrainedConfig
+from transformers import AutoTokenizer
 import diffusers
 from diffusers import (
     AutoencoderKL,
@@ -61,6 +61,9 @@ from torchmetrics.image import StructuralSimilarityIndexMeasure, PeakSignalNoise
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 from nerfstudio.cameras.rays import RayBundle
+from nerfstudio.generative.diffusion_model import (
+    import_encoder_class_from_model_name_or_path,
+)
 from nerfstudio.generative.dynamic_dataset import (
     INFO_GETTER_BUILDERS,
     CameraDataGetter,
@@ -80,7 +83,7 @@ from nerfstudio.generative.diffusion_model import (
     get_noised_img,
     tokenize_prompt,
     encode_tokens,
-    StableDiffusionModel,
+    HFStableDiffusionModel,
     DiffusionModelConfig,
     DiffusionModel,
     decode_img,
@@ -260,42 +263,6 @@ def find_checkpoint_paths(cp_dir: str, cp_prefix: str = "checkpoint", cp_delim="
     cp_paths = [d for d in cp_paths if d.startswith(cp_prefix)]
     cp_paths = sorted(cp_paths, key=lambda x: int(x.split(cp_delim)[1]))
     return cp_paths
-
-
-def import_encoder_class_from_model_name_or_path(
-    pretrained_model_name_or_path: str, revision: Optional[str], subfolder: Optional[str]
-):
-    if revision is None:
-        revision = "main"
-
-    encoder_config = PretrainedConfig.from_pretrained(
-        pretrained_model_name_or_path, subfolder=subfolder, revision=revision, resume_download=False
-    )
-    model_class = encoder_config.architectures[0]
-
-    if model_class == "CLIPTextModel":
-        from transformers import CLIPTextModel
-
-        return CLIPTextModel
-
-    elif model_class == "CLIPTextModelWithProjection":
-        from transformers import CLIPTextModelWithProjection
-
-        return CLIPTextModelWithProjection
-
-    elif model_class == "CLIPVisionModel":
-        from transformers import CLIPVisionModel
-
-        return CLIPVisionModel
-
-    elif model_class == "CLIPVisionModelWithProjection":
-
-        from transformers import CLIPVisionModelWithProjection
-
-        return CLIPVisionModelWithProjection
-
-    else:
-        raise ValueError(f"{model_class} is not supported.")
 
 
 def parse_args():
@@ -1592,6 +1559,7 @@ def train_epoch(
             )
 
             if train_state.use_recreation_loss:
+                # TODO: Completely change this
                 pred_rgb = decode_img(
                     models["image_processor"], models["vae"], noisy_model_input
                 )

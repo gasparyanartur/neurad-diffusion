@@ -40,7 +40,13 @@ torchvision.disable_beta_transforms_warning()
 from torchvision.transforms import v2 as transform
 from torchmetrics.image import PeakSignalNoiseRatio
 
-from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
+from transformers import (
+    CLIPTextModel,
+    CLIPTextModelWithProjection,
+    CLIPTokenizer,
+    PretrainedConfig,
+)
+from transformers import AutoTokenizer
 
 from transformers import (
     CLIPImageProcessor,
@@ -98,6 +104,8 @@ class DiffusionModelId:
 
 @dataclass
 class DiffusionModelType:
+    hfsd: str = "hfsd"
+    hfcn: str = "hfcn"
     sd: str = "sd"
     cn: str = "cn"
     mock: str = "mock"
@@ -317,7 +325,7 @@ class DiffusionModelConfig(InstantiateConfig):
     """If applicable, compile Diffusion pipeline using available torch backend."""
 
     dtype: str = "fp32"
-    """Data type of the underlying diffusion model. Options (fp32, fp16 (untested), bf16 (untested))"""
+    """Data type of the underlying diffusion model. Options (fp32, fp16, bf16 (untested))"""
 
     lora_weights: Optional[str] = None
     """Path to lora weights for the base diffusion model. Loads if applicable."""
@@ -386,6 +394,8 @@ class DiffusionModel(ABC):
     ) -> "DiffusionModel":
         pipe_models = pipe_models or {}
         model_type_to_constructor = {
+            DiffusionModelType.hfsd: HFStableDiffusionModel,
+            DiffusionModelType.hfcn: HFControlNetDiffusionModel,
             DiffusionModelType.sd: StableDiffusionModel,
             DiffusionModelType.cn: ControlNetDiffusionModel,
             DiffusionModelType.mock: MockDiffusionModel,
@@ -468,7 +478,7 @@ class MockDiffusionModel(DiffusionModel):
         return loss_dict
 
 
-class StableDiffusionModel(DiffusionModel):
+class HFStableDiffusionModel(DiffusionModel):
     def __init__(
         self,
         config: DiffusionModelConfig,
@@ -602,7 +612,7 @@ class StableDiffusionModel(DiffusionModel):
         return loss_dict
 
 
-class ControlNetDiffusionModel(DiffusionModel):
+class HFControlNetDiffusionModel(DiffusionModel):
     def __init__(
         self,
         config: DiffusionModelConfig,
@@ -787,6 +797,257 @@ class ControlNetDiffusionModel(DiffusionModel):
         return loss_dict
 
 
+def import_encoder_class_from_model_name_or_path(
+    pretrained_model_name_or_path: str,
+    revision: Optional[str],
+    subfolder: Optional[str],
+):
+    if revision is None:
+        revision = "main"
+
+    encoder_config = PretrainedConfig.from_pretrained(
+        pretrained_model_name_or_path,
+        subfolder=subfolder,
+        revision=revision,
+        resume_download=False,
+    )
+    model_class = encoder_config.architectures[0]
+
+    if model_class == "CLIPTextModel":
+        from transformers import CLIPTextModel
+
+        return CLIPTextModel
+
+    elif model_class == "CLIPTextModelWithProjection":
+        from transformers import CLIPTextModelWithProjection
+
+        return CLIPTextModelWithProjection
+
+    elif model_class == "CLIPVisionModel":
+        from transformers import CLIPVisionModel
+
+        return CLIPVisionModel
+
+    elif model_class == "CLIPVisionModelWithProjection":
+
+        from transformers import CLIPVisionModelWithProjection
+
+        return CLIPVisionModelWithProjection
+
+    else:
+        raise ValueError(f"{model_class} is not supported.")
+
+
+def import_encoder(model_id, revision, subfolder, variant, **kwargs):
+    return import_encoder_class_from_model_name_or_path(
+        model_id, revision, subfolder=subfolder
+    ).from_pretrained(
+        model_id, subfolder=subfolder, revision=revision, variant=variant, **kwargs
+    )
+
+
+class StableDiffusionModel(DiffusionModel):
+    def __init__(
+        self,
+        config: DiffusionModelConfig,
+        device: torch.device = get_device(),
+        use_safetensors: bool = True,
+        variant: Optional[str] = None,
+        revision: Optional[str] = None,
+        pipe_models: Optional[Dict[str, Any]] = None,
+        requires_grad: bool = False,
+        do_classifier_free_guidance: bool = True,
+    ):
+        super().__init__()
+
+        pipe_models = pipe_models or {}
+
+        self.config = config
+        self.device = device
+
+        self.unet = typing.cast(
+            UNet2DConditionModel,
+            (
+                pipe_models["unet"]
+                if "unet" in pipe_models
+                else UNet2DConditionModel.from_pretrained(
+                    config.model_id,
+                    subfolder="unet",
+                    revision=revision,
+                    variant=variant,
+                    use_safetensors=use_safetensors,
+                )
+            ),
+        )
+
+        self.tokenizer = typing.cast(
+            CLIPTokenizer,
+            (
+                pipe_models["tokenizer"]
+                if "tokenizer" in pipe_models
+                else AutoTokenizer.from_pretrained(
+                    config.model_id,
+                    subfolder="tokenizer",
+                    revision=revision,
+                    variant=variant,
+                    use_fast=False,
+                    use_safetensors=True,
+                )
+            ),
+        )
+
+        self.img_processor = (
+            pipe_models["img_processor"]
+            if "img_processor" in pipe_models
+            else VaeImageProcessor()
+        )
+
+        self.noise_scheduler = typing.cast(
+            DDPMScheduler,
+            (
+                pipe_models["noise_scheduler"]
+                if "noise_scheduler" in pipe_models
+                else DDPMScheduler.from_pretrained(
+                    config.model_id,
+                    subfolder="scheduler",
+                    variant=variant,
+                    revision=revision,
+                    use_safetensors=use_safetensors,
+                )
+            ),
+        )
+
+        self.text_encoder = typing.cast(
+            CLIPTextModel,
+            (
+                pipe_models["text_encoder"]
+                if "text_encoder" in pipe_models
+                else import_encoder(
+                    config.model_id,
+                    revision,
+                    "text_encoder",
+                    variant,
+                    use_safetensors=use_safetensors,
+                )
+            ),
+        )
+
+        self.vae = (
+            pipe_models["vae"]
+            if "vae" in pipe_models
+            else typing.cast(
+                AutoencoderKL,
+                AutoencoderKL.from_pretrained(
+                    config.model_id,
+                    subfolder="vae",
+                    revision=revision,
+                    variant=variant,
+                    use_safetensors=use_safetensors,
+                ),
+            )
+        )
+
+        self.requires_grad = requires_grad
+
+        self.vae.requires_grad_(requires_grad)
+        self.vae.to(device=device, dtype=config.dtype)
+
+        self.unet.requires_grad_(requires_grad)
+        self.unet.to(device=device, dtype=config.dtype)
+
+        self.text_encoder.requires_grad_(requires_grad)
+        self.text_encoder.to(device=device, dtype=config.dtype)
+
+        self.do_classifier_free_guidance = do_classifier_free_guidance
+
+    def get_diffusion_output(
+        self,
+        sample: Dict[str, Any],
+        strength: float = 0.2,
+        num_inference_steps: int = 50,
+        **kwargs,
+    ):
+        if self.requires_grad:
+            return self._get_diffusion_output(
+                sample, strength, num_inference_steps, **kwargs
+            )
+
+        else:
+            with torch.no_grad():
+                self._get_diffusion_output(
+                    sample, strength, num_inference_steps, **kwargs
+                )
+
+    def _get_diffusion_output(
+        self,
+        sample: Dict[str, Any],
+        strength: float = 0.2,
+        num_inference_steps: int = 50,
+        **kwargs,
+    ):
+        """Denoise image with diffusion model.
+
+        Interesting kwargs:
+        - image
+        - generator
+        - output_type
+        - strength
+        - num_inference_steps
+        - prompt_embeds
+        - negative_prompt_embeds
+
+        """
+
+        if "generator" in kwargs:
+            logging.warning(f"Provided generator, but not implementet yet.")
+
+        image = sample["rgb"]
+        batch_size = len(image)
+
+        if image.size(1) == 3:
+            channel_first = True
+        elif image.size(3) == 3:
+            channel_first = False
+        else:
+            raise ValueError(f"Image needs to be BCHW or BHWC, received {image.shape}")
+
+        if not channel_first:
+            image = image.permute(0, 3, 1, 2)  # Diffusion model is channel first
+
+        _prepare_prompt(sample, self.tokenizer, self.text_encoder, batch_size)
+
+        latent = encode_img(
+            self.img_processor,
+            self.vae,
+            image,
+            device=self.device,
+            seed=kwargs.get("seed"),
+        )
+
+        timesteps = get_ordered_timesteps(
+            strength, self.device, num_timesteps=num_inference_steps
+        )
+        noisy_latent = add_noise_to_latent(latent, timesteps[-1], self.noise_scheduler)
+        prompt_embeds = sample["prompt_embeds"]
+
+        if self.do_classifier_free_guidance:
+            prompt_embeds = torch.cat((prompt_embeds, prompt_embeds))
+
+        denoised_latent = denoise_latent(
+            noisy_latent, self.unet, timesteps, self.noise_scheduler, prompt_embeds
+        )
+
+        image = decode_img(self.img_processor, self.vae, denoised_latent)
+
+        if not channel_first:
+            image = image.permute(0, 2, 3, 1)
+
+        return {"rgb": image}
+
+
+class ControlNetDiffusionModel(DiffusionModel): ...
+
+
 def encode_img(
     img_processor: VaeImageProcessor,
     vae: AutoencoderKL,
@@ -891,8 +1152,13 @@ def denoise_latent(
         timesteps = reversed(timesteps)
 
     for t in timesteps:
+        latent_model_input = (
+            torch.cat([latent, latent]) if do_classifier_free_guidance else latent
+        )
+        #latent_model_input = noise_scheduler.scale_model_input(latent_model_input, t)
+
         noise_pred = unet(
-            torch.cat([latent, latent]) if do_classifier_free_guidance else latent,
+            latent_model_input,
             t,
             encoder_hidden_states=encoder_hidden_states,
             timestep_cond=timestep_cond,
@@ -1045,11 +1311,12 @@ def get_ordered_timesteps(
         num_timesteps = total_num_timesteps
 
     if low_noise_high_step:
-        start_step = int((1 - noise_strength) * total_num_timesteps)
-        end_step = total_num_timesteps
+        start_step = int((1 - noise_strength) * total_num_timesteps) - 1
+        end_step = total_num_timesteps - 1
     else:
         start_step = 0
         end_step = int(noise_strength * total_num_timesteps)
+
     # start_step = int((1 - noise_strength) * total_num_timesteps)
     # end_step = total_num_timesteps - 1
 
@@ -1062,6 +1329,7 @@ def get_ordered_timesteps(
         timesteps = torch.round(
             torch.linspace(start_step, end_step, num_timesteps, device=device)
         ).to(torch.long)
+
     return timesteps
 
 
