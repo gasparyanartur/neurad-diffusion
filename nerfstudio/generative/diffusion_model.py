@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import warnings
 from typing import Union, Optional, Tuple, Dict, Iterable, Any, List
 from functools import lru_cache
 from collections.abc import Iterable
@@ -865,6 +866,8 @@ class StableDiffusionModel(DiffusionModel):
         self.config = config
         self.device = device
 
+        dtype = DTYPE_CONVERSION[config.dtype]
+
         self.unet = typing.cast(
             UNet2DConditionModel,
             (
@@ -876,6 +879,7 @@ class StableDiffusionModel(DiffusionModel):
                     revision=revision,
                     variant=variant,
                     use_safetensors=use_safetensors,
+                    torch_dtype=dtype,
                 )
             ),
         )
@@ -892,6 +896,7 @@ class StableDiffusionModel(DiffusionModel):
                     variant=variant,
                     use_fast=False,
                     use_safetensors=True,
+                    torch_dtype=dtype,
                 )
             ),
         )
@@ -913,6 +918,7 @@ class StableDiffusionModel(DiffusionModel):
                     variant=variant,
                     revision=revision,
                     use_safetensors=use_safetensors,
+                    torch_dtype=dtype,
                 )
             ),
         )
@@ -928,6 +934,7 @@ class StableDiffusionModel(DiffusionModel):
                     "text_encoder",
                     variant,
                     use_safetensors=use_safetensors,
+                    torch_dtype=dtype,
                 )
             ),
         )
@@ -943,6 +950,7 @@ class StableDiffusionModel(DiffusionModel):
                     revision=revision,
                     variant=variant,
                     use_safetensors=use_safetensors,
+                    torch_dtype=dtype,
                 ),
             )
         )
@@ -950,15 +958,23 @@ class StableDiffusionModel(DiffusionModel):
         self.requires_grad = requires_grad
 
         self.vae.requires_grad_(requires_grad)
-        self.vae.to(device=device, dtype=config.dtype)
+        self.vae.to(device=device, dtype=dtype)
 
         self.unet.requires_grad_(requires_grad)
-        self.unet.to(device=device, dtype=config.dtype)
+        self.unet.to(device=device, dtype=dtype)
 
         self.text_encoder.requires_grad_(requires_grad)
-        self.text_encoder.to(device=device, dtype=config.dtype)
+        self.text_encoder.to(device=device, dtype=dtype)
 
         self.do_classifier_free_guidance = do_classifier_free_guidance
+
+        self.diffusion_metrics = {
+            metric_name: _make_metric(metric_name, device)
+            for metric_name in config.metrics
+        }
+        self.diffusion_losses = {
+            loss_name: _make_metric(loss_name, device) for loss_name in config.losses
+        }
 
     def get_diffusion_output(
         self,
@@ -974,7 +990,7 @@ class StableDiffusionModel(DiffusionModel):
 
         else:
             with torch.no_grad():
-                self._get_diffusion_output(
+                return self._get_diffusion_output(
                     sample, strength, num_inference_steps, **kwargs
                 )
 
@@ -1002,6 +1018,7 @@ class StableDiffusionModel(DiffusionModel):
             logging.warning(f"Provided generator, but not implementet yet.")
 
         image = sample["rgb"]
+        image = batch_if_not_iterable(image)
         batch_size = len(image)
 
         if image.size(1) == 3:
@@ -1024,10 +1041,10 @@ class StableDiffusionModel(DiffusionModel):
             seed=kwargs.get("seed"),
         )
 
-        timesteps = get_ordered_timesteps(
-            strength, self.device, num_timesteps=num_inference_steps
+        timesteps, num_inference_steps = get_timesteps(
+            self.noise_scheduler, num_inference_steps, strength, self.device
         )
-        noisy_latent = add_noise_to_latent(latent, timesteps[-1], self.noise_scheduler)
+        noisy_latent = add_noise_to_latent(latent, timesteps[0], self.noise_scheduler)
         prompt_embeds = sample["prompt_embeds"]
 
         if self.do_classifier_free_guidance:
@@ -1043,6 +1060,38 @@ class StableDiffusionModel(DiffusionModel):
             image = image.permute(0, 2, 3, 1)
 
         return {"rgb": image}
+
+    def get_diffusion_metrics(
+        self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        # Currently only handles RGB case, assumes all metrics take in an RGB image.
+        rgb_pred = batch_pred["rgb"]
+        rgb_gt = batch_gt["rgb"]
+
+        return {
+            metric_name: metric(rgb_pred, rgb_gt)
+            for metric_name, metric in self.diffusion_metrics.items()
+        }
+
+    def get_diffusion_losses(
+        self,
+        batch_pred: Dict[str, Any],
+        batch_gt: Dict[str, Any],
+        metrics_dict: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        # Currently only handles RGB case, assumes all metrics take in an RGB image.
+        rgb_pred = batch_pred["rgb"]
+        rgb_gt = batch_gt["rgb"]
+
+        loss_dict = {}
+        for loss_name, loss in self.diffusion_losses.items():
+            if loss_name in metrics_dict:
+                loss_dict[loss_name] = metrics_dict[loss_name]
+                continue
+
+            loss_dict[loss_name] = loss(rgb_pred, rgb_gt)
+
+        return loss_dict
 
 
 class ControlNetDiffusionModel(DiffusionModel): ...
@@ -1155,7 +1204,7 @@ def denoise_latent(
         latent_model_input = (
             torch.cat([latent, latent]) if do_classifier_free_guidance else latent
         )
-        #latent_model_input = noise_scheduler.scale_model_input(latent_model_input, t)
+        # latent_model_input = noise_scheduler.scale_model_input(latent_model_input, t)
 
         noise_pred = unet(
             latent_model_input,
@@ -1261,6 +1310,19 @@ def embed_prompt(
     return embeddings
 
 
+def draw_from_bins(start, end, n_draws, device, include_last: bool = False):
+    values = torch.zeros(n_draws + int(include_last), dtype=torch.long, device=device)
+    buckets = torch.round(torch.linspace(start, end, n_draws + 1)).int()
+
+    for i in range(n_draws):
+        values[i] = torch.randint(buckets[i], buckets[i + 1], (1,))
+
+    if include_last:
+        values[-1] = end
+
+    return values
+
+
 def get_random_timesteps(
     noise_strength,
     total_num_timesteps,
@@ -1286,17 +1348,23 @@ def get_random_timesteps(
     return timesteps
 
 
-def draw_from_bins(start, end, n_draws, device, include_last: bool = False):
-    values = torch.zeros(n_draws + int(include_last), dtype=torch.long, device=device)
-    buckets = torch.round(torch.linspace(start, end, n_draws + 1)).int()
+def get_timesteps(
+    noise_scheduler: DDPMScheduler,
+    num_inference_steps: int,
+    strength: float,
+    device: torch.device,
+):
+    # Adapted from diffusers.StableDiffusionImg2ImgPipeline.get_timesteps
 
-    for i in range(n_draws):
-        values[i] = torch.randint(buckets[i], buckets[i + 1], (1,))
+    noise_scheduler.set_timesteps(num_inference_steps, device=device)
+    init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
 
-    if include_last:
-        values[-1] = end
+    t_start = max(num_inference_steps - init_timestep, 0)
+    timesteps = noise_scheduler.timesteps[t_start * noise_scheduler.order :]
+    if hasattr(noise_scheduler, "set_begin_index"):
+        noise_scheduler.set_begin_index(t_start * noise_scheduler.order)
 
-    return values
+    return timesteps, num_inference_steps - t_start
 
 
 def get_ordered_timesteps(
@@ -1307,6 +1375,9 @@ def get_ordered_timesteps(
     sample_from_bins: bool = True,
     low_noise_high_step: bool = False,
 ):
+    warnings.warn(
+        "Using deprecated `get_ordered_timesteps`, use `get_timesteps` instead"
+    )
     if num_timesteps is None:
         num_timesteps = total_num_timesteps
 
