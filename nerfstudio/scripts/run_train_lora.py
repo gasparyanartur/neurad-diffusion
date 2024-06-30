@@ -1,5 +1,6 @@
 # Adapted from https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image_lora.py
 
+import typing
 from typing import Any, Callable, Dict, Tuple, List, Optional, Union, Sequence
 from collections.abc import Iterable
 from pathlib import Path
@@ -74,6 +75,7 @@ from nerfstudio.generative.dynamic_dataset import (
     TimestampDataGetter,
     crop_to_ray_idxs,
     read_data_tree,
+    read_yaml,
     save_yaml,
     setup_project,
     DynamicDataset,
@@ -243,6 +245,10 @@ class TrainState:
 
     seed: Optional[int] = None
 
+    def update_values(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
 
 def init_job_id(train_state: TrainState) -> None:
     if train_state.job_id is not None:
@@ -251,17 +257,18 @@ def init_job_id(train_state: TrainState) -> None:
     if "SLURM_JOB_ID" in os.environ:
         train_state.job_id = os.environ["SLURM_JOB_ID"]
         return
-    logging.warning(
+    logger.warning(
         f"Could not find SLURM_JOB_ID or predefined job_id, setting job_id to 0"
     )
     train_state.job_id = "0"
     return
 
 
-def find_checkpoint_paths(cp_dir: str, cp_prefix: str = "checkpoint", cp_delim="-"):
-    cp_paths = os.listdir(cp_dir)
-    cp_paths = [d for d in cp_paths if d.startswith(cp_prefix)]
-    cp_paths = sorted(cp_paths, key=lambda x: int(x.split(cp_delim)[1]))
+def find_checkpoint_paths(
+    path: Path, cp_prefix: str = "checkpoint", cp_delim="-"
+) -> List[Path]:
+    cp_paths = [d for d in path.iterdir() if d.name.startswith(cp_prefix)]
+    cp_paths = sorted(cp_paths, key=lambda d: int(d.name.split(cp_delim)[1]))
     return cp_paths
 
 
@@ -496,6 +503,35 @@ def is_model_equal_type(accelerator, model_1, model_2, unwrap: bool = True) -> b
     return isinstance(model_1, type(model_2))
 
 
+def save_lora_weights(
+    accelerator: Accelerator, models, train_state: TrainState, dir_name: str = "weights"
+) -> None:
+    if not accelerator.is_main_process:
+        return
+
+    trainable_models = {model: models[model] for model in train_state.trainable_models}
+    models_to_save: Dict[str, Dict[str, Union[nn.Module, Tensor]]] = {}
+    other_models = {}
+
+    for model_name, loaded_model in trainable_models.items():
+        # Map the list of loaded_models given by accelerator to keys given in train_state.
+        # NOTE: This mapping is done by type, so two objects of the same type will be treated as the same object.
+
+        unwrapped_model = unwrap_model(accelerator, loaded_model, unpeft=False)
+        models_to_save[model_name] = unwrapped_model
+
+    dst_dir = Path(train_state.output_dir, train_state.job_id, dir_name)
+    dst_dir.mkdir(exist_ok=True, parents=True)
+
+    for model_name, model in layers_to_save.items():
+        if not isinstance(model, PeftModel):
+            raise ValueError(
+                f"Attempted to save model of type {type(model)}, which is not a PeftModel"
+            )
+
+        model.save_pretrained(str(dst_dir))
+
+
 def save_model_hook(
     loaded_models,
     weights,
@@ -550,13 +586,12 @@ def save_model_hook(
 
 def load_model_hook(
     loaded_models,
-    input_dir,
+    input_dir: Path,
     accelerator: Accelerator,
     models,
     train_state: TrainState,
 ):
     loaded_models_dict = {}
-
     while loaded_models:
         # Map the list of loaded_models given by accelerator to keys given in train_state.
         # NOTE: This mapping is done by type, so two objects of the same type will be treated as the same object.
@@ -570,49 +605,20 @@ def load_model_hook(
         else:
             raise ValueError(f"unexpected save model: {type(loaded_model)}")
 
-    weights_dir = Path(input_dir) / "weights"
+    weights_dir = input_dir / "weights"
     for model_dir in weights_dir.iterdir():
-        # Assuming adapter name is same as model name (i.e. unet, text_encoder, controlnet)
-        model = loaded_models_dict[model_dir.name]
-        peft_model = PeftModel.from_pretrained(model, str(model_dir))
+        model_name = (
+            model_dir.name
+        )  # Assuming adapter name is same as model name (i.e. unet, text_encoder, controlnet)
+        if model_name not in loaded_models_dict:
+            logger.warning(
+                f"Found weights {model_name} in weight directory, but model not found in {train_state.trainable_models}. Skipping"
+            )
 
-    lora_state_dict, _ = LoraLoaderMixin.lora_state_dict(
-        str(Path(input_dir) / "weights" / "pytorch_lora_weights.safetensors")
-    )
-
-    if "unet" in loaded_models_dict:
-        unet_state_dict = {
-            f'{k.replace("unet.", "")}': v
-            for k, v in lora_state_dict.items()
-            if k.startswith("unet.")
-        }
-        unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
-        incompatible_keys = set_peft_model_state_dict(
-            loaded_models_dict["unet"], unet_state_dict, adapter_name="default"
+        model = loaded_models_dict[model_name]
+        loaded_models_dict[model_name] = PeftModel.from_pretrained(
+            model, str(model_dir)
         )
-
-        if incompatible_keys is not None:
-            # check only for unexpected keys
-            unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
-            if unexpected_keys:
-                logger.warning(
-                    f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
-                    f" {unexpected_keys}. "
-                )
-
-    if "text_encoder" in loaded_models_dict:
-        _set_state_dict_into_text_encoder(
-            lora_state_dict,
-            prefix="text_encoder.",
-            text_encoder=loaded_models_dict["text_encoder"],
-        )
-
-    if "controlnet" in loaded_models_dict:
-        loaded_controlnet = ControlLoRAModel.from_pretrained(
-            str(Path(input_dir) / "weights"), subfolder="controlnet"
-        )
-        loaded_models_dict["controlnet"].load_state_dict(loaded_controlnet.state_dict())
-        loaded_models_dict["controlnet"].tie_weights(models["unet"])
 
     # Make sure the trainable params are in float32.
     if train_state.weights_dtype in LOWER_DTYPES:
@@ -623,12 +629,24 @@ def load_model_hook(
         ]
         cast_training_params(models_to_cast, dtype=torch.float32)
 
+    configs = read_yaml(input_dir / "config.yml")
 
-def unwrap_model(accelerator: Accelerator, model):
+    fields_to_update = [
+        "max_train_steps",
+        "num_update_steps_per_epoch",
+        "global_step",
+        "epoch",
+        "best_ssim",
+        "best_saved_ssim",
+    ]
+    train_state.update_values(**{f: configs[f] for f in fields_to_update})
+
+
+def unwrap_model(accelerator: Accelerator, model, unpeft: bool = True):
     model = accelerator.unwrap_model(model)
     model = model._orig_mod if is_compiled_module(model) else model
 
-    if isinstance(model, PeftModel):
+    if unpeft and isinstance(model, PeftModel):
         model = model.base_model.model
 
     return model
@@ -776,46 +794,6 @@ def prepare_preprocessors(models, train_state: TrainState):
     return preprocessors, preprocessor_order
 
 
-def save_lora_weights(
-    accelerator: Accelerator, models, train_state: TrainState, dir_name: str = "weights"
-) -> None:
-    if not accelerator.is_main_process:
-        return
-
-    trainable_models = {model: models[model] for model in train_state.trainable_models}
-    layers_to_save: Dict[str, Dict[str, Union[nn.Module, Tensor]]] = {}
-    other_models = {}
-
-    for model_name, loaded_model in trainable_models.items():
-        # Map the list of loaded_models given by accelerator to keys given in train_state.
-        # NOTE: This mapping is done by type, so two objects of the same type will be treated as the same object.
-        # TODO: Find a better way of mapping this.
-
-        unwrapped_model = unwrap_model(accelerator, loaded_model)
-
-        if isinstance(
-            unwrapped_model, ControlLoRAModel
-        ):  # This one has special saving logic that we handle later
-            other_models["controlnet"] = unwrapped_model
-            continue
-
-        state_model_dict = convert_state_dict_to_diffusers(
-            get_peft_model_state_dict(loaded_model)
-        )
-        layers_to_save[model_name] = state_model_dict
-
-    dst_dir = Path(train_state.output_dir, train_state.job_id, dir_name)
-    dst_dir.mkdir(exist_ok=True, parents=True)
-
-    StableDiffusionImg2ImgPipeline.save_lora_weights(
-        save_directory=str(dst_dir),
-        unet_lora_layers=layers_to_save.get("unet"),
-        text_encoder_lora_layers=layers_to_save.get("text_encoder"),
-    )
-    if "controlnet" in other_models:
-        other_models["controlnet"].save_pretrained(str(dst_dir / "controlnet"))
-
-
 def get_diffusion_noise(
     size: Sequence[int], device: torch.device, train_state: TrainState
 ) -> Tensor:
@@ -880,7 +858,9 @@ def get_diffusion_loss(
 
 def save_checkpoint(accelerator: Accelerator, train_state: TrainState) -> None:
     # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-    output_dir = os.path.join(train_state.output_dir, train_state.job_id)
+    output_dir = Path(
+        typing.cast(str, train_state.output_dir), typing.cast(str, train_state.job_id)
+    )
 
     if train_state.checkpoints_total_limit is not None:
         cp_paths = find_checkpoint_paths(output_dir)
@@ -893,10 +873,10 @@ def save_checkpoint(accelerator: Accelerator, train_state: TrainState) -> None:
             logger.info(
                 f"{len(cp_paths)} checkpoints already exist, removing {len(cps_to_remove)} checkpoints"
             )
-            logger.info(f"removing checkpoints: {', '.join(cps_to_remove)}")
+            logger.info(f"removing checkpoints: {', '.join(map(str, cps_to_remove))}")
 
             for cp_path in cps_to_remove:
-                cp_path = os.path.join(output_dir, cp_path)
+                cp_path = output_dir / cp_path
                 shutil.rmtree(cp_path)
 
     cp_path = os.path.join(output_dir, f"checkpoint-{train_state.global_step}")
