@@ -329,10 +329,7 @@ class DiffusionModelConfig(InstantiateConfig):
     """Data type of the underlying diffusion model. Options (fp32, fp16, bf16 (untested))"""
 
     lora_weights: Optional[str] = None
-    """Path to lora weights for the base diffusion model. Loads if applicable."""
-
-    controlnet_weights: Optional[str] = None
-    """Path to lora weights for the base diffusion model. Loads if applicable."""
+    """Path to the directory which contains saved model. Loads if applicable."""
 
     noise_strength: float = 0.2
     """How much noise to apply during inference. 1.0 means complete gaussian."""
@@ -858,6 +855,7 @@ class StableDiffusionModel(DiffusionModel):
         pipe_models: Optional[Dict[str, Any]] = None,
         requires_grad: bool = False,
         do_classifier_free_guidance: bool = True,
+        unet=None,
     ):
         super().__init__()
 
@@ -868,20 +866,17 @@ class StableDiffusionModel(DiffusionModel):
 
         dtype = DTYPE_CONVERSION[config.dtype]
 
-        self.unet = typing.cast(
-            UNet2DConditionModel,
-            (
-                pipe_models["unet"]
-                if "unet" in pipe_models
-                else UNet2DConditionModel.from_pretrained(
-                    config.model_id,
-                    subfolder="unet",
-                    revision=revision,
-                    variant=variant,
-                    use_safetensors=use_safetensors,
-                    torch_dtype=dtype,
-                )
-            ),
+        self.unet = (
+            pipe_models["unet"]
+            if "unet" in pipe_models
+            else UNet2DConditionModel.from_pretrained(
+                config.model_id,
+                subfolder="unet",
+                revision=revision,
+                variant=variant,
+                use_safetensors=use_safetensors,
+                torch_dtype=dtype,
+            )
         )
 
         self.tokenizer = typing.cast(

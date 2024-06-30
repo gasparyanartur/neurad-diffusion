@@ -55,7 +55,7 @@ from accelerate.utils import (
     ProjectConfiguration,
     set_seed,
 )
-from peft import LoraConfig, set_peft_model_state_dict
+from peft import LoraConfig, set_peft_model_state_dict, PeftModel
 from peft.utils import get_peft_model_state_dict
 from torchmetrics.image import StructuralSimilarityIndexMeasure, PeakSignalNoiseRatio
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
@@ -488,6 +488,14 @@ def collate_fn(
     return collated
 
 
+def is_model_equal_type(accelerator, model_1, model_2, unwrap: bool = True) -> bool:
+    if unwrap:
+        model_1 = unwrap_model(accelerator, model_1)
+        model_2 = unwrap_model(accelerator, model_2)
+
+    return isinstance(model_1, type(model_2))
+
+
 def save_model_hook(
     loaded_models,
     weights,
@@ -505,47 +513,32 @@ def save_model_hook(
     for loaded_model in loaded_models:
         # Map the list of loaded_models given by accelerator to keys given in train_state.
         # NOTE: This mapping is done by type, so two objects of the same type will be treated as the same object.
-        # TODO: Find a better way of mapping this.
 
-        unwrapped_model = unwrap_model(accelerator, loaded_model)
-        if isinstance(
-            unwrapped_model, ControlLoRAModel
-        ):  # This one has special saving logic that we handle later
-            other_models["controlnet"] = unwrapped_model
-            continue
-
-        state_model_dict = convert_state_dict_to_diffusers(
-            get_peft_model_state_dict(loaded_model)
-        )
         for model_name, model in models.items():
-            if isinstance(unwrapped_model, type(unwrap_model(accelerator, model))):
-                layers_to_save[model_name] = state_model_dict
+            if is_model_equal_type(accelerator, loaded_model, model):
+                layers_to_save[model_name] = get_peft_model_state_dict(loaded_model)
                 break
 
         # make sure to pop weight so that corresponding model is not saved again
         if weights:
             weights.pop()
 
-    # TODO: Extend for more models
     dst_dir = Path(output_dir, "weights")
     if not dst_dir.exists():
         dst_dir.mkdir(exist_ok=True, parents=True)
 
-    StableDiffusionImg2ImgPipeline.save_lora_weights(
-        save_directory=str(dst_dir),
-        unet_lora_layers=layers_to_save.get("unet"),
-        text_encoder_lora_layers=layers_to_save.get("text_encoder"),
-    )
+    for model_name, model in layers_to_save.items():
+        if not isinstance(model, PeftModel):
+            raise ValueError(
+                f"Attempted to save model of type {type(model)}, which is not a PeftModel"
+            )
 
-    # TODO: Save this properly once migrated to PEFT
-    if "controlnet" in other_models:
-        other_models["controlnet"].save_pretrained(str(dst_dir / "controlnet"))
+        model.save_pretrained(str(dst_dir))
 
     configs = DiffusionModelConfig(
-        train_state.model_type,
-        train_state.model_id,
-        lora_weights=str(dst_dir / "pytorch_lora_weights.safetensors"),
-        controlnet_weights=str(dst_dir / "controlnet"),
+        model_type=train_state.model_type,
+        model_id=train_state.model_id,
+        lora_weights=str(dst_dir),
         noise_strength=train_state.val_noise_strength,
         num_inference_steps=train_state.val_noise_num_steps,
         conditioning_signals=tuple(
@@ -567,16 +560,21 @@ def load_model_hook(
     while loaded_models:
         # Map the list of loaded_models given by accelerator to keys given in train_state.
         # NOTE: This mapping is done by type, so two objects of the same type will be treated as the same object.
-        # TODO: Find a better way of mapping this.
 
         loaded_model = loaded_models.pop()
         for model_name, model in models.items():
-            if isinstance(loaded_model, type(unwrap_model(accelerator, model))):
+            if is_model_equal_type(accelerator, loaded_model, model):
                 loaded_models_dict[model_name] = loaded_model
                 break
 
         else:
-            raise ValueError(f"unexpected save model: {loaded_model.__class__}")
+            raise ValueError(f"unexpected save model: {type(loaded_model)}")
+
+    weights_dir = Path(input_dir) / "weights"
+    for model_dir in weights_dir.iterdir():
+        # Assuming adapter name is same as model name (i.e. unet, text_encoder, controlnet)
+        model = loaded_models_dict[model_dir.name]
+        peft_model = PeftModel.from_pretrained(model, str(model_dir))
 
     lora_state_dict, _ = LoraLoaderMixin.lora_state_dict(
         str(Path(input_dir) / "weights" / "pytorch_lora_weights.safetensors")
@@ -629,6 +627,10 @@ def load_model_hook(
 def unwrap_model(accelerator: Accelerator, model):
     model = accelerator.unwrap_model(model)
     model = model._orig_mod if is_compiled_module(model) else model
+
+    if isinstance(model, PeftModel):
+        model = model.base_model.model
+
     return model
 
 
