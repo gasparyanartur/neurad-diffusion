@@ -31,6 +31,7 @@ from diffusers.schedulers import KarrasDiffusionSchedulers
 
 from diffusers import StableDiffusionImg2ImgPipeline
 from diffusers.image_processor import VaeImageProcessor
+from peft
 
 
 import torchvision
@@ -981,8 +982,14 @@ class StableDiffusionModel(DiffusionModel):
     def add_adapter(
         self,
         model_name,
+        adapter: LoraConfig
     ):
-        self.unet.add_adapter()
+        if not model_name in self.config.models_to_train_lora:
+            raise ValueError(f"Cannot add adapter for {model_name} - model not in list of trainable models: {self.config.models_to_train_lora}")
+
+        model = getattr(self, model_name)
+        adapter = self.config.
+
 
     def get_diffusion_output(
         self,
