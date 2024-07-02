@@ -331,6 +331,10 @@ class DiffusionModelConfig(InstantiateConfig):
     lora_weights: Optional[str] = None
     """Path to the directory which contains saved model. Loads if applicable."""
 
+    models_to_load_lora: Tuple[str, ...] = ()
+
+    models_to_train_lora: Tuple[str, ...] = ()
+
     noise_strength: float = 0.2
     """How much noise to apply during inference. 1.0 means complete gaussian."""
 
@@ -343,6 +347,10 @@ class DiffusionModelConfig(InstantiateConfig):
     metrics: Tuple[str, ...] = ("psnr", "mse")
 
     losses: Tuple[str, ...] = ("mse",)
+
+    lora_ranks: Dict[str, int] = field(
+        default_factory=lambda: {"unet": 4, "controlnet": 4, "textencoder": 4}
+    )
 
     conditioning_signals: Tuple[str, ...] = ()
     """ The name of the conditioning signals used for the controlnet.
@@ -855,7 +863,6 @@ class StableDiffusionModel(DiffusionModel):
         pipe_models: Optional[Dict[str, Any]] = None,
         requires_grad: bool = False,
         do_classifier_free_guidance: bool = True,
-        unet=None,
     ):
         super().__init__()
 
@@ -970,6 +977,12 @@ class StableDiffusionModel(DiffusionModel):
         self.diffusion_losses = {
             loss_name: _make_metric(loss_name, device) for loss_name in config.losses
         }
+
+    def add_adapter(
+        self,
+        model_name,
+    ):
+        self.unet.add_adapter()
 
     def get_diffusion_output(
         self,

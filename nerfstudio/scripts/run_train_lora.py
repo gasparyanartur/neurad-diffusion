@@ -1,7 +1,7 @@
 # Adapted from https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image_lora.py
 
 import typing
-from typing import Any, Callable, Dict, Tuple, List, Optional, Union, Sequence
+from typing import Any, Callable, Dict, Tuple, List, Optional, Union, Sequence, cast
 from collections.abc import Iterable
 from pathlib import Path
 from argparse import ArgumentParser, Namespace
@@ -132,10 +132,10 @@ class TrainState:
 
     checkpoint_strategy: str = "best"
     checkpointing_steps: int = 500
-    checkpoints_total_limit: int = (
+    max_num_checkpoints: int = (
         0  # How many checkpoints, besides the latest, that will be stored
     )
-    resume_from_checkpoint: bool = False  # Does not work atm
+    checkpoint_path: Optional[str] = None
 
     n_epochs: int = 100
     max_train_samples: Optional[int] = None
@@ -262,14 +262,6 @@ def init_job_id(train_state: TrainState) -> None:
     )
     train_state.job_id = "0"
     return
-
-
-def find_checkpoint_paths(
-    path: Path, cp_prefix: str = "checkpoint", cp_delim="-"
-) -> List[Path]:
-    cp_paths = [d for d in path.iterdir() if d.name.startswith(cp_prefix)]
-    cp_paths = sorted(cp_paths, key=lambda d: int(d.name.split(cp_delim)[1]))
-    return cp_paths
 
 
 def parse_args():
@@ -642,6 +634,74 @@ def load_model_hook(
     train_state.update_values(**{f: configs[f] for f in fields_to_update})
 
 
+def save_checkpoint(accelerator: Accelerator, train_state: TrainState) -> None:
+    # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
+    output_dir = Path(
+        typing.cast(str, train_state.output_dir), typing.cast(str, train_state.job_id)
+    )
+
+    if train_state.max_num_checkpoints is not None:
+        cp_paths = find_checkpoint_paths(output_dir)
+
+        # before we save the new checkpoint, we need to have at most `checkpoints_total_limit - 1` checkpoints
+        if len(cp_paths) >= train_state.max_num_checkpoints:
+            # Remove one more to make space for the new one
+            num_to_remove = len(cp_paths) - train_state.max_num_checkpoints + 1
+            cps_to_remove = cp_paths[num_to_remove:]
+
+            logger.info(
+                f"{len(cp_paths)} checkpoints already exist, removing {len(cps_to_remove)} checkpoints"
+            )
+            logger.info(f"removing checkpoints: {', '.join(map(str, cps_to_remove))}")
+
+            for cp_path in cps_to_remove:
+                shutil.rmtree(cp_path)
+
+    cp_path = output_dir / f"checkpoint-{train_state.global_step}"
+    accelerator.save_state(str(cp_path))
+    logger.info(f"Saved state to path {cp_path}")
+
+
+def resume_from_checkpoint(accelerator, train_state: TrainState):
+    if train_state.checkpoint_path:
+
+        if train_state.checkpoint_path == "latest":
+            # Get the most recent checkpoint
+            cp_paths = find_checkpoint_paths(
+                Path(cast(str, train_state.output_dir), cast(str, train_state.job_id))
+            )
+
+            if len(cp_paths) == 0:
+                accelerator.print(
+                    f"Checkpoint '{train_state.checkpoint_path}' does not exist. Starting a new training run."
+                )
+                return
+
+            path = cp_paths[-1]
+
+        else:
+            path = Path(train_state.checkpoint_path)
+
+        accelerator.print(f"Resuming from checkpoint {path}")
+        accelerator.load_state(path)
+
+        train_state.global_step = int(path.name.split("-")[-1])
+        train_state.epoch = cast(int, train_state.global_step) // cast(
+            int, train_state.num_update_steps_per_epoch
+        )
+
+    else:
+        train_state.global_step = 0
+
+
+def find_checkpoint_paths(
+    path: Path, cp_prefix: str = "checkpoint", cp_delim="-"
+) -> List[Path]:
+    cp_paths = [d for d in path.iterdir() if d.name.startswith(cp_prefix)]
+    cp_paths = sorted(cp_paths, key=lambda d: int(d.name.split(cp_delim)[1]))
+    return cp_paths
+
+
 def unwrap_model(accelerator: Accelerator, model, unpeft: bool = True):
     model = accelerator.unwrap_model(model)
     model = model._orig_mod if is_compiled_module(model) else model
@@ -856,72 +916,16 @@ def get_diffusion_loss(
     return loss
 
 
-def save_checkpoint(accelerator: Accelerator, train_state: TrainState) -> None:
-    # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-    output_dir = Path(
-        typing.cast(str, train_state.output_dir), typing.cast(str, train_state.job_id)
-    )
-
-    if train_state.checkpoints_total_limit is not None:
-        cp_paths = find_checkpoint_paths(output_dir)
-
-        # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
-        if len(cp_paths) >= train_state.checkpoints_total_limit:
-            num_to_remove = len(cp_paths) - train_state.checkpoints_total_limit + 1
-            cps_to_remove = cp_paths[0:num_to_remove]
-
-            logger.info(
-                f"{len(cp_paths)} checkpoints already exist, removing {len(cps_to_remove)} checkpoints"
-            )
-            logger.info(f"removing checkpoints: {', '.join(map(str, cps_to_remove))}")
-
-            for cp_path in cps_to_remove:
-                cp_path = output_dir / cp_path
-                shutil.rmtree(cp_path)
-
-    cp_path = os.path.join(output_dir, f"checkpoint-{train_state.global_step}")
-    accelerator.save_state(cp_path)
-    logger.info(f"Saved state to {cp_path}")
-
-
-def resume_from_checkpoint(accelerator, train_state: TrainState):
-    if train_state.resume_from_checkpoint:
-
-        if train_state.resume_from_checkpoint == "latest":
-            # Get the most recent checkpoint
-            cp_paths = find_checkpoint_paths(
-                Path(train_state.output_dir, train_state.job_id)
-            )
-
-            if len(cp_paths) == 0:
-                accelerator.print(
-                    f"Checkpoint '{train_state.resume_from_checkpoint}' does not exist. Starting a new training run."
-                )
-                return
-
-            path = cp_paths[-1]
-
-        else:
-            path = os.path.basename(train_state.resume_from_checkpoint)
-
-        accelerator.print(f"Resuming from checkpoint {path}")
-        accelerator.load_state(Path(train_state.output_dir, train_state.job_id, path))
-
-        train_state.global_step = int(path.split("-")[-1])
-        train_state.epoch = (
-            train_state.global_step // train_state.num_update_steps_per_epoch
-        )
-
-    else:
-        train_state.global_step = 0
-
-
 def prepare_models(train_state: TrainState, device):
     # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
 
     weights_dtype = DTYPE_CONVERSION[train_state.weights_dtype]
-    vae_dtype = DTYPE_CONVERSION[train_state.vae_dtype]
+    vae_dtype = (
+        DTYPE_CONVERSION[train_state.vae_dtype]
+        if train_state.vae_dtype
+        else weights_dtype
+    )
 
     models = {}
     models["noise_scheduler"] = DDPMScheduler.from_pretrained(
@@ -1980,7 +1984,7 @@ def main(args: Namespace) -> None:
     logger.info(f"  Total optimization steps = {train_state.max_train_steps}")
     logger.info(f"Configuration: {train_state}")
 
-    if train_state.resume_from_checkpoint:
+    if train_state.checkpoint_path:
         resume_from_checkpoint(accelerator, train_state)
 
     progress_bar = tqdm.tqdm(
