@@ -9,6 +9,7 @@ import logging
 import re
 import itertools as it
 import typing
+from copy import deepcopy
 
 import torch
 from torch import FloatTensor, nn, Tensor
@@ -31,7 +32,7 @@ from diffusers.schedulers import KarrasDiffusionSchedulers
 
 from diffusers import StableDiffusionImg2ImgPipeline
 from diffusers.image_processor import VaeImageProcessor
-from peft
+from peft import LoraConfig, get_peft_model
 
 
 import torchvision
@@ -349,9 +350,29 @@ class DiffusionModelConfig(InstantiateConfig):
 
     losses: Tuple[str, ...] = ("mse",)
 
-    lora_ranks: Dict[str, int] = field(
-        default_factory=lambda: {"unet": 4, "controlnet": 4, "textencoder": 4}
+    lora_base_ranks: Dict[str, int] = field(
+        default_factory=lambda: {"unet": 4, "controlnet": 4, "text_encoder": 4}
     )
+
+    lora_rank_mults: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "unet": {
+                "downblocks": {"attn": 1, "resnet": 1},
+                "midblocks": {"attn": 1, "resnet": 1},
+                "upblocks": {"attn": 1, "resnet": 1},
+            },
+            "controlnet": {
+                "downblocks": {"attn": 1, "resnet": 1},
+                "midblocks": {"attn": 1, "resnet": 1},
+                "upblocks": {"attn": 1, "resnet": 1},
+            },
+            "text_encoder": {},
+        }
+    )
+
+    use_dora: bool = True
+
+    lora_model_prefix: str = "lora_"
 
     conditioning_signals: Tuple[str, ...] = ()
     """ The name of the conditioning signals used for the controlnet.
@@ -982,14 +1003,38 @@ class StableDiffusionModel(DiffusionModel):
     def add_adapter(
         self,
         model_name,
-        adapter: LoraConfig
+        adapter_config: Optional[LoraConfig] = None,
+        copy_model: bool = True,
     ):
         if not model_name in self.config.models_to_train_lora:
-            raise ValueError(f"Cannot add adapter for {model_name} - model not in list of trainable models: {self.config.models_to_train_lora}")
+            raise ValueError(
+                f"Cannot add adapter for {model_name} - model not in list of trainable models: {self.config.models_to_train_lora}"
+            )
 
         model = getattr(self, model_name)
-        adapter = self.config.
+        if adapter_config is None:
+            model_target_ranks = self.config.lora_rank_mults[model_name]
+            model_ranks = parse_target_ranks(model_target_ranks)
 
+            base_rank = self.config.lora_base_ranks[model_name]
+            target_ranks = {k: v * base_rank for k, v in model_ranks.items()}
+
+            adapter_config = LoraConfig(
+                r=base_rank,
+                lora_alpha=base_rank,
+                init_lora_weights="gaussian",
+                use_dora=self.config.use_dora,
+                rank_pattern=target_ranks,
+                target_modules="|".join(target_ranks.keys()),
+            )
+
+        if copy_model:
+            model = deepcopy(model)
+
+        model = get_peft_model(
+            model, adapter_config, self.config.lora_model_prefix + model_name
+        )
+        setattr(self, model_name, model)
 
     def get_diffusion_output(
         self,
@@ -1461,7 +1506,7 @@ def parse_target_ranks(target_ranks, prefix=r""):
 
             case "attn":
                 assert isinstance(item, int)
-                parsed_targets[f"{prefix}.*attn.*to_[kvq]"] = item
+                parsed_targets[rf"{prefix}.*attn.*to_[kvq]"] = item
                 parsed_targets[rf"{prefix}.*attn.*to_out\.0"] = item
 
             case "resnet":

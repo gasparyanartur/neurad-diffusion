@@ -104,6 +104,8 @@ from nerfstudio.model_components.ray_generators import RayGenerator
 check_min_version("0.27.0")
 logger = get_logger(__name__, log_level="INFO")
 
+LORA_MODEL_PREFIX = "lora_"
+
 
 @dataclass(init=True)
 class TrainState:
@@ -190,8 +192,9 @@ class TrainState:
         }
     )
     lora_peft_type: str = (  # CURRENTLY NOT IN USE
-        "LORA"  # LORA, LOHA, or LOKR. LOKR seems best for this task https://arxiv.org/pdf/2309.14859
+        "LORA"  # LORA, LOHA, or LOKR. LOKR seems best for this task https://arxiv.org/pdf/2309.14859, maybe DoRA better than all idk
     )
+    lora_model_prefix: str = "lora_"
 
     conditioning_signals: List[str] = field(default_factory=lambda: [])
     conditioning_signal_infos: List[ConditioningSignalInfo] = field(
@@ -599,14 +602,18 @@ def load_model_hook(
 
     weights_dir = input_dir / "weights"
     for model_dir in weights_dir.iterdir():
-        model_name = (
-            model_dir.name
-        )  # Assuming adapter name is same as model name (i.e. unet, text_encoder, controlnet)
+        model_name = model_dir.name
+
+        # Assuming adapter name is same as model name prefixed with lora_ (i.e. lora_unet, lora_text_encoder, lora_controlnet)
+        if not model_name.startswith(LORA_MODEL_PREFIX):
+            continue
+
+        model_name = model_name[len(LORA_MODEL_PREFIX) :]
+
         if model_name not in loaded_models_dict:
             logger.warning(
                 f"Found weights {model_name} in weight directory, but model not found in {train_state.trainable_models}. Skipping"
             )
-
         model = loaded_models_dict[model_name]
         loaded_models_dict[model_name] = PeftModel.from_pretrained(
             model, str(model_dir)
