@@ -115,19 +115,6 @@ class TrainState:
     cache_dir: Optional[str] = None
     datasets: Dict[str, Any] = field(default_factory=dict)
 
-    model_type: str = DiffusionModelType.sd
-    model_id: str = DiffusionModelId.sd_v2_1
-
-    # Path to pretrained VAE model with better numerical stability.
-    # More details: https://github.com/huggingface/diffusers/pull/4038.
-    # vae_id: str = "madebyollin/sdxl-vae-fp16-fix"
-    vae_id: Optional[str] = None
-
-    weights_dtype: str = "fp32"
-    vae_dtype: Optional[str] = "fp32"
-
-    revision: Optional[str] = "main"
-    variant: Optional[str] = None
     prediction_type: Optional[str] = None
 
     enable_gradient_checkpointing: bool = False
@@ -143,14 +130,6 @@ class TrainState:
     max_train_samples: Optional[int] = None
     val_freq: int = 10
     frac_dataset_per_epoch: float = 1.0
-
-    train_noise_strength: float = 0.5
-    train_noise_num_steps: Optional[int] = None
-    val_noise_num_steps: int = 30
-    val_noise_strength: float = 0.25
-    use_cached_tokens: bool = True
-
-    keep_vae_full: bool = False
 
     # https://www.crosslabs.org//blog/diffusion-with-offset-noise
     noise_offset: float = 0
@@ -172,31 +151,6 @@ class TrainState:
     snr_gamma: Optional[float] = None
     max_grad_norm: float = 1.0
 
-    lora_rank_linear: int = 4
-    lora_rank_conv2d: int = 4
-    use_dora: bool = False
-
-    control_lora_rank_linear: int = 4
-    control_lora_rank_conv2d: int = 4
-    lora_target_ranks: Dict[str, Any] = field(
-        default_factory=lambda: {
-            "unet": {
-                "downblocks": {"attn": 8, "resnet": 8, "ff": 4, "proj": 4},
-                "midblocks": {"attn": 8, "resnet": 8, "ff": 4, "proj": 4},
-                "upblocks": {"attn": 8, "resnet": 8, "ff": 4, "proj": 4},
-            },
-            "controlnet": {
-                "downblocks": {"attn": 8, "resnet": 8, "ff": 16, "proj": 16},
-                "midblocks": {"attn": 8, "resnet": 8, "ff": 16, "proj": 16},
-            },  # ControlNet not implemented atm, refer to `control_lora_rank_linear` and `control_lora_rank_conv2d`
-        }
-    )
-    lora_peft_type: str = (  # CURRENTLY NOT IN USE
-        "LORA"  # LORA, LOHA, or LOKR. LOKR seems best for this task https://arxiv.org/pdf/2309.14859, maybe DoRA better than all idk
-    )
-    lora_model_prefix: str = "lora_"
-
-    conditioning_signals: List[str] = field(default_factory=lambda: [])
     conditioning_signal_infos: List[ConditioningSignalInfo] = field(
         default_factory=lambda: []
     )
@@ -229,8 +183,6 @@ class TrainState:
     crop_width: float = 512
     resize_factor: float = 1.0
 
-    trainable_models: List[str] = field(default_factory=list)
-
     loggers: List[str] = field(default_factory=list)
     wandb_project: str = "ImagineDriving"
     wandb_entity: str = "arturruiqi"
@@ -247,6 +199,27 @@ class TrainState:
     use_noise_augment: bool = True
 
     seed: Optional[int] = None
+
+    model_type: str = DiffusionModelType.sd
+    model_id: str = DiffusionModelId.sd_v2_1
+    revision: Optional[str] = "main"
+    variant: Optional[str] = None
+    dtype: str = "fp32"
+
+    train_noise_strength: float = 0.5
+    train_noise_num_steps: Optional[int] = None
+    val_noise_num_steps: int = 50
+    val_noise_strength: float = 0.25
+    use_cached_tokens: bool = True
+
+    lora_base_ranks: Dict[str, int] = field(
+        default_factory=lambda: {"unet": 4, "controlnet": 4, "text_encoder": 4}
+    )
+    use_dora: bool = False
+    lora_model_prefix: str = "lora_"
+
+    conditioning_signals: List[str] = field(default_factory=lambda: [])
+    models_to_train_lora: List[str] = field(default_factory=list)
 
     def update_values(self, **kwargs):
         for key, value in kwargs.items():
@@ -504,7 +477,9 @@ def save_lora_weights(
     if not accelerator.is_main_process:
         return
 
-    trainable_models = {model: models[model] for model in train_state.trainable_models}
+    trainable_models = {
+        model: models[model] for model in train_state.models_to_train_lora
+    }
     models_to_save: Dict[str, Dict[str, Union[nn.Module, Tensor]]] = {}
     other_models = {}
 
@@ -515,10 +490,12 @@ def save_lora_weights(
         unwrapped_model = unwrap_model(accelerator, loaded_model, unpeft=False)
         models_to_save[model_name] = unwrapped_model
 
-    dst_dir = Path(train_state.output_dir, train_state.job_id, dir_name)
+    dst_dir = Path(
+        cast(str, train_state.output_dir), cast(str, train_state.job_id), dir_name
+    )
     dst_dir.mkdir(exist_ok=True, parents=True)
 
-    for model_name, model in layers_to_save.items():
+    for model_name, model in models_to_save.items():
         if not isinstance(model, PeftModel):
             raise ValueError(
                 f"Attempted to save model of type {type(model)}, which is not a PeftModel"
@@ -620,11 +597,11 @@ def load_model_hook(
         )
 
     # Make sure the trainable params are in float32.
-    if train_state.weights_dtype in LOWER_DTYPES:
+    if train_state.dtype in LOWER_DTYPES:
         models_to_cast = [
             loaded_model
             for model_name, loaded_model in loaded_models_dict.items()
-            if model_name in train_state.trainable_models
+            if model_name in train_state.models_to_train_lora
         ]
         cast_training_params(models_to_cast, dtype=torch.float32)
 
@@ -927,11 +904,9 @@ def prepare_models(train_state: TrainState, device):
     # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
 
-    weights_dtype = DTYPE_CONVERSION[train_state.weights_dtype]
+    weights_dtype = DTYPE_CONVERSION[train_state.dtype]
     vae_dtype = (
-        DTYPE_CONVERSION[train_state.vae_dtype]
-        if train_state.vae_dtype
-        else weights_dtype
+        DTYPE_CONVERSION[train_state.dtype] if train_state.dtype else weights_dtype
     )
 
     models = {}
@@ -953,18 +928,11 @@ def prepare_models(train_state: TrainState, device):
         revision=train_state.revision,
         variant=train_state.variant,
     )
-    models["vae"] = (
-        AutoencoderKL.from_pretrained(train_state.vae_id, subfolder=None)
-        if (
-            train_state.vae_id
-            # Need VAE fix for stable diffusion XL, see https://github.com/huggingface/diffusers/pull/4038
-        )
-        else AutoencoderKL.from_pretrained(
-            train_state.model_id,
-            subfolder="vae",
-            revision=train_state.revision,
-            variant=train_state.variant,
-        )
+    models["vae"] = AutoencoderKL.from_pretrained(
+        train_state.model_id,
+        subfolder="vae",
+        revision=train_state.revision,
+        variant=train_state.variant,
     )
     models["unet"] = UNet2DConditionModel.from_pretrained(
         train_state.model_id,
@@ -976,6 +944,7 @@ def prepare_models(train_state: TrainState, device):
     models["image_processor"] = VaeImageProcessor()
 
     if train_state.model_type == "cn":
+        raise NotImplementedError
         models["controlnet"] = ControlLoRAModel.from_unet(
             unet=models["unet"],
             conditioning_channels=sum(

@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import warnings
 from typing import Union, Optional, Tuple, Dict, Iterable, Any, List
 from functools import lru_cache
 from collections.abc import Iterable
@@ -12,7 +11,7 @@ import typing
 from copy import deepcopy
 
 import torch
-from torch import FloatTensor, nn, Tensor
+from torch import nn, Tensor
 
 from diffusers import (
     StableDiffusionImg2ImgPipeline,
@@ -21,18 +20,15 @@ from diffusers import (
     AutoencoderKL,
     DDPMScheduler,
 )
+from diffusers.training_utils import cast_training_params
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import (
     retrieve_latents,
 )
 from diffusers.image_processor import VaeImageProcessor
-from diffusers.models.controlnet import (
-    ControlNetModel,
-)
-from diffusers.schedulers import KarrasDiffusionSchedulers
 
 from diffusers import StableDiffusionImg2ImgPipeline
 from diffusers.image_processor import VaeImageProcessor
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, PeftModel
 
 
 import torchvision
@@ -40,7 +36,6 @@ import torchvision
 from nerfstudio.configs.base_config import InstantiateConfig
 
 torchvision.disable_beta_transforms_warning()
-from torchvision.transforms import v2 as transform
 from torchmetrics.image import PeakSignalNoiseRatio
 
 from transformers import (
@@ -52,23 +47,16 @@ from transformers import (
 from transformers import AutoTokenizer
 
 from transformers import (
-    CLIPImageProcessor,
     CLIPTextModel,
     CLIPTokenizer,
-    CLIPVisionModelWithProjection,
 )
 
-from nerfstudio.generative.control_lora import ControlLoRAModel
 from nerfstudio.generative.utils import (
     get_device,
-    validate_same_len,
     batch_if_not_iterable,
 )
 from nerfstudio.generative.dynamic_dataset import (
     ConditioningSignalInfo,
-    save_image,
-    DynamicDataset,
-    DATA_SUFFIXES,
 )
 
 
@@ -107,8 +95,6 @@ class DiffusionModelId:
 
 @dataclass
 class DiffusionModelType:
-    hfsd: str = "hfsd"
-    hfcn: str = "hfcn"
     sd: str = "sd"
     cn: str = "cn"
     mock: str = "mock"
@@ -422,8 +408,6 @@ class DiffusionModel(ABC):
     ) -> "DiffusionModel":
         pipe_models = pipe_models or {}
         model_type_to_constructor = {
-            DiffusionModelType.hfsd: HFStableDiffusionModel,
-            DiffusionModelType.hfcn: HFControlNetDiffusionModel,
             DiffusionModelType.sd: StableDiffusionModel,
             DiffusionModelType.cn: ControlNetDiffusionModel,
             DiffusionModelType.mock: MockDiffusionModel,
@@ -470,325 +454,6 @@ class MockDiffusionModel(DiffusionModel):
 
         if len(image.shape) == 3:
             image = image[None, ...]
-
-        return {"rgb": image}
-
-    def get_diffusion_metrics(
-        self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        # Currently only handles RGB case, assumes all metrics take in an RGB image.
-        rgb_pred = batch_pred["rgb"]
-        rgb_gt = batch_gt["rgb"]
-
-        return {
-            metric_name: metric(rgb_pred, rgb_gt)
-            for metric_name, metric in self.diffusion_metrics.items()
-        }
-
-    def get_diffusion_losses(
-        self,
-        batch_pred: Dict[str, Any],
-        batch_gt: Dict[str, Any],
-        metrics_dict: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        # Currently only handles RGB case, assumes all metrics take in an RGB image.
-        rgb_pred = batch_pred["rgb"]
-        rgb_gt = batch_gt["rgb"]
-
-        loss_dict = {}
-        for loss_name, loss in self.diffusion_losses.items():
-            if loss_name in metrics_dict:
-                loss_dict[loss_name] = metrics_dict[loss_name]
-                continue
-
-            loss_dict[loss_name] = loss(rgb_pred, rgb_gt)
-
-        return loss_dict
-
-
-class HFStableDiffusionModel(DiffusionModel):
-    def __init__(
-        self,
-        config: DiffusionModelConfig,
-        device: torch.device = get_device(),
-        use_safetensors: bool = True,
-        variant: Optional[str] = None,
-        pipe_models: Optional[Dict[str, Any]] = None,
-        verbose: bool = True,
-        **kwargs,
-    ) -> None:
-        super().__init__()
-        pipe_models = pipe_models or {}
-
-        self.config = config
-        self.device = device
-
-        self.pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
-            config.model_id,
-            torch_dtype=DTYPE_CONVERSION[config.dtype],
-            variant=variant,
-            use_safetensors=use_safetensors,
-            **pipe_models,
-        )
-
-        self.pipe = prep_hf_pipe(
-            self.pipe,
-            device=device,
-            low_mem_mode=config.low_mem_mode,
-            compile=config.compile_model,
-            num_inference_steps=config.num_inference_steps,
-        )
-
-        if (
-            config.lora_weights
-            and config.lora_weights != ""
-            and config.lora_weights != "_"
-        ):
-            self.pipe.load_lora_weights(config.lora_weights)
-
-        if verbose and kwargs:
-            logging.info(f"Ignoring unrecognized kwargs: {kwargs.keys()}")
-
-        self.diffusion_metrics = {
-            metric_name: _make_metric(metric_name, device)
-            for metric_name in config.metrics
-        }
-        self.diffusion_losses = {
-            loss_name: _make_metric(loss_name, device) for loss_name in config.losses
-        }
-
-    def get_diffusion_output(
-        self,
-        sample: Dict[str, Any],
-        pipeline_kwargs: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ):
-        """Denoise image with diffusion model.
-
-        Interesting kwargs:
-        - image
-        - generator
-        - output_type
-        - strength
-        - num_inference_steps
-        - prompt_embeds
-        - negative_prompt_embeds
-
-        - denoising_start (sdxl)
-        - denoising_end (sdxl)
-        - original_size (sdxl)
-        - target_size (sdxl)
-        """
-        pipeline_kwargs = pipeline_kwargs or {}
-        pipeline_kwargs["image"] = sample["rgb"]
-        pipeline_kwargs["output_type"] = pipeline_kwargs.get("output_type", "pt")
-        pipeline_kwargs["strength"] = pipeline_kwargs.get(
-            "strength", self.config.noise_strength
-        )
-        pipeline_kwargs["num_inference_steps"] = pipeline_kwargs.get(
-            "num_inference_steps", self.config.num_inference_steps
-        )
-
-        channel_first, batch_size = _prepare_image(pipeline_kwargs)
-        _prepare_generator(pipeline_kwargs, batch_size)
-        _prepare_prompt(
-            pipeline_kwargs, self.pipe.tokenizer, self.pipe.text_encoder, batch_size
-        )
-
-        image = self.pipe(
-            **pipeline_kwargs,
-        ).images
-
-        if isinstance(image, list):
-            image = torch.stack(image)
-
-        if not channel_first:
-            image = image.permute(0, 2, 3, 1)
-
-        return {"rgb": image}
-
-    def get_diffusion_metrics(
-        self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        # Currently only handles RGB case, assumes all metrics take in an RGB image.
-        rgb_pred = batch_pred["rgb"]
-        rgb_gt = batch_gt["rgb"]
-
-        return {
-            metric_name: metric(rgb_pred, rgb_gt)
-            for metric_name, metric in self.diffusion_metrics.items()
-        }
-
-    def get_diffusion_losses(
-        self,
-        batch_pred: Dict[str, Any],
-        batch_gt: Dict[str, Any],
-        metrics_dict: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        # Currently only handles RGB case, assumes all metrics take in an RGB image.
-        rgb_pred = batch_pred["rgb"]
-        rgb_gt = batch_gt["rgb"]
-
-        loss_dict = {}
-        for loss_name, loss in self.diffusion_losses.items():
-            if loss_name in metrics_dict:
-                loss_dict[loss_name] = metrics_dict[loss_name]
-                continue
-
-            loss_dict[loss_name] = loss(rgb_pred, rgb_gt)
-
-        return loss_dict
-
-
-class HFControlNetDiffusionModel(DiffusionModel):
-    def __init__(
-        self,
-        config: DiffusionModelConfig,
-        device: torch.device = get_device(),
-        use_safetensors: bool = True,
-        variant: Optional[str] = None,
-        revision: Optional[str] = None,
-        pipe_models: dict[str, Any] = None,
-        verbose: bool = True,
-        **kwargs,
-    ) -> None:
-        super().__init__()
-        pipe_models = pipe_models or {}
-
-        self.config = config
-        self.device = device
-
-        self.conditioning_signal_infos = typing.cast(
-            List[ConditioningSignalInfo],
-            list(
-                filter(
-                    lambda s: s,
-                    map(
-                        ConditioningSignalInfo.from_signal_name,
-                        self.config.conditioning_signals,
-                    ),
-                )
-            ),
-        )
-
-        self.num_conditioning_channels = sum(
-            signal.num_channels for signal in self.conditioning_signal_infos
-        )
-
-        pipe_models["unet"] = UNet2DConditionModel.from_pretrained(
-            config.model_id,
-            subfolder="unet",
-            revision=revision,
-            variant=variant,
-            torch_dtype=DTYPE_CONVERSION[config.dtype],
-            device=device,
-            use_safetensors=use_safetensors,
-        )
-
-        pipe_models["vae"] = AutoencoderKL.from_pretrained(
-            config.model_id,
-            subfolder="vae",
-            revision=revision,
-            variant=variant,
-            torch_dtype=DTYPE_CONVERSION[config.dtype],
-            device=device,
-            use_safetensors=use_safetensors,
-        )
-
-        if config.controlnet_weights and Path(config.controlnet_weights).exists():
-            pipe_models["controlnet"] = ControlLoRAModel.from_pretrained(
-                config.controlnet_weights,
-                torch_dtype=DTYPE_CONVERSION[config.dtype],
-                device=device,
-                use_safetensors=use_safetensors,
-            )
-            pipe_models["controlnet"].tie_weights(pipe_models["unet"])
-            pipe_models["controlnet"].bind_vae(pipe_models["vae"])
-
-        else:
-            logging.warning(
-                f"Could not find controlnet weights. The pipeline will be loaded without them, which is the same as regular StableDiffusion. This behavior is unstable nad might crash during inference."
-            )
-
-        self.pipe = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(
-            config.model_id,
-            torch_dtype=DTYPE_CONVERSION[config.dtype],
-            variant=variant,
-            use_safetensors=use_safetensors,
-            **pipe_models,
-        )
-
-        self.pipe = prep_hf_pipe(
-            self.pipe,
-            low_mem_mode=config.low_mem_mode,
-            device=device,
-            compile=config.compile_model,
-            num_inference_steps=config.num_inference_steps,
-        )
-
-        if config.lora_weights:
-            self.pipe.load_lora_weights(config.lora_weights)
-
-        if verbose and kwargs:
-            logging.info(f"Ignoring unrecognized kwargs: {kwargs.keys()}")
-
-        self.diffusion_metrics = {
-            metric_name: _make_metric(metric_name, device)
-            for metric_name in config.metrics
-        }
-        self.diffusion_losses = {
-            loss_name: _make_metric(loss_name, device) for loss_name in config.losses
-        }
-
-    def get_diffusion_output(
-        self,
-        sample: Dict[str, Any],
-        pipeline_kwargs: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ):
-        """Denoise image with diffusion model.
-
-        Interesting kwargs:
-        - image
-        - generator
-        - output_type
-        - strength
-        - num_inference_steps
-        - prompt_embeds
-        - negative_prompt_embeds
-
-        - denoising_start (sdxl)
-        - denoising_end (sdxl)
-        - original_size (sdxl)
-        - target_size (sdxl)
-        """
-        pipeline_kwargs = pipeline_kwargs or {}
-        pipeline_kwargs["image"] = sample["rgb"]
-        pipeline_kwargs["output_type"] = pipeline_kwargs.get("output_type", "pt")
-        pipeline_kwargs["strength"] = pipeline_kwargs.get(
-            "strength", self.config.noise_strength
-        )
-        pipeline_kwargs["num_inference_steps"] = pipeline_kwargs.get(
-            "num_inference_steps", self.config.num_inference_steps
-        )
-
-        channel_first, batch_size = _prepare_image(pipeline_kwargs)
-
-        _prepare_conditioning(pipeline_kwargs, sample, self.conditioning_signal_infos)
-        _prepare_generator(pipeline_kwargs, batch_size)
-        _prepare_prompt(
-            pipeline_kwargs, self.pipe.tokenizer, self.pipe.text_encoder, batch_size
-        )
-
-        image = self.pipe(
-            **pipeline_kwargs,
-        ).images
-
-        if isinstance(image, list):
-            image = torch.stack(image)
-
-        if not channel_first:
-            image = image.permute(0, 2, 3, 1)
 
         return {"rgb": image}
 
@@ -895,10 +560,10 @@ class StableDiffusionModel(DiffusionModel):
 
         dtype = DTYPE_CONVERSION[config.dtype]
 
-        self.unet = (
-            pipe_models["unet"]
-            if "unet" in pipe_models
-            else UNet2DConditionModel.from_pretrained(
+        self.pipe_models = pipe_models
+
+        if "unet" not in self.pipe_models:
+            pipe_models["unet"] = UNet2DConditionModel.from_pretrained(
                 config.model_id,
                 subfolder="unet",
                 revision=revision,
@@ -906,88 +571,60 @@ class StableDiffusionModel(DiffusionModel):
                 use_safetensors=use_safetensors,
                 torch_dtype=dtype,
             )
-        )
 
-        self.tokenizer = typing.cast(
-            CLIPTokenizer,
-            (
-                pipe_models["tokenizer"]
-                if "tokenizer" in pipe_models
-                else AutoTokenizer.from_pretrained(
-                    config.model_id,
-                    subfolder="tokenizer",
-                    revision=revision,
-                    variant=variant,
-                    use_fast=False,
-                    use_safetensors=True,
-                    torch_dtype=dtype,
-                )
-            ),
-        )
-
-        self.img_processor = (
-            pipe_models["img_processor"]
-            if "img_processor" in pipe_models
-            else VaeImageProcessor()
-        )
-
-        self.noise_scheduler = typing.cast(
-            DDPMScheduler,
-            (
-                pipe_models["noise_scheduler"]
-                if "noise_scheduler" in pipe_models
-                else DDPMScheduler.from_pretrained(
-                    config.model_id,
-                    subfolder="scheduler",
-                    variant=variant,
-                    revision=revision,
-                    use_safetensors=use_safetensors,
-                    torch_dtype=dtype,
-                )
-            ),
-        )
-
-        self.text_encoder = typing.cast(
-            CLIPTextModel,
-            (
-                pipe_models["text_encoder"]
-                if "text_encoder" in pipe_models
-                else import_encoder(
-                    config.model_id,
-                    revision,
-                    "text_encoder",
-                    variant,
-                    use_safetensors=use_safetensors,
-                    torch_dtype=dtype,
-                )
-            ),
-        )
-
-        self.vae = (
-            pipe_models["vae"]
-            if "vae" in pipe_models
-            else typing.cast(
-                AutoencoderKL,
-                AutoencoderKL.from_pretrained(
-                    config.model_id,
-                    subfolder="vae",
-                    revision=revision,
-                    variant=variant,
-                    use_safetensors=use_safetensors,
-                    torch_dtype=dtype,
-                ),
+        if "tokenizer" not in self.pipe_models:
+            pipe_models["tokenizer"] = AutoTokenizer.from_pretrained(
+                config.model_id,
+                subfolder="tokenizer",
+                revision=revision,
+                variant=variant,
+                use_fast=False,
+                use_safetensors=True,
+                torch_dtype=dtype,
             )
-        )
+
+        if "img_processor" not in pipe_models:
+            pipe_models["img_processor"] = VaeImageProcessor()
+
+        if "noise_scheduler" not in pipe_models:
+            pipe_models["noise_scheduler"] = DDPMScheduler.from_pretrained(
+                config.model_id,
+                subfolder="scheduler",
+                variant=variant,
+                revision=revision,
+                use_safetensors=use_safetensors,
+                torch_dtype=dtype,
+            )
+
+        if "text_encoder" not in pipe_models:
+            pipe_models["text_encoder"] = import_encoder(
+                config.model_id,
+                revision,
+                "text_encoder",
+                variant,
+                use_safetensors=use_safetensors,
+                torch_dtype=dtype,
+            )
+
+        if "vae" not in pipe_models:
+            pipe_models["vae"] = AutoencoderKL.from_pretrained(
+                config.model_id,
+                subfolder="vae",
+                revision=revision,
+                variant=variant,
+                use_safetensors=use_safetensors,
+                torch_dtype=dtype,
+            )
 
         self.requires_grad = requires_grad
 
-        self.vae.requires_grad_(requires_grad)
+        self.vae.requires_grad_(False)
         self.vae.to(device=device, dtype=dtype)
 
-        self.unet.requires_grad_(requires_grad)
+        self.unet.requires_grad_(False)
         self.unet.to(device=device, dtype=dtype)
 
-        self.text_encoder.requires_grad_(requires_grad)
+        self.text_encoder.requires_grad_(False)
         self.text_encoder.to(device=device, dtype=dtype)
 
         self.do_classifier_free_guidance = do_classifier_free_guidance
@@ -1000,12 +637,78 @@ class StableDiffusionModel(DiffusionModel):
             loss_name: _make_metric(loss_name, device) for loss_name in config.losses
         }
 
+        if self.config.models_to_load_lora:
+            for model in self.config.models_to_load_lora:
+                self.load_adapter(model, copy_model=True)
+
+        if self.config.models_to_train_lora:
+            for model in self.config.models_to_train_lora:
+                self.add_adapter(model, copy_model=True)
+
+            cast_training_params(
+                [
+                    self.pipe_models[model_name]
+                    for model_name in self.config.models_to_train_lora
+                ],
+                dtype=torch.float32,
+            )
+
+    @property
+    def unet(self):
+        return self.pipe_models["unet"]
+
+    @property
+    def vae(self):
+        return self.pipe_models["vae"]
+
+    @property
+    def text_encoder(self):
+        return self.pipe_models["text_encoder"]
+
+    @property
+    def noise_scheduler(self):
+        return self.pipe_models["noise_scheduler"]
+
+    @property
+    def tokenizer(self):
+        return self.pipe_models["tokenizer"]
+
+    @property
+    def img_processor(self):
+        return self.pipe_models["img_processor"]
+
+    def load_adapter(self, model_name: str, copy_model: bool = True):
+        # TODO: Test this
+
+        if not self.config.lora_weights:
+            raise ValueError(
+                f"Cannot load adapter for {model_name} - not specify a path in `config.lora_weights`."
+            )
+
+        if not model_name in self.config.models_to_load_lora:
+            raise ValueError(
+                f"Cannot load adapter for {model_name} - model not in list of lora models: {self.config.models_to_load_lora}."
+            )
+
+        lora_path = Path(self.config.lora_weights)
+        model_path = lora_path / (self.config.lora_model_prefix + model_name)
+
+        model = getattr(self, model_name)
+
+        if copy_model:
+            model = deepcopy(model)
+
+        model = PeftModel.from_pretrained(model, model_path)
+        setattr(self, model_name, model)
+
     def add_adapter(
         self,
-        model_name,
+        model_name: str,
         adapter_config: Optional[LoraConfig] = None,
         copy_model: bool = True,
     ):
+        # TODO: Test this
+
         if not model_name in self.config.models_to_train_lora:
             raise ValueError(
                 f"Cannot add adapter for {model_name} - model not in list of trainable models: {self.config.models_to_train_lora}"
@@ -1425,43 +1128,6 @@ def get_timesteps(
         noise_scheduler.set_begin_index(t_start * noise_scheduler.order)
 
     return timesteps, num_inference_steps - t_start
-
-
-def get_ordered_timesteps(
-    noise_strength: float,
-    device: Union[torch.device, str],
-    total_num_timesteps: int = 1000,
-    num_timesteps: Optional[int] = None,
-    sample_from_bins: bool = True,
-    low_noise_high_step: bool = False,
-):
-    warnings.warn(
-        "Using deprecated `get_ordered_timesteps`, use `get_timesteps` instead"
-    )
-    if num_timesteps is None:
-        num_timesteps = total_num_timesteps
-
-    if low_noise_high_step:
-        start_step = int((1 - noise_strength) * total_num_timesteps) - 1
-        end_step = total_num_timesteps - 1
-    else:
-        start_step = 0
-        end_step = int(noise_strength * total_num_timesteps)
-
-    # start_step = int((1 - noise_strength) * total_num_timesteps)
-    # end_step = total_num_timesteps - 1
-
-    # Make sure the last one is total_num_timesteps-1
-    if sample_from_bins:
-        timesteps = draw_from_bins(
-            start_step, end_step, num_timesteps - 1, include_last=True, device=device
-        )
-    else:
-        timesteps = torch.round(
-            torch.linspace(start_step, end_step, num_timesteps, device=device)
-        ).to(torch.long)
-
-    return timesteps
 
 
 def get_matching(model, patterns: Iterable[Union[re.Pattern, str]] = (".*",)):
