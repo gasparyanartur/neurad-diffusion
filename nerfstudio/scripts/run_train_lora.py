@@ -19,6 +19,7 @@ import functools
 
 import numpy as np
 import torch
+import wandb
 from torch import nn
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
@@ -63,6 +64,7 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.generative.diffusion_model import (
+    StableDiffusionModel,
     import_encoder_class_from_model_name_or_path,
 )
 from nerfstudio.generative.dynamic_dataset import (
@@ -85,7 +87,6 @@ from nerfstudio.generative.diffusion_model import (
     get_noised_img,
     tokenize_prompt,
     encode_tokens,
-    HFStableDiffusionModel,
     DiffusionModelConfig,
     DiffusionModel,
     decode_img,
@@ -221,6 +222,9 @@ class TrainState:
     conditioning_signals: List[str] = field(default_factory=lambda: [])
     models_to_train_lora: List[str] = field(default_factory=list)
 
+    guidance_scale: float = 0
+    do_classifier_free_guidance: bool = True
+
     def update_values(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -238,6 +242,16 @@ def init_job_id(train_state: TrainState) -> None:
     )
     train_state.job_id = "0"
     return
+
+
+def unwrap_model(accelerator: Accelerator, model, unpeft: bool = True):
+    model = accelerator.unwrap_model(model)
+    model = model._orig_mod if is_compiled_module(model) else model
+
+    if unpeft and isinstance(model, PeftModel):
+        model = model.base_model.model
+
+    return model
 
 
 def parse_args():
@@ -260,6 +274,24 @@ def parse_args():
 
     args = parser.parse_args()
     return args
+
+
+def get_diffusion_config_from_train_state(
+    train_state: TrainState, lora_weights_dir: str
+):
+    configs = DiffusionModelConfig(
+        model_type=train_state.model_type,
+        model_id=train_state.model_id,
+        lora_weights=lora_weights_dir,
+        noise_strength=train_state.val_noise_strength,
+        num_inference_steps=train_state.val_noise_num_steps,
+        conditioning_signals=tuple(
+            signal.name for signal in train_state.conditioning_signal_infos
+        ),
+        guidance_scale=train_state.guidance_scale,
+        do_classifier_free_guidance=train_state.do_classifier_free_guidance,
+    )
+    return configs
 
 
 def generate_timestep_weights(args, num_timesteps):
@@ -515,16 +547,20 @@ def save_model_hook(
     if not accelerator.is_main_process:
         return
 
-    layers_to_save = {}
+    peft_models_to_save = {}
     other_models = {}
 
-    for loaded_model in loaded_models:
+    for loaded_accelerator_model in loaded_models:
         # Map the list of loaded_models given by accelerator to keys given in train_state.
         # NOTE: This mapping is done by type, so two objects of the same type will be treated as the same object.
 
         for model_name, model in models.items():
-            if is_model_equal_type(accelerator, loaded_model, model):
-                layers_to_save[model_name] = get_peft_model_state_dict(loaded_model)
+            if is_model_equal_type(accelerator, loaded_accelerator_model, model):
+                peft_models_to_save[model_name] = get_peft_model_state_dict(
+                    model=unwrap_model(
+                        accelerator, loaded_accelerator_model, unpeft=False
+                    )
+                )
                 break
 
         # make sure to pop weight so that corresponding model is not saved again
@@ -535,7 +571,7 @@ def save_model_hook(
     if not dst_dir.exists():
         dst_dir.mkdir(exist_ok=True, parents=True)
 
-    for model_name, model in layers_to_save.items():
+    for model_name, model in peft_models_to_save.items():
         if not isinstance(model, PeftModel):
             raise ValueError(
                 f"Attempted to save model of type {type(model)}, which is not a PeftModel"
@@ -543,16 +579,7 @@ def save_model_hook(
 
         model.save_pretrained(str(dst_dir))
 
-    configs = DiffusionModelConfig(
-        model_type=train_state.model_type,
-        model_id=train_state.model_id,
-        lora_weights=str(dst_dir),
-        noise_strength=train_state.val_noise_strength,
-        num_inference_steps=train_state.val_noise_num_steps,
-        conditioning_signals=tuple(
-            signal.name for signal in train_state.conditioning_signal_infos
-        ),
-    )
+    configs = get_diffusion_config_from_train_state(train_state, str(dst_dir))
     save_yaml(dst_dir / "config.yml", asdict(configs))
 
 
@@ -684,16 +711,6 @@ def find_checkpoint_paths(
     cp_paths = [d for d in path.iterdir() if d.name.startswith(cp_prefix)]
     cp_paths = sorted(cp_paths, key=lambda d: int(d.name.split(cp_delim)[1]))
     return cp_paths
-
-
-def unwrap_model(accelerator: Accelerator, model, unpeft: bool = True):
-    model = accelerator.unwrap_model(model)
-    model = model._orig_mod if is_compiled_module(model) else model
-
-    if unpeft and isinstance(model, PeftModel):
-        model = model.base_model.model
-
-    return model
 
 
 def prepare_rgb_preprocess_steps(
@@ -900,14 +917,11 @@ def get_diffusion_loss(
     return loss
 
 
-def prepare_models(train_state: TrainState, device):
+def prepare_models(
+    train_state: TrainState, device
+) -> Tuple[List, StableDiffusionModel]:
     # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
-
-    weights_dtype = DTYPE_CONVERSION[train_state.dtype]
-    vae_dtype = (
-        DTYPE_CONVERSION[train_state.dtype] if train_state.dtype else weights_dtype
-    )
 
     models = {}
     models["noise_scheduler"] = DDPMScheduler.from_pretrained(
@@ -959,194 +973,97 @@ def prepare_models(train_state: TrainState, device):
     # === Config Lora ===
     # ===================
 
-    for model in train_state.compile_models:
-        models[model] = torch.compile(models[model], backend=train_state.torch_backend)
+    config = get_diffusion_config_from_train_state(train_state, None)
 
-    # We only train the additional adapter LoRA layers
-    if "vae" in models:
-        models["vae"].requires_grad_(False)
-        models["vae"].to(device=device, dtype=vae_dtype)
-
-    if "unet" in models:
-        models["unet"].requires_grad_(False)
-        models["unet"].to(device=device, dtype=weights_dtype)
-
-        if "unet" in train_state.trainable_models:
-            unet_target_ranks = train_state.lora_target_ranks["unet"]
-            unet_ranks = parse_target_ranks(unet_target_ranks)
-
-            models["unet"].add_adapter(
-                LoraConfig(
-                    r=train_state.lora_rank_linear,
-                    lora_alpha=train_state.lora_rank_linear,
-                    init_lora_weights="gaussian",
-                    target_modules="|".join(unet_ranks.keys()),
-                    rank_pattern=unet_ranks,
-                    use_dora=train_state.use_dora,
-                )
-            )
-
-    if "text_encoder" in models:
-        models["text_encoder"].requires_grad_(False)
-        models["text_encoder"].to(device=device, dtype=weights_dtype)
-
-        if "text_encoder" in train_state.trainable_models:
-            raise NotImplementedError
-            # TODO: Update adapters
-            models["text_encoder"].add_adapter(
-                LoraConfig(
-                    r=train_state.lora_rank,
-                    lora_alpha=train_state.lora_rank,
-                    init_lora_weights="gaussian",
-                    target_modules=["q_proj", "k_proj", "v_proj", "out_proj"],
-                )
-            )
-
-    if "controlnet" in models:
-        if "controlnet" in train_state.trainable_models:
-            models["controlnet"].train()
-
-        if "vae" in models:
-            models["controlnet"].bind_vae(models["vae"])
-        else:
-            logger.warning(
-                f"Could not find a VAE in models to bind with ControlNet. Current models: {models.keys()}"
-            )
-
-        models["controlnet"].to(device=device, dtype=weights_dtype)
+    # models get modified in the StableDiffusionModel init function, loading LoRA and other stuff
+    diffusion_model = StableDiffusionModel(
+        config, device=device, pipe_models=models, requires_grad=False
+    )
 
     # Sanity check
-    for model_name in train_state.trainable_models:
+    for model_name in train_state.models_to_train_lora:
         if not model_name in models:
             raise ValueError(f"Found trainable model {model_name} not in models")
 
-    if train_state.enable_gradient_checkpointing:
-        for model_name in train_state.trainable_models:
+        if train_state.enable_gradient_checkpointing:
             models[model_name].enable_gradient_checkpointing()
 
-    # Make sure the trainable params are in float32.
-    cast_training_params(
-        [models[model_name] for model_name in train_state.trainable_models],
-        dtype=torch.float32,
-    )
+    return models, diffusion_model
 
-    return models
+
+def get_conditioning_signals(batch, train_state):
+    signals = {}
+    for conditioning in train_state.conditioning_signal_infos:
+        signal_name = conditioning.name
+
+        if signal_name in batch:
+            signal_value = batch[signal_name]
+
+        else:
+            for name, value in batch.items():
+                if (
+                    signal := ConditioningSignalInfo.from_signal_name(name)
+                ) and signal.cn_type == conditioning.cn_type:
+                    signal_value = value
+            else:
+                raise ValueError(
+                    f"Failed to match conditioning signal {conditioning} with data {batch.keys()}"
+                )
+
+        signals[signal_name] = signal_value
+
+    return signals
+
+
+def get_diffusion_output_from_batch(
+    train_state, step, batch, sd_model, device, models, rgb=None
+):
+    if rgb is None:
+        rgb = batch["rgb"].to(dtype=sd_model.dtype, device=device)
+
+    diffusion_inputs = {}
+    diffusion_inputs["rgb"] = rgb
+    batch_size = len(rgb)
+    random_seeds = np.arange(batch_size * step, batch_size * (step + 1))
+
+    if "controlnet" in models:
+        diffusion_inputs.update(get_conditioning_signals(diffusion_inputs, train_state))
+
+    diffusion_inputs["generator"] = [
+        torch.Generator(device=device).manual_seed(int(seed)) for seed in random_seeds
+    ]
+
+    if "input_ids" in batch:
+        diffusion_inputs["prompt_embeds"] = encode_tokens(
+            models["text_encoder"],
+            batch["input_ids"].to(device=device),
+            use_cache=True,
+        )
+
+    return sd_model.get_diffusion_output(
+        diffusion_inputs,
+        strength=train_state.val_noise_strength,
+        num_inference_steps=train_state.val_noise_num_steps,
+    )
 
 
 @torch.no_grad()
-def validate_model(
-    accelerator,
-    train_state: TrainState,
-    dataloader: torch.utils.data.DataLoader,
-    vis_dataloader: torch.utils.data.DataLoader,
-    ref_dataloader: torch.utils.data.DataLoader,
-    models,
-    metrics: Dict[str, Any],
-    run_prefix: str,
-) -> None:
-    assert "noise_scheduler" in models and "unet" in models
-
-    using_wandb = any(tracker.name == "wandb" for tracker in accelerator.trackers)
-    if using_wandb:
-        import wandb
-
-    weights_dtype = DTYPE_CONVERSION[train_state.weights_dtype]
-    vae_dtype = DTYPE_CONVERSION[train_state.vae_dtype]
-
-    # No need for LoRA configs, since we will pass in predefined models anyways
-    diffusion_config = DiffusionModelConfig(
-        model_type=train_state.model_type,
-        model_id=train_state.model_id,
-        noise_strength=train_state.val_noise_strength,
-        num_inference_steps=train_state.val_noise_num_steps,
-        conditioning_signals=tuple(train_state.conditioning_signals),
-        low_mem_mode=False,
-        compile_model=False,
-        lora_weights=None,
-    )
-
-    pipeline_models = {"scheduler": models["noise_scheduler"]}
-
-    if "vae" in models:
-        pipeline_models["vae"] = models["vae"].to(
-            dtype=vae_dtype, device=accelerator.device
-        )
-
-    if "text_encoder" in models:
-        pipeline_models["text_encoder"] = unwrap_model(
-            accelerator, models["text_encoder"]
-        ).to(dtype=weights_dtype, device=accelerator.device)
-
-    if "unet" in models:
-        pipeline_models["unet"] = unwrap_model(accelerator, models["unet"]).to(
-            dtype=weights_dtype, device=accelerator.device
-        )
-
-    if "controlnet" in models:
-        pipeline_models["controlnet"] = unwrap_model(
-            accelerator, models["controlnet"]
-        ).to(dtype=weights_dtype, device=accelerator.device)
-
-    if "tokenizer" in models:
-        pipeline_models["tokenizer"] = models["tokenizer"]
-
-    pipeline = DiffusionModel.from_config(
-        diffusion_config,
-        device=accelerator.device,
-        dtype=weights_dtype,
-        pipe_models=pipeline_models,
-    )
-
+def get_validation_metrics(
+    accelerator, train_state, metrics, dataloader, sd_model, models, run_prefix
+):
     running_metrics = {
         name: torch.zeros(1, dtype=torch.float32) for name in metrics.keys()
     }
     running_count = 0
 
     for step, batch in enumerate(dataloader):
-        diffusion_inputs = {}
-        diffusion_kwargs = {"strength": train_state.val_noise_strength}
+        rgb = batch["rgb"].to(dtype=sd_model.dtype, device=accelerator.device)
 
-        rgb = batch["rgb"].to(dtype=vae_dtype, device=accelerator.device)
-        diffusion_inputs["rgb"] = rgb
-        batch_size = len(rgb)
-        random_seeds = np.arange(batch_size * step, batch_size * (step + 1))
+        diffusion_output = get_diffusion_output_from_batch(
+            train_state, step, batch, sd_model, accelerator.device, models, rgb=rgb
+        )
 
-        if "controlnet" in models:
-            for conditioning in train_state.conditioning_signal_infos:
-                signal_name = conditioning.name
-
-                if signal_name in batch:
-                    signal_value = batch[signal_name]
-
-                else:
-                    for name, value in batch.items():
-                        if (
-                            signal := ConditioningSignalInfo.from_signal_name(name)
-                        ) and signal.cn_type == conditioning.cn_type:
-                            signal_value = value
-                    else:
-                        raise ValueError(
-                            f"Failed to match conditioning signal {conditioning} with data {batch.keys()}"
-                        )
-
-                diffusion_inputs[signal_name] = signal_value
-
-        diffusion_inputs["generator"] = [
-            torch.Generator(device=accelerator.device).manual_seed(int(seed))
-            for seed in random_seeds
-        ]
-
-        if "input_ids" in batch:
-            diffusion_inputs["prompt_embeds"] = encode_tokens(
-                pipeline.pipe.text_encoder,
-                batch["input_ids"].to(device=accelerator.device),
-                use_cache=True,
-            )
-
-        rgb_out = pipeline.get_diffusion_output(
-            diffusion_inputs,
-            diffusion_kwargs,
-        )["rgb"]
+        rgb_out = diffusion_output["rgb"]
 
         # Benchmark
         running_count += len(rgb)
@@ -1167,63 +1084,25 @@ def validate_model(
     mean_metrics = {}
     for metric_name, metric in metrics.items():
         mean_metric = (running_metrics[metric_name] / running_count).item()
-        mean_metrics[f"{run_prefix}_{metric_name}"] = mean_metric
+        mean_metrics[metric_name] = mean_metric
 
-        if metric_name == "ssim" and mean_metric > train_state.best_ssim:
-            train_state.best_ssim = mean_metric
+    return mean_metrics
 
-    accelerator.log(
-        mean_metrics,
-        step=train_state.global_step,
-    )
 
-    vis_rgbs = []
+@torch.no_grad()
+def get_validation_renders(accelerator, train_state, dataloader, sd_model, models):
+
+    vis_rgb_gts = []
     vis_rgbs_noisy = []
     vis_metas = []
     vis_outs = []
 
-    for step, batch in enumerate(vis_dataloader):
-        diffusion_inputs = {}
-        diffusion_kwargs = {"strength": train_state.val_noise_strength}
-
-        rgb = batch["rgb"].to(dtype=vae_dtype, device=accelerator.device)
-        diffusion_inputs["rgb"] = rgb
-        batch_size = len(rgb)
-        random_seeds = np.arange(batch_size * step, batch_size * (step + 1))
-
-        if "controlnet" in models:
-            for conditioning in train_state.conditioning_signal_infos:
-                signal_name = conditioning.name
-                if signal_name in batch:
-                    diffusion_inputs[signal_name] = batch[signal_name]
-                else:
-                    for other_signal_name, signal in batch.items():
-                        other_signal = ConditioningSignalInfo.from_signal_name(
-                            other_signal_name
-                        )
-                        if (
-                            other_signal
-                            and other_signal.cn_type == conditioning.cn_type
-                        ):
-                            diffusion_inputs[signal_name] = signal
-
-        diffusion_inputs["generator"] = [
-            torch.Generator(device=accelerator.device).manual_seed(int(seed))
-            for seed in random_seeds
-        ]
-
-        if "input_ids" in batch:
-            with torch.no_grad():
-                diffusion_inputs["prompt_embeds"] = encode_tokens(
-                    pipeline.pipe.text_encoder,
-                    batch["input_ids"].to(device=accelerator.device),
-                    use_cache=True,
-                )
-
-        rgb_out = pipeline.get_diffusion_output(
-            diffusion_inputs,
-            diffusion_kwargs,
-        )["rgb"]
+    for step, batch in enumerate(dataloader):
+        rgb_gt = batch["rgb"].to(dtype=sd_model.dtype, device=accelerator.device)
+        diffusion_output = get_diffusion_output_from_batch(
+            train_state, step, batch, sd_model, accelerator.device, models, rgb=rgb_gt
+        )
+        rgb_out = diffusion_output["rgb"]
 
         # Renders
         val_start_timestep = int(
@@ -1232,19 +1111,31 @@ def validate_model(
         )
 
         rgb_noised = get_noised_img(
-            rgb,
+            rgb_gt,
             timestep=val_start_timestep,
-            vae=pipeline.pipe.vae,
-            img_processor=pipeline.pipe.image_processor,
+            vae=models["vae"],
+            img_processor=models["img_processor"],
             noise_scheduler=models["noise_scheduler"],
         )
 
-        vis_rgbs.extend(list(rgb.detach().cpu()))
+        vis_rgb_gts.extend(list(rgb_gt.detach().cpu()))
         vis_outs.extend(list(rgb_out.detach().cpu()))
         vis_rgbs_noisy.extend(list(rgb_noised.detach().cpu()))
         vis_metas.extend(batch["meta"])
 
-    ref_neurad_running_metrics = {
+    return {
+        f"rgb_gt": vis_rgb_gts,
+        f"rgb_out": vis_outs,
+        f"rgb_noisy": vis_rgbs_noisy,
+        f"meta": vis_metas,
+    }
+
+
+@torch.no_grad
+def get_reference_outputs(
+    accelerator, train_state, models, sd_model, dataloader, metrics, run_prefix
+):
+    ref_nvs_running_metrics = {
         name: torch.zeros(1, dtype=torch.float32) for name in metrics.keys()
     }
     ref_running_metrics = {
@@ -1252,58 +1143,28 @@ def validate_model(
     }
     ref_running_count = 0
     ref_gts = []
-    ref_rgbs = []
-    ref_outs = []
+    ref_nvs_outs = []
+    ref_gen_outs = []
     ref_metas = []
 
-    for step, batch in enumerate(ref_dataloader):
-        diffusion_inputs = {}
-        diffusion_kwargs = {"strength": train_state.val_noise_strength}
+    for step, batch in enumerate(dataloader):
+        ref_rgb = batch["ref_rgb"].to(dtype=sd_model.dtype, device=accelerator.device)
+        ref_gt = batch["ref_gt"].to(dtype=sd_model.dtype, device=accelerator.device)
 
-        ref_rgb = batch["ref_rgb"].to(dtype=vae_dtype, device=accelerator.device)
-        ref_gt = batch["ref_gt"].to(dtype=vae_dtype, device=accelerator.device)
+        diffusion_output = get_diffusion_output_from_batch(
+            train_state, step, batch, sd_model, accelerator.device, models, rgb=ref_rgb
+        )
+        ref_gen_out = diffusion_output["rgb"]
 
-        diffusion_inputs["rgb"] = ref_rgb
-        batch_size = len(ref_rgb)
-        random_seeds = np.arange(batch_size * step, batch_size * (step + 1))
+        ref_running_count += len(ref_rgb)
 
-        if "controlnet" in models:
-            for conditioning in train_state.conditioning_signal_infos:
-                signal_name = conditioning.name
-                if signal_name in batch:
-                    diffusion_inputs[signal_name] = batch[signal_name]
-                else:
-                    for other_signal_name, signal in batch.items():
-                        other_signal = ConditioningSignalInfo.from_signal_name(
-                            other_signal_name
-                        )
-                        if (
-                            other_signal
-                            and other_signal.cn_type == conditioning.cn_type
-                        ):
-                            diffusion_inputs[signal_name] = signal
+        ref_nvs_outs.extend(list(ref_rgb.detach().cpu()))
+        ref_gen_outs.extend(list(ref_gen_out.detach().cpu()))
+        ref_gts.extend(list(ref_gt.detach().cpu()))
+        ref_metas.extend(batch["meta"])
 
-        diffusion_inputs["generator"] = [
-            torch.Generator(device=accelerator.device).manual_seed(int(seed))
-            for seed in random_seeds
-        ]
-
-        if "input_ids" in batch:
-            with torch.no_grad():
-                diffusion_inputs["prompt_embeds"] = encode_tokens(
-                    pipeline.pipe.text_encoder,
-                    batch["input_ids"].to(device=accelerator.device),
-                    use_cache=True,
-                )
-
-        ref_out = pipeline.get_diffusion_output(
-            diffusion_inputs,
-            diffusion_kwargs,
-        )["rgb"]
-
-        ref_running_count += len(rgb)
         for metric_name, metric in metrics.items():
-            values: Tensor = metric(ref_out, ref_gt).detach().cpu()
+            values: Tensor = metric(ref_gen_out, ref_gt).detach().cpu()
             if len(values.shape) == 0:
                 values = torch.tensor([values.item()])
 
@@ -1318,99 +1179,144 @@ def validate_model(
                     step=train_state.global_step,
                 )
 
-            values_neurad: Tensor = metric(ref_rgb, ref_gt).detach().cpu()
-            if len(values_neurad.shape) == 0:
-                values_neurad = torch.tensor([values_neurad.item()])
+        for metric_name, metric in metrics.items():
+            values_nvs: Tensor = metric(ref_rgb, ref_gt).detach().cpu()
+            if len(values_nvs.shape) == 0:
+                values_nvs = torch.tensor([values_nvs.item()])
 
-            ref_neurad_running_metrics[metric_name] += torch.sum(values_neurad)
+            ref_nvs_running_metrics[metric_name] += torch.sum(values_nvs)
 
             if train_state.use_debug_metrics:
-                value_dict = {str(i): float(v) for i, v in enumerate(values_neurad)}
+                value_dict = {str(i): float(v) for i, v in enumerate(values_nvs)}
                 accelerator.log(
                     {
-                        f"{run_prefix}_ref_neurad_{metric_name}_{str(batch['meta'])}": value_dict
+                        f"{run_prefix}_ref_nvs_{metric_name}_{str(batch['meta'])}": value_dict
                     },
                     step=train_state.global_step,
                 )
 
-        ref_rgbs.extend(list(ref_rgb.detach().cpu()))
-        ref_outs.extend(list(ref_out.detach().cpu()))
-        ref_gts.extend(list(ref_gt.detach().cpu()))
-        ref_metas.extend(batch["meta"])
-
     mean_ref_metrics = {}
-    mean_ref_neurad_metrics = {}
+    mean_ref_nvs_metrics = {}
     for metric_name, metric in metrics.items():
         mean_ref_metrics[f"{run_prefix}_ref_{metric_name}"] = (
             ref_running_metrics[metric_name] / ref_running_count
         ).item()
-        mean_ref_neurad_metrics[f"{run_prefix}_ref_neurad_{metric_name}"] = (
-            ref_neurad_running_metrics[metric_name] / ref_running_count
+        mean_ref_nvs_metrics[f"{run_prefix}_ref_nvs_{metric_name}"] = (
+            ref_nvs_running_metrics[metric_name] / ref_running_count
         ).item()
 
+    return (
+        {
+            "ref": mean_ref_metrics,
+            "ref_nvs": mean_ref_nvs_metrics,
+        },
+        {
+            f"ref_nvs_out": ref_nvs_outs,
+            f"ref_gen_out": ref_gen_outs,
+            f"ref_gt": ref_gts,
+            f"ref_meta": ref_metas,
+        },
+    )
+
+
+def prefix_keys(d, prefix):
+    return {f"{prefix}_{n}": v for n, v in d.items()}
+
+
+def pack_images_for_wandb(labels, all_imgs, metas):
+    assert len(labels) == len(all_imgs)
+
+    packed_imgs = {
+        label: [
+            wandb.Image(
+                img,
+                caption=str(meta),
+            )
+            for (img, meta) in zip(imgs, metas)
+        ]
+        for label, imgs in zip(labels, all_imgs)
+    }
+    return packed_imgs
+
+
+@torch.no_grad()
+def validate_model(
+    accelerator,
+    train_state: TrainState,
+    dataloader: torch.utils.data.DataLoader,
+    vis_dataloader: torch.utils.data.DataLoader,
+    ref_dataloader: torch.utils.data.DataLoader,
+    sd_model: StableDiffusionModel,
+    models,
+    metrics: Dict[str, Any],
+    run_prefix: str,
+) -> None:
+    assert "noise_scheduler" in models and "unet" in models
+
+    val_metrics = get_validation_metrics(
+        accelerator, train_state, metrics, dataloader, sd_model, models, run_prefix
+    )
+
+    val_renders = get_validation_renders(
+        accelerator, train_state, vis_dataloader, sd_model, models
+    )
+
+    ref_metrics, ref_renders = get_reference_outputs(
+        accelerator, train_state, models, sd_model, ref_dataloader, metrics, run_prefix
+    )
+
+    for metric_name, metric in val_metrics.items():
+        # TODO: Replace with LPIPS, make configurable
+        if metric_name == "ssim" and metric > train_state.best_ssim:
+            train_state.best_ssim = metric
+
     accelerator.log(
-        mean_ref_metrics,
+        prefix_keys(val_metrics, run_prefix),
+        step=train_state.global_step,
+    )
+
+    accelerator.log(
+        prefix_keys(ref_metrics["ref"], run_prefix),
         step=train_state.global_step,
     )
     accelerator.log(
-        mean_ref_neurad_metrics,
+        prefix_keys(ref_metrics["ref_nvs"], run_prefix),
         step=train_state.global_step,
     )
 
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
-            tracker.writer.add_images(
-                f"{run_prefix}_images",
-                np.stack([np.asarray(img) for img in vis_outs]),
-                train_state.epoch,
-                dataformats="NHWC",
-            )
+            raise NotImplementedError
 
-        if tracker.name == "wandb" and using_wandb:
+        elif tracker.name == "wandb":
             tracker.log_images(
                 {
-                    "ground_truth": [
-                        wandb.Image(
-                            img,
-                            caption=str(meta),
-                        )
-                        for (img, meta) in (zip(vis_rgbs, vis_metas))
-                    ],
-                    f"{run_prefix}_images": [
-                        wandb.Image(
-                            img,
-                            caption=str(meta),
-                        )
-                        for (img, meta) in (zip(vis_outs, vis_metas))
-                    ],
-                    "noised_images": [
-                        wandb.Image(
-                            img,
-                            caption=str(meta),
-                        )
-                        for (img, meta) in (zip(vis_rgbs_noisy, vis_metas))
-                    ],
-                    "ref_ground_truth": [
-                        wandb.Image(
-                            img,
-                            caption=str(meta),
-                        )
-                        for (img, meta) in (zip(ref_gt, ref_metas))
-                    ],
-                    "ref_neurad": [
-                        wandb.Image(
-                            img,
-                            caption=str(meta),
-                        )
-                        for (img, meta) in (zip(ref_rgb, ref_metas))
-                    ],
-                    f"ref_{run_prefix}": [
-                        wandb.Image(
-                            img,
-                            caption=str(meta),
-                        )
-                        for (img, meta) in (zip(ref_out, ref_metas))
-                    ],
+                    **pack_images_for_wandb(
+                        [
+                            f"{run_prefix}_ground_truth",
+                            f"{run_prefix}_diffusion_output",
+                            f"noisy_{run_prefix}_ground_truth",
+                        ],
+                        [
+                            val_renders["rgb_gt"],
+                            val_renders["rgb_out"],
+                            val_renders["rgb_noisy"],
+                        ],
+                        val_renders["meta"],
+                    ),
+                    **pack_images_for_wandb(
+                        [
+                            f"{run_prefix}_reference_ground_truth",
+                            f"{run_prefix}_nvs_output",
+                            f"{run_prefix}_diffusion_output",
+                        ],
+                        [
+                            ref_renders["ref_gt"],
+                            ref_renders["ref_nvs_out"],
+                            ref_renders["ref_gen_out"],
+                        ],
+                        ref_renders["ref_meta"],
+                    ),
                 },
                 step=train_state.global_step,
             )

@@ -370,6 +370,11 @@ class DiffusionModelConfig(InstantiateConfig):
         Does nothing unless the model is a controlnet.
     """
 
+    do_classifier_free_guidance: bool = True
+    guidance_scale: float = 0
+
+    compile_models: Tuple[str, ...] = ()
+
 
 class DiffusionModel(ABC):
     config: DiffusionModelConfig
@@ -653,6 +658,10 @@ class StableDiffusionModel(DiffusionModel):
                 dtype=torch.float32,
             )
 
+        if self.config.compile_models:
+            for model in self.config.compile_models:
+                self.pipe_models[model] = torch.compile(self.pipe_models[model])
+
     @property
     def unet(self):
         return self.pipe_models["unet"]
@@ -677,6 +686,10 @@ class StableDiffusionModel(DiffusionModel):
     def img_processor(self):
         return self.pipe_models["img_processor"]
 
+    @property
+    def dtype(self):
+        return DTYPE_CONVERSION[self.config.dtype]
+
     def load_adapter(self, model_name: str, copy_model: bool = True):
         # TODO: Test this
 
@@ -693,13 +706,13 @@ class StableDiffusionModel(DiffusionModel):
         lora_path = Path(self.config.lora_weights)
         model_path = lora_path / (self.config.lora_model_prefix + model_name)
 
-        model = getattr(self, model_name)
+        model = self.pipe_models[model_name]
 
         if copy_model:
             model = deepcopy(model)
 
         model = PeftModel.from_pretrained(model, model_path)
-        setattr(self, model_name, model)
+        self.pipe_models[model_name] = model
 
     def add_adapter(
         self,
@@ -714,7 +727,7 @@ class StableDiffusionModel(DiffusionModel):
                 f"Cannot add adapter for {model_name} - model not in list of trainable models: {self.config.models_to_train_lora}"
             )
 
-        model = getattr(self, model_name)
+        model = self.pipe_models[model_name]
         if adapter_config is None:
             model_target_ranks = self.config.lora_rank_mults[model_name]
             model_ranks = parse_target_ranks(model_target_ranks)
@@ -737,7 +750,7 @@ class StableDiffusionModel(DiffusionModel):
         model = get_peft_model(
             model, adapter_config, self.config.lora_model_prefix + model_name
         )
-        setattr(self, model_name, model)
+        self.pipe_models[model_name] = model
 
     def get_diffusion_output(
         self,
@@ -814,7 +827,13 @@ class StableDiffusionModel(DiffusionModel):
             prompt_embeds = torch.cat((prompt_embeds, prompt_embeds))
 
         denoised_latent = denoise_latent(
-            noisy_latent, self.unet, timesteps, self.noise_scheduler, prompt_embeds
+            noisy_latent,
+            self.unet,
+            timesteps,
+            self.noise_scheduler,
+            prompt_embeds,
+            do_classifier_free_guidance=self.config.do_classifier_free_guidance,
+            guidance_scale=self.config.guidance_scale,
         )
 
         image = decode_img(self.img_processor, self.vae, denoised_latent)
@@ -955,7 +974,7 @@ def denoise_latent(
     added_cond_kwargs=None,
     extra_step_kwargs: Optional[Dict[str, Any]] = None,
     do_classifier_free_guidance: bool = True,
-    guidance_scale: float = 7.5,
+    guidance_scale: float = 0,
 ):
     if extra_step_kwargs is None:
         extra_step_kwargs = {}
