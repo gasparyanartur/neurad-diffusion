@@ -690,6 +690,17 @@ class StableDiffusionModel(DiffusionModel):
     def dtype(self):
         return DTYPE_CONVERSION[self.config.dtype]
 
+    def get_models_to_train(self):
+        for model_name in self.config.models_to_train_lora:
+            yield self.pipe_models[model_name]
+
+    def set_training(self, mode: bool = False):
+        for model_name in self.config.models_to_train_lora:
+            self.pipe_models[model_name].train(mode)
+
+    def is_model_trained(self, model_name: str) -> bool:
+        return model_name in self.config.models_to_train_lora
+
     def load_adapter(self, model_name: str, copy_model: bool = True):
         # TODO: Test this
 

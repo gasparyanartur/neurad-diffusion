@@ -1,5 +1,6 @@
 # Adapted from https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image_lora.py
 
+import json
 import typing
 from typing import Any, Callable, Dict, Tuple, List, Optional, Union, Sequence, cast
 from collections.abc import Iterable
@@ -65,6 +66,7 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.generative.diffusion_model import (
     StableDiffusionModel,
+    encode_img,
     import_encoder_class_from_model_name_or_path,
 )
 from nerfstudio.generative.dynamic_dataset import (
@@ -265,8 +267,9 @@ def parse_args():
     parser.add_argument("--model_type", type=str, default=None)
     parser.add_argument("--snr_gamma", type=float, default=None)
     parser.add_argument("--learning_rate", type=float, default=None)
-    parser.add_argument("--lora_rank", type=int, default=None)
-    parser.add_argument("--control_lora_rank", type=int, default=None)
+    parser.add_argument(
+        "--lora_base_rank", type=str, default=None, help='{"model_name":lora_rank}'
+    )
     parser.add_argument("--dataloader_num_workers", type=int, default=None)
     parser.add_argument("--use_debug_metrics", action="store_true")
     parser.add_argument("--use_recreation_loss", action="store_true")
@@ -1251,7 +1254,7 @@ def validate_model(
     metrics: Dict[str, Any],
     run_prefix: str,
 ) -> None:
-    assert "noise_scheduler" in models and "unet" in models
+    sd_model.set_training(False)
 
     val_metrics = get_validation_metrics(
         accelerator, train_state, metrics, dataloader, sd_model, models, run_prefix
@@ -1329,18 +1332,11 @@ def train_epoch(
     train_state: TrainState,
     dataloader: torch.utils.data.DataLoader,
     models,
+    sd_model: StableDiffusionModel,
     params_to_optimize,
     progress_bar: tqdm.tqdm,
 ):
-    weights_dtype = DTYPE_CONVERSION[train_state.weights_dtype]
-    vae_dtype = DTYPE_CONVERSION[train_state.vae_dtype]
-    noise_scheduler = models["noise_scheduler"]
-
-    if "unet" in train_state.trainable_models:
-        models["unet"].train()
-
-    if "text_encoder" in train_state.trainable_models:
-        models["text_encoder"].train()
+    sd_model.set_training(True)
 
     train_loss = 0.0
 
@@ -1350,8 +1346,8 @@ def train_epoch(
 
         assert "rgb" in batch
 
-        with accelerator.accumulate(models[m] for m in train_state.trainable_models):
-            rgb = batch["rgb"].to(dtype=vae_dtype, device=accelerator.device)
+        with accelerator.accumulate(sd_model.get_models_to_train()):
+            rgb = batch["rgb"].to(dtype=sd_model.dtype, device=accelerator.device)
             rgb_gt = rgb
 
             if train_state.use_noise_augment:
@@ -1363,39 +1359,38 @@ def train_epoch(
                     pattern=rgb,
                 )
 
-            rgb = models["image_processor"].preprocess(rgb)
-
-            model_input = (
-                models["vae"].encode(rgb).latent_dist.sample()
-                * models["vae"].config.scaling_factor
-            ).to(weights_dtype)
+            model_input = encode_img(
+                sd_model.img_processor, sd_model.vae, rgb, accelerator.device
+            )
 
             noise = get_diffusion_noise(
                 model_input.shape, model_input.device, train_state
             )
 
-            unet_added_conditions = {}
-            unet_kwargs = {}
-
             timesteps = get_random_timesteps(
                 train_state.train_noise_strength,
-                noise_scheduler.config.num_train_timesteps,
+                sd_model.noise_scheduler.config.num_train_timesteps,
                 model_input.device,
                 model_input.size(0),
-                low_noise_high_step=False,
             )
 
             # Add noise to the model input according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
-            noisy_model_input = noise_scheduler.add_noise(model_input, noise, timesteps)
+            noisy_model_input = sd_model.noise_scheduler.add_noise(
+                model_input, noise, timesteps
+            )
 
             prompt_hidden_state = encode_tokens(
                 models["text_encoder"],
                 batch["input_ids"],
-                use_cache="text_encoder" not in train_state.trainable_models,
+                use_cache=not sd_model.is_model_trained("text_encoder"),
             )
 
+            unet_added_conditions = {}
+            unet_kwargs = {}
+
             if "controlnet" in models:
+                raise NotImplementedError
                 conditioning = combine_conditioning_info(
                     batch, train_state.conditioning_signal_infos
                 ).to(noisy_model_input.device)
@@ -1427,6 +1422,7 @@ def train_epoch(
             )
 
             if train_state.use_recreation_loss:
+                raise NotImplementedError
                 # TODO: Completely change this
                 pred_rgb = decode_img(
                     models["image_processor"], models["vae"], noisy_model_input
@@ -1512,23 +1508,20 @@ def main(args: Namespace) -> None:
 
     if args.model_type is not None:
         train_state.model_type = args.model_type
-        if args.model_type == "cn" and "controlnet" not in train_state.trainable_models:
-            train_state.trainable_models.append("controlnet")
-        elif args.model_type == "sd" and "controlnet" in train_state.trainable_models:
-            train_state.trainable_models.pop(
-                train_state.trainable_models.index("controlnet")
-            )
 
         if args.model_type == "sd":
+            if "controlnet" in train_state.models_to_train_lora:
+                train_state.models_to_train_lora.remove("controlnet")
+
             train_state.conditioning_signals = []
             train_state.conditioning_signal_infos = []
 
-        if (
-            args.model_type == "cn"
-            and len(train_state.conditioning_signals) == 0
-            and (args.conditioning is None)
-        ):
-            raise ValueError(f"Cannot run controlnet with no conditioning signals")
+        elif args.model_type == "cn":
+            if "controlnet" not in train_state.models_to_train_lora:
+                train_state.models_to_train_lora.append("controlnet")
+
+            if not train_state.conditioning_signals and not args.conditioning:
+                raise ValueError(f"Cannot run controlnet with no conditioning signals")
 
     if args.snr_gamma is not None:
         train_state.snr_gamma = args.snr_gamma
@@ -1536,19 +1529,13 @@ def main(args: Namespace) -> None:
     if args.learning_rate is not None:
         train_state.learning_rate = args.learning_rate
 
-    if args.lora_rank is not None:
-        train_state.lora_rank_linear = args.lora_rank
-        train_state.lora_rank_conv2d = args.lora_rank
-        for model_name, model in train_state.lora_target_ranks.items():
-            for block_name, block in model.items():
-                for layer_name, layer_rank in block.items():
-                    train_state.lora_target_ranks[model_name][block_name][
-                        layer_name
-                    ] = args.lora_rank
+    if args.lora_base_ranks is not None:
+        parsed_lora_base_ranks = json.loads(args.lora_base_ranks)
+        for k, v in parsed_lora_base_ranks.items():
+            if k not in train_state.lora_base_ranks.keys():
+                raise ValueError(f"Could not set lora base rank of model with name {k}")
 
-    if args.control_lora_rank is not None:
-        train_state.control_lora_rank_linear = args.control_lora_rank
-        train_state.control_lora_rank_conv2d = args.control_lora_rank
+            train_state.lora_base_ranks[k] = v
 
     if args.dataloader_num_workers is not None:
         train_state.dataloader_num_workers = args.dataloader_num_workers
@@ -1565,9 +1552,7 @@ def main(args: Namespace) -> None:
     accelerator = Accelerator(
         gradient_accumulation_steps=train_state.gradient_accumulation_steps,
         mixed_precision=(
-            train_state.weights_dtype
-            if train_state.weights_dtype in LOWER_DTYPES
-            else "no"
+            train_state.dtype if train_state.dtype in LOWER_DTYPES else "no"
         ),
         log_with=train_state.loggers,
         project_config=ProjectConfiguration(
@@ -1582,10 +1567,12 @@ def main(args: Namespace) -> None:
         f"Number of cuda detected devices: {torch.cuda.device_count()}, Using device: {accelerator.device}, distributed: {accelerator.distributed_type}"
     )
 
-    train_state.conditioning_signal_infos = [
-        ConditioningSignalInfo.from_signal_name(signal)
-        for signal in train_state.conditioning_signals
-    ]
+    train_state.conditioning_signal_infos.extend(
+        [
+            ConditioningSignalInfo.from_signal_name(signal)
+            for signal in train_state.conditioning_signals
+        ]
+    )
 
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -1665,7 +1652,7 @@ def main(args: Namespace) -> None:
         ),
     }
 
-    models = prepare_models(train_state, accelerator.device)
+    models, sd_model = prepare_models(train_state, accelerator.device)
 
     # ============================
     # === Prepare optimization ===
