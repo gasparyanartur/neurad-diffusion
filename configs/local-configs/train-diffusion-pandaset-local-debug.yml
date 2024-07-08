@@ -6,7 +6,7 @@ datasets:
     path: "data/pandaset"
     data_getters:
       rgb:
-        camera: "front_left_camera"
+        camera: "front_camera"
 
       prompt: {}
       meta: {}
@@ -23,7 +23,7 @@ datasets:
     path: "data/pandaset"
     data_getters:
       rgb:
-        camera: "front_left_camera"
+        camera: "front_camera"
 
       prompt: {}
       meta: {}
@@ -41,7 +41,7 @@ datasets:
     path: "data/pandaset"
     data_getters:
       rgb:
-        camera: "front_left_camera"
+        camera: "front_camera"
       
 
       prompt: {}
@@ -55,6 +55,26 @@ datasets:
         #001: "0:16:2"
         001: [01]
 
+  ref_data:
+    dataset: pandaset
+    path: "data/pandaset"
+    data_getters:
+      rgb: 
+        camera: front_left_camera
+      
+      ref-rgb:
+        camera: front_left_camera
+        path_format: "data/reference_neurad/{scene}/{camera}/{shift}/{split}/{data_name}/{sample}{suffix}"
+
+      cn_ray_6_front_left_camera: {}
+
+      meta: {}
+      prompt: {}
+
+    data_tree:
+      pandaset:
+        001: [01]
+
 model_type: sd
 model_id: stabilityai/stable-diffusion-2-1
 
@@ -66,7 +86,7 @@ max_grad_norm: 1.0
 
 n_epochs: 1000
 val_freq: 10
-checkpointing_steps: 50
+checkpointing_steps: 500
 
 train_noise_strength: 0.1
 train_noise_num_steps: null
@@ -94,36 +114,16 @@ flip_prob: 0
 #center_crop: False
 #flip_prob: 0.5
 
-use_debug_loss: False
 use_recreation_loss: False
 
+lora_base_ranks:
+ unet: 4
 
-control_lora_rank_linear: 8
-control_lora_rank_conv2d: 8
-lora_target_ranks: 
-  unet: 
-    downblocks: 
-      attn: 8
-      resnet: 8
-      ff: 8
-      proj: 8
-      
-    midblocks:
-      attn: 8
-      resnet: 8
-      ff: 8
-      proj: 8
-    upblocks:
-      attn: 8
-      resnet: 8
-      ff: 8
-      proj: 8
-
-trainable_models:
+models_to_train_lora:
   - unet
 
 logging_dir: logs/finetune/sd
 output_dir: outputs/finetune/sd
 
-#loggers: ["wandb"]
-loggers: []
+loggers: ["wandb"]
+#loggers: []

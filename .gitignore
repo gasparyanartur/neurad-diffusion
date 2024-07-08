@@ -200,3 +200,5 @@ masks/
 # Imaginedriving-related
 neurad-env/*
 venv
+logs
+outputs

@@ -110,6 +110,13 @@ logger = get_logger(__name__, log_level="INFO")
 LORA_MODEL_PREFIX = "lora_"
 
 
+metric_improvement_direction = {
+    "lpips": "<",
+    "ssim": ">",
+    "psnr": ">"
+}
+
+
 @dataclass(init=True)
 class TrainState:
     job_id: Optional[str] = None
@@ -268,7 +275,7 @@ def parse_args():
     parser.add_argument("--snr_gamma", type=float, default=None)
     parser.add_argument("--learning_rate", type=float, default=None)
     parser.add_argument(
-        "--lora_base_rank", type=str, default=None, help='{"model_name":lora_rank}'
+        "--lora_base_ranks", type=str, default=None, help='{"model_name":lora_rank}'
     )
     parser.add_argument("--dataloader_num_workers", type=int, default=None)
     parser.add_argument("--use_debug_metrics", action="store_true")
@@ -288,11 +295,13 @@ def get_diffusion_config_from_train_state(
         lora_weights=lora_weights_dir,
         noise_strength=train_state.val_noise_strength,
         num_inference_steps=train_state.val_noise_num_steps,
-        conditioning_signals=tuple(
-            signal.name for signal in train_state.conditioning_signal_infos
-        ),
+        conditioning_signals=train_state.conditioning_signals,
         guidance_scale=train_state.guidance_scale,
         do_classifier_free_guidance=train_state.do_classifier_free_guidance,
+        models_to_train_lora=train_state.models_to_train_lora,
+        lora_base_ranks=train_state.lora_base_ranks,
+        use_dora=train_state.use_dora,
+        dtype=train_state.dtype,
     )
     return configs
 
@@ -559,11 +568,15 @@ def save_model_hook(
 
         for model_name, model in models.items():
             if is_model_equal_type(accelerator, loaded_accelerator_model, model):
-                peft_models_to_save[model_name] = get_peft_model_state_dict(
-                    model=unwrap_model(
-                        accelerator, loaded_accelerator_model, unpeft=False
-                    )
+                peft_models_to_save[model_name] = unwrap_model(
+                    accelerator, loaded_accelerator_model, unpeft=False
                 )
+                # peft_models_to_save[model_name] = #get_peft_model_state_dict(
+                # model=unwrap_model(
+                #    accelerator, loaded_accelerator_model, unpeft=False
+                # ),
+                # adapter_name=train_state.lora_model_prefix + model_name,
+                # )
                 break
 
         # make sure to pop weight so that corresponding model is not saved again
@@ -1313,8 +1326,8 @@ def validate_model(
                     **pack_images_for_wandb(
                         [
                             f"{run_prefix}_reference_ground_truth",
-                            f"{run_prefix}_nvs_output",
-                            f"{run_prefix}_diffusion_output",
+                            f"{run_prefix}_reference_nvs_output",
+                            f"{run_prefix}_reference_diffusion_output",
                         ],
                         [
                             ref_renders["ref_gt"],
