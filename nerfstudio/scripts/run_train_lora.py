@@ -591,6 +591,7 @@ def load_model_hook(
     input_dir: Path,
     accelerator: Accelerator,
     models,
+    sd_model: StableDiffusionModel,
     train_state: TrainState,
 ):
     loaded_models_dict = {}
@@ -619,7 +620,7 @@ def load_model_hook(
 
         if model_name not in loaded_models_dict:
             logger.warning(
-                f"Found weights {model_name} in weight directory, but model not found in {train_state.trainable_models}. Skipping"
+                f"Found weights {model_name} in weight directory, but model not found in {train_state.models_to_train_lora}. Skipping"
             )
         model = loaded_models_dict[model_name]
         loaded_models_dict[model_name] = PeftModel.from_pretrained(
@@ -646,6 +647,8 @@ def load_model_hook(
         "best_saved_ssim",
     ]
     train_state.update_values(**{f: configs[f] for f in fields_to_update})
+
+    sd_model.pipe_models = models
 
 
 def save_checkpoint(accelerator: Accelerator, train_state: TrainState) -> None:
@@ -922,7 +925,7 @@ def get_diffusion_loss(
 
 def prepare_models(
     train_state: TrainState, device
-) -> Tuple[List, StableDiffusionModel]:
+) -> Tuple[Dict[str, Any], StableDiffusionModel]:
     # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
 
@@ -1249,8 +1252,8 @@ def validate_model(
     dataloader: torch.utils.data.DataLoader,
     vis_dataloader: torch.utils.data.DataLoader,
     ref_dataloader: torch.utils.data.DataLoader,
-    sd_model: StableDiffusionModel,
     models,
+    sd_model: StableDiffusionModel,
     metrics: Dict[str, Any],
     run_prefix: str,
 ) -> None:
@@ -1755,16 +1758,6 @@ def main(args: Namespace) -> None:
     # ===   Setup training   ===
     # ==========================
 
-    trainable_models = [
-        models[model_name] for model_name in train_state.trainable_models
-    ]
-    params_to_optimize = list(
-        filter(
-            lambda p: p.requires_grad,
-            it.chain(*(model.parameters() for model in trainable_models)),
-        )
-    )
-
     if train_state.scale_lr:
         train_state.learning_rate = (
             train_state.learning_rate
@@ -1772,6 +1765,13 @@ def main(args: Namespace) -> None:
             * train_state.train_batch_size
             * accelerator.num_processes
         )
+
+    params_to_optimize = list(
+        filter(
+            lambda p: p.requires_grad,
+            it.chain(*(model.parameters() for model in sd_model.get_models_to_train())),
+        )
+    )
 
     optimizer_class = torch.optim.AdamW
     optimizer = optimizer_class(
@@ -1803,10 +1803,11 @@ def main(args: Namespace) -> None:
     )
 
     optimizer, train_dataloader, lr_scheduler, *trainable_models = accelerator.prepare(
-        optimizer, train_dataloader, lr_scheduler, *trainable_models
+        optimizer, train_dataloader, lr_scheduler, *sd_model.get_models_to_train()
     )
-    for model, model_name in zip(trainable_models, train_state.trainable_models):
+    for model, model_name in zip(trainable_models, train_state.models_to_train_lora):
         models[model_name] = model
+    sd_model.pipe_models = models
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     train_state.num_update_steps_per_epoch = math.ceil(
@@ -1872,6 +1873,7 @@ def main(args: Namespace) -> None:
             train_state,
             train_dataloader,
             models,
+            sd_model,
             params_to_optimize,
             progress_bar,
         )
@@ -1885,6 +1887,7 @@ def main(args: Namespace) -> None:
                 render_dataloader,
                 ref_dataloader,
                 models,
+                sd_model,
                 metrics,
                 "val",
             )
@@ -1894,6 +1897,7 @@ def main(args: Namespace) -> None:
         #    train_state.global_step % train_state.checkpointing_steps == 0
         # ):
         if accelerator.is_main_process:
+            # TODO: Replace best
             if (
                 train_state.checkpoint_strategy == "best"
                 and train_state.best_ssim > train_state.best_saved_ssim
@@ -1923,6 +1927,7 @@ def main(args: Namespace) -> None:
             render_dataloader,
             ref_dataloader,
             models,
+            sd_model,
             metrics,
             "test",
         )
