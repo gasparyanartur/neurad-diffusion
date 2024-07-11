@@ -110,11 +110,7 @@ logger = get_logger(__name__, log_level="INFO")
 LORA_MODEL_PREFIX = "lora_"
 
 
-metric_improvement_direction = {
-    "lpips": "<",
-    "ssim": ">",
-    "psnr": ">"
-}
+metric_improvement_direction = {"lpips": "<", "ssim": ">", "psnr": ">"}
 
 
 @dataclass(init=True)

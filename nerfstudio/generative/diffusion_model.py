@@ -25,6 +25,7 @@ from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2im
     retrieve_latents,
 )
 from diffusers.image_processor import VaeImageProcessor
+from diffusers.models import ControlNetModel
 
 from diffusers import StableDiffusionImg2ImgPipeline
 from diffusers.image_processor import VaeImageProcessor
@@ -356,6 +357,17 @@ class DiffusionModelConfig(InstantiateConfig):
         }
     )
 
+    lora_modules_to_save: Dict[str, List[str]] = field(
+        default_factory=lambda: {
+            "unet": [],
+            "controlnet": [
+                "controlnet_cond_embedding",
+                *[f"controlnet_down_blocks.{i}" for i in range(12)],
+                "controlnet_mid_block",
+            ],
+        }
+    )
+
     use_dora: bool = True
 
     lora_model_prefix: str = "lora_"
@@ -632,6 +644,13 @@ class StableDiffusionModel(DiffusionModel):
         self.text_encoder.requires_grad_(False)
         self.text_encoder.to(device=device, dtype=dtype)
 
+        if self.using_controlnet:
+            if "controlnet" not in pipe_models:
+                pipe_models["controlnet"] = ControlNetModel.from_unet(unet=self.unet)
+
+            self.controlnet.requires_grad_(False)
+            self.controlnet.to(device=device, dtype=dtype)
+
         self.do_classifier_free_guidance = do_classifier_free_guidance
 
         self.diffusion_metrics = {
@@ -661,6 +680,14 @@ class StableDiffusionModel(DiffusionModel):
         if self.config.compile_models:
             for model in self.config.compile_models:
                 self.pipe_models[model] = torch.compile(self.pipe_models[model])
+
+    @property
+    def using_controlnet(self):
+        return self.config.model_type == "cn"
+
+    @property
+    def controlnet(self):
+        return self.pipe_models["controlnet"]
 
     @property
     def unet(self):
@@ -746,6 +773,7 @@ class StableDiffusionModel(DiffusionModel):
             base_rank = self.config.lora_base_ranks[model_name]
             target_ranks = {k: v * base_rank for k, v in model_ranks.items()}
 
+            modules_to_save = self.config.lora_modules_to_save[model_name]
             adapter_config = LoraConfig(
                 r=base_rank,
                 lora_alpha=base_rank,
@@ -753,6 +781,7 @@ class StableDiffusionModel(DiffusionModel):
                 use_dora=self.config.use_dora,
                 rank_pattern=target_ranks,
                 target_modules="|".join(target_ranks.keys()),
+                modules_to_save=modules_to_save,
             )
 
         if copy_model:
@@ -836,6 +865,28 @@ class StableDiffusionModel(DiffusionModel):
 
         if self.do_classifier_free_guidance:
             prompt_embeds = torch.cat((prompt_embeds, prompt_embeds))
+
+        if self.using_controlnet:
+            # TODO Add controlnet
+            raise NotImplementedError
+            # TODO: Port this code to the StableDiffusionModel
+            conditioning = combine_conditioning_info(
+                batch, train_state.conditioning_signal_infos
+            ).to(noisy_model_input.device)
+
+            down_block_res_samples, mid_block_res_sample = models["controlnet"](
+                noisy_model_input,
+                timesteps,
+                encoder_hidden_states=prompt_hidden_state,
+                controlnet_cond=conditioning,
+                return_dict=False,
+            )
+            unet_kwargs["down_block_additional_residuals"] = [
+                sample.to(dtype=weights_dtype) for sample in down_block_res_samples
+            ]
+            unet_kwargs["mid_block_additional_residual"] = mid_block_res_sample.to(
+                dtype=weights_dtype
+            )
 
         denoised_latent = denoise_latent(
             noisy_latent,
