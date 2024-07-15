@@ -1,5 +1,5 @@
 import typing
-from typing import Any, Dict, List, Union, Optional, Tuple
+from typing import Any, Dict, List, Set, Union, Optional, Tuple
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
 from collections.abc import Iterable, Generator, Callable
@@ -362,13 +362,76 @@ def crop_to_ray_idxs(cam_idxs, crop_top_left, crop_size) -> Tensor:
 
 
 @dataclass
+class DataSpec(ABC):
+    name: str
+
+
+@dataclass
+class CameraDataSpec(DataSpec):
+    camera: str
+    shift: str
+
+
+@dataclass
+class LidarDataSpec(DataSpec):
+    shift: str
+
+
+@dataclass
+class RgbDataSpec(CameraDataSpec):
+    num_channels: int
+
+
+@dataclass
+class PromptDataSpec(DataSpec):
+    prompt: str
+
+
+_SPLIT_SCORE = {"train": 0, "validation": 1, "test": 2}
+
+
+@dataclass
 class SampleInfo:
     dataset: str
     scene: str
     sample: str
+    split: str
 
     def __str__(self) -> str:
         return f"{self.dataset} - {self.scene} - {self.sample}"
+
+    def __cmp__(self, other: "SampleInfo") -> int:
+        split_a = _SPLIT_SCORE[self.split]
+        split_b = _SPLIT_SCORE[other.split]
+        if split_a > split_b:
+            return 1
+        elif split_a < split_b:
+            return -1
+
+        scene_a = int(self.scene)
+        scene_b = int(other.scene)
+        if scene_a > scene_b:
+            return 1
+        elif scene_a < scene_b:
+            return -1
+
+        sample_a = int(self.sample)
+        sample_b = int(other.sample)
+        if sample_a > sample_b:
+            return 1
+        elif sample_a < sample_b:
+            return -1
+
+        return 0
+
+    def __lt__(self, other: "SampleInfo") -> bool:
+        return self.__cmp__(other) == -1
+
+    def __gt__(self, other: "SampleInfo") -> bool:
+        return self.__cmp__(other) == 1
+
+    def __eq__(self, other: "SampleInfo") -> bool:
+        return self.__cmp__(other) == 0
 
 
 class InfoGetter(ABC):
@@ -377,62 +440,72 @@ class InfoGetter(ABC):
         self.dataset_name = dataset_name
 
     @abstractmethod
-    def get_sample_names_in_scene(
-        self, dataset_path: Path, scene: str, specs: Optional[Dict[str, Any]] = None
-    ) -> Generator[str]:
+    def get_scenes(self, dataset_path: Path, dataset: str, split: str):
         raise NotImplementedError
 
     @abstractmethod
-    def get_path(self, dataset_path: Path, info: SampleInfo, specs: Dict[str, Any]):
-        raise NotImplemented
+    def get_samples(
+        self, dataset_path: Path, scene: str, specs: Optional[Dict[str, Any]] = None
+    ) -> List[SampleInfo]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_path(self, dataset_path: Path, info: "SampleInfo", specs: Dict[str, Any]):
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_suffix(self, info: "SampleInfo") -> str:
+        raise NotImplementedError
 
     def parse_tree(
         self, dataset_path: Path, data_tree: Dict[str, Any]
-    ) -> list[SampleInfo]:
-        samples = []
+    ) -> List["SampleInfo"]:
 
-        existing_scenes = set(path.stem for path in dataset_path.iterdir())
+        sample_infos = []
 
-        for dataset_name, dataset_dict in data_tree.items():
-            for scene_name, sample_list in dataset_dict.items():
-                if scene_name not in existing_scenes:
-                    continue
+        for dataset, dataset_dict in data_tree.items():
+            for split, split_dict in dataset_dict.items():
+                existing_scenes = self.get_scenes(dataset_path, dataset, split)
 
-                if isinstance(sample_list, tuple) and len(sample_list) == 3:
-                    start_range, end_range, skip_range = sample_list
-                    sample_list = sorted(
-                        self.get_sample_names_in_scene(dataset_path, scene_name)
-                    )
+                for scene, sample_list in split_dict.items():
+                    if scene not in existing_scenes:
+                        continue
 
-                    if start_range is None:
-                        start_range = 0
+                    if isinstance(sample_list, tuple) and len(sample_list) == 3:
+                        start_range, end_range, skip_range = sample_list
 
-                    if end_range is None:
-                        end_range = len(sample_list)
+                        samples = sorted(self.get_samples(dataset_path, scene))
 
-                    if skip_range is None:
-                        skip_range = 1
+                        start_range = start_range or 0
+                        end_range = end_range or len(samples)
+                        skip_range = skip_range or 1
 
-                    sample_list = [
-                        sample_list[i]
-                        for i in range(start_range, end_range, skip_range)
-                    ]
+                        sample_infos.extend(samples[start_range:end_range:skip_range])
 
-                if not isinstance(sample_list, list):
-                    raise NotImplementedError
+                    else:
+                        if not sample_list:
+                            continue
 
-                for sample_name in sample_list:
-                    info = SampleInfo(dataset_name, scene_name, sample_name)
-                    samples.append(info)
+                        assert isinstance(sample_list, list)
+                        assert isinstance(sample_list[0], str)
 
-        return samples
+                        sample_infos.extend(
+                            [
+                                SampleInfo(dataset, scene, sample, split)
+                                for sample in sample_list
+                            ]
+                        )
+
+        return sample_infos
 
 
 class PandasetInfoGetter(InfoGetter):
     def __init__(self) -> None:
         super().__init__("pandaset")
 
-    def _get_sample_dir_path(self, dataset_path, scene, specs=None):
+    def _get_sample_dir_path(
+        self, dataset_path, scene, specs: Optional[DataSpec] = None
+    ):
         if specs is None:
             data_type = "rgb"
             camera = "front_camera"
@@ -450,46 +523,60 @@ class PandasetInfoGetter(InfoGetter):
         else:
             return None
 
-    def get_sample_names_in_scene(
-        self, dataset_path: Path, scene: str, specs: Optional[Dict[str, Any]] = None
-    ) -> Generator[str]:
-        sample_dir_path = self._get_sample_dir_path(dataset_path, scene, specs)
+    def get_scenes(self, dataset_path: Path, dataset: str, split: str) -> Set[str]:
+        return set(path.stem for path in dataset_path.iterdir())
 
-        data_type = "rgb" if specs is None else specs.get("data_type", "rgb")
-        suffix = DATA_SUFFIXES[data_type, self.dataset_name]
-
-        for sample_path in sample_dir_path.glob(f"*{suffix}"):
-            yield sample_path.stem
-
-    def get_path(
-        self, dataset_path: Path, info: SampleInfo, specs: Dict[str, Any]
-    ) -> Path:
-        sample_dir_path = self._get_sample_dir_path(dataset_path, info.scene, specs)
-        data_type = "rgb" if specs is None else specs.get("data_type", "rgb")
-
-        if data_type in {"rgb", "lidar", "ref-rgb"}:
-            sample_path = sample_dir_path / info.sample
-
-        elif data_type == "pose":
-            sample_path = sample_dir_path / "poses"
-
-        elif data_type == "intrinsics":
-            sample_path = sample_dir_path / "intrinsics"
-
-        elif data_type == "timestamp":
-            sample_path = sample_dir_path / "timestamps"
-
+    def get_suffix(self, spec: DataSpec) -> str:
+        if isinstance(spec, RgbDataSpec):
+            return ".jpg"
+        elif isinstance(spec, LidarDataSpec):
+            return ".pkl.gz"
+        elif isinstance(spec, CameraDataSpec):
+            return ""
         else:
             raise NotImplementedError
 
-        suffix = DATA_SUFFIXES[data_type, self.dataset_name]
-        sample_path = sample_path.with_suffix(suffix)
+    def get_samples(
+        self,
+        dataset_path: Path,
+        dataset: str,
+        scene: str,
+        split: str,
+        spec: Optional[DataSpec] = None,
+    ) -> List[str]:
+        if isinstance(spec, LidarDataSpec):
+            sample_dir = dataset_path / scene / "lidar"
+            suffix = self.get_suffix(spec)
 
+        elif isinstance(spec, CameraDataSpec):
+            sample_dir = dataset_path / scene / "camera" / spec.camera
+            suffix = self.get_suffix(spec)
+
+        else:
+            sample_dir = dataset_path / scene / "camera" / "front"
+            suffix = ""
+
+        return [path.stem for path in sample_dir.glob(f"*{suffix}")]
+
+    def get_path(self, dataset_path: Path, info: SampleInfo, spec: DataSpec) -> Path:
+        if isinstance(spec, LidarDataSpec):
+            sample_path = dataset_path / info.scene / "lidar" / info.sample
+
+        elif isinstance(spec, CameraDataSpec):
+            sample_path = (
+                dataset_path / info.scene / "camera" / spec.camera / info.sample
+            )
+
+        else:
+            sample_path = dataset_path / info.scene / "camera" / "front" / info.sample
+
+        sample_path = sample_path.with_suffix(self.get_suffix(spec))
         return sample_path
 
 
 class NeuRADInfoGetter(InfoGetter):
     def __init__(self):
+        raise NotImplementedError
         super().__init__("neurad")
 
     def _get_sample_dir_path(
@@ -509,7 +596,7 @@ class NeuRADInfoGetter(InfoGetter):
         else:
             raise NotImplementedError
 
-    def get_sample_names_in_scene(
+    def get_samples(
         self, dataset_path: Path, scene: str, specs: Dict[str, Any] = None
     ) -> Generator[str]:
         sample_dir_path = self._get_sample_dir_path(dataset_path, scene, specs)

@@ -868,6 +868,9 @@ class StableDiffusionModel(DiffusionModel):
 
         if self.using_controlnet:
             # TODO Add controlnet
+            conditioning = combine_conditioning_info(
+                batch, train_state.conditioning_signal_infos
+            ).to(noisy_model_input.device)
             raise NotImplementedError
             # TODO: Port this code to the StableDiffusionModel
             conditioning = combine_conditioning_info(
