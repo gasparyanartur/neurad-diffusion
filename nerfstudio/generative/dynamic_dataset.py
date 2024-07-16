@@ -184,6 +184,7 @@ def read_image(
     tf_pipeline: tvtf.Compose = norm_img_pipeline,
     device: Union[str, torch.device] = "cpu",
 ) -> Tensor:
+    # TODO: Perform random crop directly in here, return extra information
     img = torchvision.io.read_image(str(img_path)).to(device=device)
     img = tf_pipeline(img)
 
@@ -783,8 +784,8 @@ class NerfOutputDataGetter(DataGetter):
 
 
 class CameraDataGetter(DataGetter):
-    def __init__(self, info_getter, data_spec):
-        super().__init__(info_getter, data_spec, "camera")
+    def __init__(self, info_getter, data_spec: CameraDataSpec):
+        super().__init__(info_getter, data_spec)
 
         self.is_loaded = False
         self.cameras: Dict[str, Cameras] = {}
@@ -851,17 +852,19 @@ INFO_GETTER_BUILDERS: Dict[str, Callable[[], InfoGetter]] = {
     "pandaset": PandasetInfoGetter,
 }
 
-DATA_GETTER_BUILDERS: Dict[str, Callable[[InfoGetter, Dict[str, Any]], DataGetter]] = {
-    "ref-rgb": NerfOutputDataGetter,
-    "gt-rgb": RGBDataGetter,
-    "gt": RGBDataGetter,
-    "rgb": RGBDataGetter,
-    "meta": MetaDataGetter,
-    "lidar": LidarDataGetter,
-    "prompt": PromptDataGetter,
-    "intrinsics": IntrinsicsDataGetter,
-    "pose": PoseDataGetter,
-}
+DATA_GETTER_BUILDERS: Dict[str, Callable[[InfoGetter, DataSpec], DataGetter]] = cast(
+    Dict[str, Callable[[InfoGetter, DataSpec], DataGetter]],
+    {
+        "ref-rgb": NerfOutputDataGetter,
+        "gt-rgb": RGBDataGetter,
+        "gt": RGBDataGetter,
+        "rgb": RGBDataGetter,
+        "lidar": LidarDataGetter,
+        "prompt": PromptDataGetter,
+        "intrinsics": IntrinsicsDataGetter,
+        "pose": PoseDataGetter,
+    },
+)
 
 
 @dataclass(init=True, slots=True, frozen=True)
