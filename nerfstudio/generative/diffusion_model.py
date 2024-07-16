@@ -53,23 +53,13 @@ from transformers import (
 )
 
 from nerfstudio.generative.utils import (
+    DTYPE_CONVERSION,
     get_device,
     batch_if_not_iterable,
 )
 from nerfstudio.generative.dynamic_dataset import (
     ConditioningSignalInfo,
 )
-
-
-default_prompt = ""
-default_negative_prompt = ""
-
-LOWER_DTYPES = {"fp16", "bf16"}
-DTYPE_CONVERSION = {
-    "fp32": torch.float32,
-    "fp16": torch.float16,
-    "bf16": torch.bfloat16,
-}
 
 
 def _make_metric(name, device, **kwargs):

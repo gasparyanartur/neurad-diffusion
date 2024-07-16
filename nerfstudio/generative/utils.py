@@ -183,3 +183,13 @@ def modules_equal(m1, m2) -> bool:
                 return False
 
     return True
+
+
+default_prompt = ""
+default_negative_prompt = ""
+LOWER_DTYPES = {"fp16", "bf16"}
+DTYPE_CONVERSION = {
+    "fp32": torch.float32,
+    "fp16": torch.float16,
+    "bf16": torch.bfloat16,
+}

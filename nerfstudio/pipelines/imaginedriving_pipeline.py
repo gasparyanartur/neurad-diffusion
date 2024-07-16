@@ -42,11 +42,11 @@ from nerfstudio.data.datamanagers.ad_datamanager import (
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
 from nerfstudio.data.dataparsers.ad_dataparser import OPENCV_TO_NERFSTUDIO
+from nerfstudio.generative.utils import DTYPE_CONVERSION
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.utils import profiler
 from nerfstudio.generative.diffusion_model import (
-    DTYPE_CONVERSION,
     DiffusionModel,
     DiffusionModelConfig,
     HFStableDiffusionModel,

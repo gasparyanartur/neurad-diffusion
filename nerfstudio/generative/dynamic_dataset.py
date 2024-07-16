@@ -1,5 +1,6 @@
 import typing
-from typing import Any, Dict, List, Set, Union, Optional, Tuple
+from pydantic import BaseModel
+from typing import Any, Dict, List, Set, Union, Optional, Tuple, cast
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
 from collections.abc import Iterable, Generator, Callable
@@ -25,7 +26,12 @@ from torchvision.transforms import v2 as tvtf
 import torchvision
 import logging
 
-from nerfstudio.generative.utils import get_env, set_env, set_if_no_key
+from nerfstudio.generative.utils import (
+    DTYPE_CONVERSION,
+    get_env,
+    set_env,
+    set_if_no_key,
+)
 import pyquaternion
 
 
@@ -302,7 +308,9 @@ def _pandaset_pose_to_matrix(pandaset_pose):
             pandaset_pose["heading"]["z"],
         ]
     )
-    pose[:3, :3] = torch.from_numpy(pyquaternion.Quaternion(quaternion).rotation_matrix)
+    pose[:3, :3] = torch.from_numpy(
+        pyquaternion.Quaternion(quaternion).rotation_matrix @ OPENCV_TO_NERFSTUDIO
+    )
     translation = torch.tensor(
         [
             pandaset_pose["position"]["x"],
@@ -361,30 +369,43 @@ def crop_to_ray_idxs(cam_idxs, crop_top_left, crop_size) -> Tensor:
     return idxs
 
 
-@dataclass
-class DataSpec(ABC):
+class DataSpec(BaseModel):
     name: str
 
 
-@dataclass
 class CameraDataSpec(DataSpec):
     camera: str
     shift: str
 
 
-@dataclass
 class LidarDataSpec(DataSpec):
     shift: str
 
 
-@dataclass
 class RgbDataSpec(CameraDataSpec):
-    num_channels: int
+    num_channels: int = 3
+    width: int = 1920
+    height: int = 1080
+    dtype: str = "fp32"
+    normalize: bool = True
 
 
-@dataclass
+class NerfOutputSpec(CameraDataSpec):
+    nerf_output_path: str
+    data_name: str
+
+
 class PromptDataSpec(DataSpec):
     prompt: str
+
+
+class PoseDataSpec(CameraDataSpec): ...
+
+
+class IntrinsicsDataSpec(CameraDataSpec): ...
+
+
+class TimestampDataSpec(CameraDataSpec): ...
 
 
 _SPLIT_SCORE = {"train": 0, "validation": 1, "test": 2}
@@ -445,16 +466,21 @@ class InfoGetter(ABC):
 
     @abstractmethod
     def get_samples(
-        self, dataset_path: Path, scene: str, specs: Optional[Dict[str, Any]] = None
+        self,
+        dataset_path: Path,
+        dataset: str,
+        scene: str,
+        split: str,
+        spec: Optional[DataSpec] = None,
     ) -> List[SampleInfo]:
         raise NotImplementedError
 
     @abstractmethod
-    def get_path(self, dataset_path: Path, info: "SampleInfo", specs: Dict[str, Any]):
+    def get_path(self, dataset_path: Path, info: SampleInfo, spec: DataSpec):
         raise NotImplementedError
 
     @abstractmethod
-    def get_suffix(self, info: "SampleInfo") -> str:
+    def get_suffix(self, spec: DataSpec) -> str:
         raise NotImplementedError
 
     def parse_tree(
@@ -474,7 +500,9 @@ class InfoGetter(ABC):
                     if isinstance(sample_list, tuple) and len(sample_list) == 3:
                         start_range, end_range, skip_range = sample_list
 
-                        samples = sorted(self.get_samples(dataset_path, scene))
+                        samples = sorted(
+                            self.get_samples(dataset_path, dataset, scene, split)
+                        )
 
                         start_range = start_range or 0
                         end_range = end_range or len(samples)
@@ -503,26 +531,6 @@ class PandasetInfoGetter(InfoGetter):
     def __init__(self) -> None:
         super().__init__("pandaset")
 
-    def _get_sample_dir_path(
-        self, dataset_path, scene, specs: Optional[DataSpec] = None
-    ):
-        if specs is None:
-            data_type = "rgb"
-            camera = "front_camera"
-
-        else:
-            data_type = specs.get("data_type", "rgb")
-            camera = specs.get("camera", "front_camera")
-
-        if data_type in {"rgb", "pose", "intrinsics", "timestamp", "camera"}:
-            return dataset_path / scene / "camera" / camera
-
-        elif data_type == "lidar":
-            return dataset_path / scene / "lidar"
-
-        else:
-            return None
-
     def get_scenes(self, dataset_path: Path, dataset: str, split: str) -> Set[str]:
         return set(path.stem for path in dataset_path.iterdir())
 
@@ -531,6 +539,8 @@ class PandasetInfoGetter(InfoGetter):
             return ".jpg"
         elif isinstance(spec, LidarDataSpec):
             return ".pkl.gz"
+        elif isinstance(spec, NerfOutputSpec):
+            return ".jpg"
         elif isinstance(spec, CameraDataSpec):
             return ""
         else:
@@ -548,6 +558,17 @@ class PandasetInfoGetter(InfoGetter):
             sample_dir = dataset_path / scene / "lidar"
             suffix = self.get_suffix(spec)
 
+        elif isinstance(spec, NerfOutputSpec):
+            sample_dir = (
+                Path(spec.nerf_output_path)
+                / scene
+                / spec.camera
+                / spec.shift
+                / split
+                / spec.data_name
+            )
+            suffix = self.get_suffix(spec)
+
         elif isinstance(spec, CameraDataSpec):
             sample_dir = dataset_path / scene / "camera" / spec.camera
             suffix = self.get_suffix(spec)
@@ -562,6 +583,30 @@ class PandasetInfoGetter(InfoGetter):
         if isinstance(spec, LidarDataSpec):
             sample_path = dataset_path / info.scene / "lidar" / info.sample
 
+        elif isinstance(spec, NerfOutputSpec):
+            sample_path = (
+                Path(spec.nerf_output_path)
+                / info.scene
+                / spec.camera
+                / spec.shift
+                / info.split
+                / spec.data_name
+                / info.sample
+            )
+
+        elif isinstance(spec, RgbDataSpec):
+            sample_path = (
+                dataset_path / info.scene / "camera" / spec.camera / info.sample
+            )
+
+        elif isinstance(spec, PoseDataSpec):
+            sample_path = dataset_path / info.scene / "camera" / spec.camera / "poses"
+
+        elif isinstance(spec, IntrinsicsDataSpec):
+            sample_path = (
+                dataset_path / info.scene / "camera" / spec.camera / "intrinsics"
+            )
+
         elif isinstance(spec, CameraDataSpec):
             sample_path = (
                 dataset_path / info.scene / "camera" / spec.camera / info.sample
@@ -574,137 +619,50 @@ class PandasetInfoGetter(InfoGetter):
         return sample_path
 
 
-class NeuRADInfoGetter(InfoGetter):
-    def __init__(self):
-        raise NotImplementedError
-        super().__init__("neurad")
-
-    def _get_sample_dir_path(
-        self, dataset_path: Path, scene: str, specs: Optional[Dict[str, Any]] = None
-    ) -> Path:
-        if specs is None:
-            specs = {}
-
-        shift = specs.get("shift", "0m")
-        data_type = specs.get("data_type", "rgb")
-        split = specs.get("split", "test")
-        camera = specs.get("camera", "front_left_camera")
-
-        if data_type in {"rgb", "gt-rgb"}:
-            return dataset_path / scene / camera / shift / split / data_type
-
-        else:
-            raise NotImplementedError
-
-    def get_samples(
-        self, dataset_path: Path, scene: str, specs: Dict[str, Any] = None
-    ) -> Generator[str]:
-        sample_dir_path = self._get_sample_dir_path(dataset_path, scene, specs)
-
-        data_type = "rgb" if specs is None else specs.get("data_type", "rgb")
-        suffix = DATA_SUFFIXES[data_type, self.dataset_name]
-
-        for sample_path in sample_dir_path.glob(f"*{suffix}"):
-            yield sample_path.stem
-
-    def get_path(
-        self, dataset_path: Path, info: SampleInfo, specs: Dict[str, Any]
-    ) -> Path:
-        sample_dir_path = self._get_sample_dir_path(dataset_path, info.scene, specs)
-        data_type: str = "rgb" if specs is None else specs.get("data_type", "rgb")
-
-        if data_type in {"rgb", "gt-rgb"}:
-            sample_path = sample_dir_path / info.sample
-
-        else:
-            raise NotImplementedError
-
-        suffix = DATA_SUFFIXES[data_type, self.dataset_name]
-        sample_path = sample_path.with_suffix(suffix)
-
-        return sample_path
-
-
 class DataGetter(ABC):
-    def __init__(
-        self, info_getter: InfoGetter, data_spec: Dict[str, Any], data_type: str
-    ) -> None:
+    def __init__(self, info_getter: InfoGetter, data_spec: DataSpec) -> None:
         super().__init__()
         self.info_getter = info_getter
-        self.data_spec = {**data_spec}
-        self.data_spec["data_type"] = data_type
+        self.data_spec = data_spec
 
     def get_data_path(self, dataset_path: Path, info: SampleInfo) -> Path:
         return self.info_getter.get_path(dataset_path, info, self.data_spec)
-
-    @property
-    def data_type(self) -> str:
-        return self.data_spec["data_type"]
 
     @abstractmethod
     def get_data(self, dataset_path: Path, info: SampleInfo):
         raise NotImplementedError
 
 
-class MetaDataGetter(DataGetter):
-    def __init__(
-        self,
-        info_getter: InfoGetter,
-        data_spec: Dict[str, Any],
-    ):
-        super().__init__(info_getter, data_spec, "meta")
-
-    def get_data(self, dataset_path: Path, info: SampleInfo) -> Dict[str, str]:
-        result = {**asdict(info)}
-        return result
-
-
 class PromptDataGetter(DataGetter):
     def __init__(
         self,
         info_getter: InfoGetter,
-        data_spec: Dict[str, Any],
+        data_spec: PromptDataSpec,
     ):
-        super().__init__(info_getter, data_spec, "prompt")
+        super().__init__(info_getter, data_spec)
+        self.data_spec = data_spec
 
-        type_ = self.data_spec.get("type", "static")
-        if type_ == "static":
-            self.positive_prompt = self.data_spec.get("positive_prompt", "")
-            self.negative_prompt = self.data_spec.get("negative_prompt", "")
-
-        else:
-            raise NotImplementedError
-
-    def get_data(self, dataset_path: Path, info: SampleInfo) -> Dict[str, str]:
-        return {
-            "positive_prompt": self.positive_prompt,
-            "negative_prompt": self.negative_prompt,
-        }
+    def get_data(self, dataset_path: Path, info: SampleInfo) -> str:
+        return self.data_spec.prompt
 
 
 class RGBDataGetter(DataGetter):
     def __init__(
         self,
         info_getter: InfoGetter,
-        data_spec: Dict[str, Any],
+        data_spec: RgbDataSpec,
     ):
-        super().__init__(info_getter, data_spec, data_spec.get("data_type", "rgb"))
-
-        dtype = self.data_spec.get("dtype", torch.float32)
-        rescale = self.data_spec.get("rescale", True)
-        width = self.data_spec.get("width", 1920)
-        height = self.data_spec.get("height", 1080)
-
-        if width is None:
-            width = height
-
-        elif height is None:
-            height = width
+        super().__init__(info_getter, data_spec)
+        self.data_spec = data_spec
 
         self.base_transform = tvtf.Compose(
             [
-                tvtf.ConvertImageDtype(dtype) if rescale else tvtf.ToDtype(dtype),
-                tvtf.Resize((height, width), antialias=True),
+                (
+                    tvtf.ConvertImageDtype(DTYPE_CONVERSION[data_spec.dtype])
+                    if data_spec.normalize
+                    else tvtf.ToDtype(DTYPE_CONVERSION[data_spec.dtype])
+                ),
+                tvtf.Resize((data_spec.height, data_spec.width), antialias=True),
             ]
         )
         self.extra_transform: Optional[tvtf.Compose] = None
@@ -725,21 +683,10 @@ class LidarDataGetter(DataGetter):
     def __init__(
         self,
         info_getter: InfoGetter,
-        data_spec: Dict[str, Any],
+        data_spec: LidarDataSpec,
     ):
-        super().__init__(info_getter, data_spec, "lidar")
-
-        # TODO
-        dtype = self.data_spec.get("dtype", torch.float32)
-        rescale = self.data_spec.get("rescale", True)
-        width = self.data_spec.get("width", 1920)
-        height = self.data_spec.get("height", 1080)
-
-        if width is None:
-            width = height
-
-        elif height is None:
-            height = width
+        super().__init__(info_getter, data_spec)
+        self.data_spec = data_spec
 
     def get_data(self, dataset_path: Path, info: SampleInfo) -> Tensor:
         path = self.get_data_path(dataset_path, info)
@@ -752,31 +699,27 @@ class PoseDataGetter(DataGetter):
     def __init__(
         self,
         info_getter: InfoGetter,
-        data_spec: Dict[str, Any],
+        data_spec: DataSpec,
     ):
-        super().__init__(info_getter, data_spec, "pose")
+        super().__init__(info_getter, data_spec)
 
     def get_data(self, dataset_path: Path, info: SampleInfo) -> Tensor:
         file_path = self.get_data_path(dataset_path, info)
         poses = load_json(file_path)
-        pose_idx = int(info.sample)
-        pose = poses[pose_idx]
+
+        pose = poses[int(info.sample)]
         pose = _pandaset_pose_to_matrix(pose)
 
-        pose[..., :3, :3] = pose[..., :3, :3] @ torch.from_numpy(
-            OPENCV_TO_NERFSTUDIO
-        ).to(dtype=torch.float32, device=pose.device)
-
-        return pose
+        return pose.to(dtype=torch.float32, device=pose.device)
 
 
 class IntrinsicsDataGetter(DataGetter):
     def __init__(
         self,
         info_getter: InfoGetter,
-        data_spec: Dict[str, Any],
+        data_spec: IntrinsicsDataSpec,
     ):
-        super().__init__(info_getter, data_spec, "intrinsics")
+        super().__init__(info_getter, data_spec)
 
     def get_data(self, dataset_path: Path, info: SampleInfo) -> Tensor:
         file_path = self.get_data_path(dataset_path, info)
@@ -858,7 +801,7 @@ class TimestampDataGetter(DataGetter):
         info_getter: InfoGetter,
         data_spec: Dict[str, Any],
     ):
-        super().__init__(info_getter, data_spec, "timestamp")
+        super().__init__(info_getter, data_spec)
 
     def get_data(self, dataset_path: Path, info: SampleInfo) -> float:
         file_path = self.get_data_path(dataset_path, info)
@@ -930,13 +873,11 @@ class CameraDataGetter(DataGetter):
                 f"Tried to call CameraDataGetter without loading data first."
             )
 
-        cam = int(info.sample)
-        return self.cameras[info.scene][cam]
+        return self.cameras[info.scene][int(info.sample)]
 
 
 INFO_GETTER_BUILDERS: Dict[str, Callable[[], InfoGetter]] = {
     "pandaset": PandasetInfoGetter,
-    "neurad": NeuRADInfoGetter,
 }
 
 DATA_GETTER_BUILDERS: Dict[str, Callable[[InfoGetter, Dict[str, Any]], DataGetter]] = {
