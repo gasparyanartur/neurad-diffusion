@@ -121,7 +121,7 @@ datasets:
       rgb: 
         camera: front_left_camera
       
-      ref-rgb:
+      ref-rgb-gt:
         camera: front_left_camera
         path_format: "data/reference_neurad/{scene}/{camera}/{shift}/{split}/{data_name}/{sample}{suffix}"
 

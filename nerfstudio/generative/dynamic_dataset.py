@@ -390,9 +390,11 @@ class RgbDataSpec(CameraDataSpec):
     normalize: bool = True
 
 
-class NerfOutputSpec(CameraDataSpec):
+class NerfOutputSpec(RgbDataSpec):
     nerf_output_path: str
     data_name: str
+    final_size: int = 512
+    crop_to_final_ratio: float = 2.0
 
 
 class PromptDataSpec(DataSpec):
@@ -699,7 +701,7 @@ class PoseDataGetter(DataGetter):
     def __init__(
         self,
         info_getter: InfoGetter,
-        data_spec: DataSpec,
+        data_spec: PoseDataSpec,
     ):
         super().__init__(info_getter, data_spec)
 
@@ -735,71 +737,11 @@ class IntrinsicsDataGetter(DataGetter):
         return intrinsics
 
 
-class PathRgbGetter(DataGetter):
-    def __init__(
-        self,
-        info_getter: InfoGetter,
-        data_spec: Dict[str, Any],
-    ):
-        super().__init__(info_getter, data_spec, "intrinsics")
-        self.path_format = data_spec.get(
-            "path_format",
-            "data/reference_neurad/{scene}/{camera}/{shift}/{split}/{data_name}/{sample}{suffix}",
-        )
-        self.camera = data_spec.get("camera", "front_left_camera")
-        self.shift = data_spec.get("shift", "0m")
-        self.suffix = data_spec.get("suffix", ".jpg")
-
-        self.transform = tvtf.Compose(
-            [
-                tvtf.ConvertImageDtype(torch.float32),
-                tvtf.CenterCrop((1024, 1024)),
-                tvtf.Resize((512, 512), antialias=True),
-            ]
-        )
-
-    def get_data(self, dataset_path: Path, info: SampleInfo) -> Dict[str, Tensor]:
-        # TODO: Generalize, this is very pandaset specific
-
-        sample = int(info.sample)
-        split = (
-            "train"
-            if (
-                (sample == 79) or ((sample % 2 == 0) and sample != 78)
-            )  # For some reason, 78 and 79 are swapped
-            else "test"
-        )
-        # sample = sample // 2
-
-        path_rgb = self.path_format.format(
-            scene=info.scene,
-            camera=self.camera,
-            shift=self.shift,
-            split=split,
-            data_name="rgb",
-            sample=str(sample).rjust(2, "0"),
-            suffix=self.suffix,
-        )
-        path_gt = self.path_format.format(
-            scene=info.scene,
-            camera=self.camera,
-            shift=self.shift,
-            split=split,
-            data_name="gt-rgb",
-            sample=str(sample).rjust(2, "0"),
-            suffix=self.suffix,
-        )
-        rgb = read_image(path_rgb, self.transform)
-        gt = read_image(path_gt, self.transform)
-
-        return {"rgb": rgb, "gt": gt}
-
-
 class TimestampDataGetter(DataGetter):
     def __init__(
         self,
         info_getter: InfoGetter,
-        data_spec: Dict[str, Any],
+        data_spec: TimestampDataSpec,
     ):
         super().__init__(info_getter, data_spec)
 
@@ -809,6 +751,35 @@ class TimestampDataGetter(DataGetter):
         all_timestamps = load_json(file_path)
         timestamp = all_timestamps[int(info.sample)]
         return timestamp
+
+
+class NerfOutputDataGetter(DataGetter):
+    def __init__(
+        self,
+        info_getter: InfoGetter,
+        data_spec: NerfOutputSpec,
+    ):
+        super().__init__(info_getter, data_spec)
+
+        self.transform = tvtf.Compose(
+            [
+                (
+                    tvtf.ConvertImageDtype(DTYPE_CONVERSION[data_spec.dtype])
+                    if data_spec.normalize
+                    else tvtf.ToDtype(DTYPE_CONVERSION[data_spec.dtype])
+                ),
+                tvtf.CenterCrop(
+                    int(data_spec.crop_to_final_ratio * data_spec.final_size)
+                ),
+                tvtf.Resize(data_spec.final_size, antialias=True),
+            ]
+        )
+
+    def get_data(self, dataset_path: Path, info: SampleInfo) -> Tensor:
+        path = self.info_getter.get_path(dataset_path, info, self.data_spec)
+        data = read_image(path, self.transform)
+
+        return data
 
 
 class CameraDataGetter(DataGetter):
@@ -881,7 +852,7 @@ INFO_GETTER_BUILDERS: Dict[str, Callable[[], InfoGetter]] = {
 }
 
 DATA_GETTER_BUILDERS: Dict[str, Callable[[InfoGetter, Dict[str, Any]], DataGetter]] = {
-    "ref-rgb": PathRgbGetter,
+    "ref-rgb": NerfOutputDataGetter,
     "gt-rgb": RGBDataGetter,
     "gt": RGBDataGetter,
     "rgb": RGBDataGetter,
