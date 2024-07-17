@@ -415,6 +415,13 @@ _SPLIT_SCORE = {"train": 0, "validation": 1, "test": 2}
 
 
 @dataclass
+class SampleExtraArguments:
+    crop_size: Optional[Tuple[int, int]] = None
+    crop_top_left: Optional[Tuple[int, int]] = None
+    do_flip: Optional[bool] = None
+
+
+@dataclass
 class SampleInfo:
     dataset: str
     scene: str
@@ -632,7 +639,9 @@ class DataGetter(ABC):
         return self.info_getter.get_path(dataset_path, info, self.data_spec)
 
     @abstractmethod
-    def get_data(self, dataset_path: Path, info: SampleInfo):
+    def get_data(
+        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+    ) -> Any:
         raise NotImplementedError
 
 
@@ -645,7 +654,9 @@ class PromptDataGetter(DataGetter):
         super().__init__(info_getter, data_spec)
         self.data_spec = data_spec
 
-    def get_data(self, dataset_path: Path, info: SampleInfo) -> str:
+    def get_data(
+        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+    ) -> str:
         return self.data_spec.prompt
 
 
@@ -654,30 +665,45 @@ class RGBDataGetter(DataGetter):
         self,
         info_getter: InfoGetter,
         data_spec: RgbDataSpec,
+        transform: Optional[tvtf.Compose] = None,
     ):
         super().__init__(info_getter, data_spec)
         self.data_spec = data_spec
 
-        self.base_transform = tvtf.Compose(
-            [
-                (
-                    tvtf.ConvertImageDtype(DTYPE_CONVERSION[data_spec.dtype])
-                    if data_spec.normalize
-                    else tvtf.ToDtype(DTYPE_CONVERSION[data_spec.dtype])
-                ),
-                tvtf.Resize((data_spec.height, data_spec.width), antialias=True),
-            ]
-        )
+        if transform is None:
+            transform = tvtf.Compose(
+                [
+                    (
+                        tvtf.ConvertImageDtype(DTYPE_CONVERSION[data_spec.dtype])
+                        if data_spec.normalize
+                        else tvtf.ToDtype(DTYPE_CONVERSION[data_spec.dtype])
+                    ),
+                    tvtf.Resize((data_spec.height, data_spec.width), antialias=True),
+                ]
+            )
+
+        self.transform = transform
         self.extra_transform: Optional[tvtf.Compose] = None
 
-    def set_extra_transforms(self, *transforms: tvtf.Transform) -> None:
-        self.extra_transform = tvtf.Compose(transforms)
+    def get_data(
+        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+    ) -> Tensor:
+        rgb_path = self.get_data_path(dataset_path, info)
+        rgb = read_image(rgb_path, self.transform)
 
-    def get_data(self, dataset_path: Path, info: SampleInfo) -> Tensor:
-        rgb = read_image(self.get_data_path(dataset_path, info), self.base_transform)
+        if (extra_args.crop_top_left and not extra_args.crop_size) or (
+            extra_args.crop_size and not extra_args.crop_top_left
+        ):
+            raise ValueError(
+                f"Both crop_top_left and crop_size must be set if either is set."
+            )
 
-        if self.extra_transform:
-            rgb = self.extra_transform(rgb)
+        if extra_args.crop_top_left and extra_args.crop_size:
+            rgb = tvtf.functional.crop(
+                rgb, *extra_args.crop_top_left, *extra_args.crop_size
+            )
+
+        rgb = tvtf.functional.hflip(rgb) if extra_args.do_flip else rgb
 
         return rgb
 
@@ -691,7 +717,9 @@ class LidarDataGetter(DataGetter):
         super().__init__(info_getter, data_spec)
         self.data_spec = data_spec
 
-    def get_data(self, dataset_path: Path, info: SampleInfo) -> Tensor:
+    def get_data(
+        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+    ) -> Tensor:
         path = self.get_data_path(dataset_path, info)
         data = pd.read_pickle(path)
 
@@ -706,7 +734,9 @@ class PoseDataGetter(DataGetter):
     ):
         super().__init__(info_getter, data_spec)
 
-    def get_data(self, dataset_path: Path, info: SampleInfo) -> Tensor:
+    def get_data(
+        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+    ) -> Tensor:
         file_path = self.get_data_path(dataset_path, info)
         poses = load_json(file_path)
 
@@ -724,7 +754,9 @@ class IntrinsicsDataGetter(DataGetter):
     ):
         super().__init__(info_getter, data_spec)
 
-    def get_data(self, dataset_path: Path, info: SampleInfo) -> Tensor:
+    def get_data(
+        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+    ) -> Tensor:
         file_path = self.get_data_path(dataset_path, info)
 
         data = load_json(file_path)
@@ -746,7 +778,9 @@ class TimestampDataGetter(DataGetter):
     ):
         super().__init__(info_getter, data_spec)
 
-    def get_data(self, dataset_path: Path, info: SampleInfo) -> float:
+    def get_data(
+        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+    ) -> float:
         file_path = self.get_data_path(dataset_path, info)
 
         all_timestamps = load_json(file_path)
@@ -776,7 +810,9 @@ class NerfOutputDataGetter(DataGetter):
             ]
         )
 
-    def get_data(self, dataset_path: Path, info: SampleInfo) -> Tensor:
+    def get_data(
+        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+    ) -> Tensor:
         path = self.info_getter.get_path(dataset_path, info, self.data_spec)
         data = read_image(path, self.transform)
 
@@ -839,7 +875,9 @@ class CameraDataGetter(DataGetter):
 
         self.is_loaded = True
 
-    def get_data(self, dataset_path: Path, info: SampleInfo):
+    def get_data(
+        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+    ) -> Cameras:
         if not self.is_loaded:
             raise ValueError(
                 f"Tried to call CameraDataGetter without loading data first."
