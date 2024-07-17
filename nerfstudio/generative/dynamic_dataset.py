@@ -20,6 +20,7 @@ import torchvision
 from nerfstudio.cameras.cameras import CameraType, Cameras
 from nerfstudio.data.dataparsers.ad_dataparser import OPENCV_TO_NERFSTUDIO
 from nerfstudio.data.dataparsers.pandaset_dataparser import AVAILABLE_CAMERAS
+from nerfstudio.model_components.ray_generators import RayGenerator
 
 torchvision.disable_beta_transforms_warning()
 from torchvision.transforms import v2 as tvtf
@@ -97,6 +98,9 @@ def make_img_tf_pipe(
             )
 
     return tvtf.Compose(pipe).to(device=device)
+
+
+
 
 
 DATA_SUFFIXES: Dict[Tuple[str, str], str] = {
@@ -411,14 +415,10 @@ class IntrinsicsDataSpec(CameraDataSpec): ...
 class TimestampDataSpec(CameraDataSpec): ...
 
 
+class RayDataSpec(CameraDataSpec): ...
+
+
 _SPLIT_SCORE = {"train": 0, "validation": 1, "test": 2}
-
-
-@dataclass
-class SampleExtraArguments:
-    crop_size: Optional[Tuple[int, int]] = None
-    crop_top_left: Optional[Tuple[int, int]] = None
-    do_flip: Optional[bool] = None
 
 
 @dataclass
@@ -463,6 +463,25 @@ class SampleInfo:
 
     def __eq__(self, other: "SampleInfo") -> bool:
         return self.__cmp__(other) == 0
+
+def get_cam_idxs(infos: Iterable[SampleInfo]) -> Dict[str, Dict[str, int]]:
+    cam_to_idx = {}
+    for info in infos:
+        if info.scene not in cam_to_idx:
+            cam_to_idx[info.scene] = {}
+
+        cam_to_idx[info.scene][info.sample] = len(cam_to_idx[info.scene])
+    return cam_to_idx
+
+
+@dataclass
+class SampleArguments:
+    dataset_path: Path,
+    sample_info: SampleInfo,
+    crop_size: Optional[Tuple[int, int]] = None
+    crop_top_left: Optional[Tuple[int, int]] = None
+    do_flip: Optional[bool] = None
+
 
 
 class InfoGetter(ABC):
@@ -640,7 +659,7 @@ class DataGetter(ABC):
 
     @abstractmethod
     def get_data(
-        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+        self, args: SampleArguments
     ) -> Any:
         raise NotImplementedError
 
@@ -655,7 +674,7 @@ class PromptDataGetter(DataGetter):
         self.data_spec = data_spec
 
     def get_data(
-        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+        self, args: SampleArguments
     ) -> str:
         return self.data_spec.prompt
 
@@ -686,24 +705,24 @@ class RGBDataGetter(DataGetter):
         self.extra_transform: Optional[tvtf.Compose] = None
 
     def get_data(
-        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+        self, args: SampleArguments
     ) -> Tensor:
-        rgb_path = self.get_data_path(dataset_path, info)
+        rgb_path = self.get_data_path(args.dataset_path, args.sample_info)
         rgb = read_image(rgb_path, self.transform)
 
-        if (extra_args.crop_top_left and not extra_args.crop_size) or (
-            extra_args.crop_size and not extra_args.crop_top_left
+        if (args.crop_top_left and not args.crop_size) or (
+            args.crop_size and not args.crop_top_left
         ):
             raise ValueError(
                 f"Both crop_top_left and crop_size must be set if either is set."
             )
 
-        if extra_args.crop_top_left and extra_args.crop_size:
+        if args.crop_top_left and args.crop_size:
             rgb = tvtf.functional.crop(
-                rgb, *extra_args.crop_top_left, *extra_args.crop_size
+                rgb, *args.crop_top_left, *args.crop_size
             )
 
-        rgb = tvtf.functional.hflip(rgb) if extra_args.do_flip else rgb
+        rgb = tvtf.functional.hflip(rgb) if args.do_flip else rgb
 
         return rgb
 
@@ -718,9 +737,9 @@ class LidarDataGetter(DataGetter):
         self.data_spec = data_spec
 
     def get_data(
-        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+        self, args: SampleArguments
     ) -> Tensor:
-        path = self.get_data_path(dataset_path, info)
+        path = self.get_data_path(args.dataset_path, args.sample_info)
         data = pd.read_pickle(path)
 
         return data
@@ -735,12 +754,12 @@ class PoseDataGetter(DataGetter):
         super().__init__(info_getter, data_spec)
 
     def get_data(
-        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+        self, args: SampleArguments
     ) -> Tensor:
-        file_path = self.get_data_path(dataset_path, info)
+        file_path = self.get_data_path(args.dataset_path, args.sample_info)
         poses = load_json(file_path)
 
-        pose = poses[int(info.sample)]
+        pose = poses[int(args.sample_info.sample)]
         pose = _pandaset_pose_to_matrix(pose)
 
         return pose.to(dtype=torch.float32, device=pose.device)
@@ -755,9 +774,9 @@ class IntrinsicsDataGetter(DataGetter):
         super().__init__(info_getter, data_spec)
 
     def get_data(
-        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+        self, args: SampleArguments
     ) -> Tensor:
-        file_path = self.get_data_path(dataset_path, info)
+        file_path = self.get_data_path(args.dataset_path, args.sample_info)
 
         data = load_json(file_path)
         intrinsics = torch.tensor(
@@ -779,12 +798,12 @@ class TimestampDataGetter(DataGetter):
         super().__init__(info_getter, data_spec)
 
     def get_data(
-        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+        self, args: SampleArguments
     ) -> float:
-        file_path = self.get_data_path(dataset_path, info)
+        file_path = self.get_data_path(args.dataset_path, args.sample_info)
 
         all_timestamps = load_json(file_path)
-        timestamp = all_timestamps[int(info.sample)]
+        timestamp = all_timestamps[int(args.sample_info.sample)]
         return timestamp
 
 
@@ -811,9 +830,9 @@ class NerfOutputDataGetter(DataGetter):
         )
 
     def get_data(
-        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+        self, args: SampleArguments
     ) -> Tensor:
-        path = self.info_getter.get_path(dataset_path, info, self.data_spec)
+        path = self.get_data_path(args.dataset_path, args.sample_info)
         data = read_image(path, self.transform)
 
         return data
@@ -859,13 +878,13 @@ class CameraDataGetter(DataGetter):
 
         for scene, samples in data_tree.items():
             poses = torch.stack(
-                [pose_getter.get_data(dataset_path, info) for info in samples]
+                [pose_getter.get_data(SampleArguments(dataset_path, info)) for info in samples]
             )
             timestamps = torch.tensor(
-                [timestamp_getter.get_data(dataset_path, info) for info in samples]
+                [timestamp_getter.get_data(SampleArguments(dataset_path, info)) for info in samples]
             )
             intrinsics = torch.stack(
-                [intrinsics_getter.get_data(dataset_path, info) for info in samples]
+                [intrinsics_getter.get_data(SampleArguments(dataset_path, info)) for info in samples]
             )
             sensor_idxs = torch.tensor([int(info.sample) for info in samples])
 
@@ -876,15 +895,74 @@ class CameraDataGetter(DataGetter):
         self.is_loaded = True
 
     def get_data(
-        self, dataset_path: Path, info: SampleInfo, extra_args: SampleExtraArguments
+        self, args: SampleArguments
     ) -> Cameras:
         if not self.is_loaded:
             raise ValueError(
                 f"Tried to call CameraDataGetter without loading data first."
             )
 
-        return self.cameras[info.scene][int(info.sample)]
+        return self.cameras[args.sample_info.scene][int(args.sample_info.sample)]
 
+
+class RayDataGetter(CameraDataGetter):
+    def __init__(
+        self,
+        info_getter: InfoGetter,
+        data_spec: RayDataSpec,
+    ):
+        super().__init__(info_getter, data_spec)
+        self.ray_generators = {}
+
+    def load_cameras(
+        self,
+        dataset_path: Path,
+        infos: List[SampleInfo],
+        pose_getter: PoseDataGetter,
+        timestamp_getter: TimestampDataGetter,
+        intrinsics_getter: IntrinsicsDataGetter,
+        img_width: int = 1920,
+        img_height: int = 1080,
+    ):
+        super().load_cameras(
+            dataset_path,
+            infos,
+            pose_getter,
+            timestamp_getter,
+            intrinsics_getter,
+            img_width,
+            img_height,
+        )
+
+        self.ray_generators = {
+            scene: RayGenerator(cameras) for scene, cameras in self.cameras.items()
+        }
+        self.cam_to_idx = get_cam_idxs(infos)
+
+
+    def get_data(
+        self, args: SampleArguments
+    ) -> Tensor:
+        if args.crop_size is None or args.crop_top_left is None:
+            raise ValueError(
+                f"RayDataGetter requires crop_size and crop_top_left to be set."
+            )
+
+        ray_generator = self.ray_generators[args.sample_info.scene]
+
+        cam_idxs = torch.tensor(
+            [self.cam_to_idx[args.sample_info.scene][args.sample_info.sample]] 
+        )
+
+        ray_idxs = crop_to_ray_idxs(cam_idxs, args.crop_top_left, args.crop_size)
+        rays = ray_generator.forward(ray_idxs)
+
+        ray = torch.concat([rays.origins, rays.directions], dim=-1)
+        ray = ray.reshape(
+            args.crop_size[0], args.crop_size[1], 6
+        ).permute(2, 0, 1)
+
+        return ray
 
 INFO_GETTER_BUILDERS: Dict[str, Callable[[], InfoGetter]] = {
     "pandaset": PandasetInfoGetter,

@@ -851,6 +851,7 @@ def prepare_preprocessors(models, train_state: TrainState):
             img_width=train_state.image_width,
             img_height=train_state.image_height,
         )
+
         ray_generators = {
             scene: RayGenerator(cam_getter.cameras[scene]) for scene in unique_scenes
         }
