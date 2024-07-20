@@ -2,9 +2,10 @@ Update Data and Conditioning
 - Add the ExtraArgument to each DataGetter [x]
 - Add preprocessing logic to RGBDataGetter [x]
 - Add RayGetter (maybe merge with camera getter) [x]
-- Add all preprocessing logit to datagetters
-- Remove prepare preprocessing
+- Add all preprocessing logit to datagetters [x]
+- Create dataspec constructor [x]
 - Update dynamic dataset
+- Remove prepare preprocessing 
 - Fix conditioning signals (i don't even know where to start)
 - Add random and center crop to training loop (dynamic dataset?)
 - Test new signals
