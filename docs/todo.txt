@@ -5,6 +5,7 @@ Update Data and Conditioning
 - Add all preprocessing logit to datagetters [x]
 - Create dataspec constructor [x]
 - Update dynamic dataset
+- Make datatree statically typed
 - Remove prepare preprocessing 
 - Fix conditioning signals (i don't even know where to start)
 - Add random and center crop to training loop (dynamic dataset?)

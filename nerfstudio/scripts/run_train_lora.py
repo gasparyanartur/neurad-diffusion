@@ -70,7 +70,7 @@ from nerfstudio.generative.diffusion_model import (
     import_encoder_class_from_model_name_or_path,
 )
 from nerfstudio.generative.dynamic_dataset import (
-    INFO_GETTER_BUILDERS,
+    _INFO_GETTER_BUILDERS,
     CameraDataGetter,
     ConditioningSignalInfo,
     IntrinsicsDataGetter,
@@ -775,7 +775,7 @@ def prepare_preprocessors(models, train_state: TrainState):
 
     dataset_path = Path(dataset["path"])
     data_tree = read_data_tree(dataset["data_tree"])
-    info_getter = INFO_GETTER_BUILDERS[dataset["dataset"]]()
+    info_getter = _INFO_GETTER_BUILDERS[dataset["dataset"]]()
     infos = info_getter.parse_tree(dataset_path, data_tree)
     unique_scenes = {info.scene for info in infos}
     cam_to_idx = {}

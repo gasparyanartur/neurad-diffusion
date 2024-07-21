@@ -1,6 +1,6 @@
 import typing
 from pydantic import BaseModel
-from typing import Any, Dict, List, Set, Union, Optional, Tuple, cast
+from typing import Any, Dict, List, Set, Type, Union, Optional, Tuple, cast
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
 from collections.abc import Iterable, Generator, Callable
@@ -238,6 +238,9 @@ def read_yaml(path: Path) -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 
+DataTreeType = Dict[str, Dict[str, Union[str, List[str]]]]
+
+
 def read_data_tree(
     data_tree: Union[Dict, Path], scene_name_len: int = 3, sample_name_len: int = 2
 ):
@@ -374,6 +377,7 @@ def crop_to_ray_idxs(cam_idxs, crop_top_left, crop_size) -> Tensor:
 
 
 def load_cameras(
+    sample_config: "SampleConfig",
     sample_infos: List["SampleInfo"],
     pose_getter: "PoseDataGetter",
     timestamp_getter: "TimestampDataGetter",
@@ -404,7 +408,7 @@ def load_cameras(
     }
 
     for scene, samples in data_tree.items():
-        args = [SampleArguments(info) for info in samples]
+        args = [construct_sample_argument(sample_config, info) for info in samples]
 
         poses = torch.stack([pose_getter.get_data(arg) for arg in args])
         timestamps = torch.tensor([timestamp_getter.get_data(arg) for arg in args])
@@ -465,22 +469,37 @@ class SampleInfo:
 class DataSpec(BaseModel):
     name: str
 
+    @abstractmethod
+    def get_getter_class(self) -> Type["DataGetter"]:
+        raise NotImplementedError
+
+    def create_getter(
+        self, info_getter: "InfoGetter", sample_config: "SampleConfig"
+    ) -> "DataGetter":
+        return self.get_getter_class()(info_getter, self, sample_config)
+
 
 class CameraDataSpec(DataSpec):
     camera: str
     shift: str
 
-    img_width: int = 1920
-    img_height: int = 1080
+    def get_getter_class(self) -> Type["DataGetter"]:
+        return CameraDataGetter
 
 
 class CaptureDataSpec(DataSpec):
     camera: str
     shift: str
 
+    def get_getter_class(self) -> Type["DataGetter"]:
+        return RGBDataGetter
+
 
 class LidarDataSpec(DataSpec):
     shift: str
+
+    def get_getter_class(self) -> Type["DataGetter"]:
+        return LidarDataGetter
 
 
 class RgbDataSpec(CaptureDataSpec):
@@ -490,12 +509,16 @@ class RgbDataSpec(CaptureDataSpec):
     dtype: str = "fp32"
     normalize: bool = True
 
+    def get_getter_class(self) -> Type["DataGetter"]:
+        return RGBDataGetter
+
 
 class NerfOutputSpec(RgbDataSpec):
     nerf_output_path: str
     data_name: str
-    final_size: int = 512
-    crop_to_final_ratio: float = 2.0
+
+    def get_getter_class(self) -> Type["DataGetter"]:
+        return NerfOutputDataGetter
 
 
 class PromptDataSpec(DataSpec):
@@ -504,17 +527,28 @@ class PromptDataSpec(DataSpec):
     subfolder: str = "tokenizer"
     revision: str = "main"
 
-
-class PoseDataSpec(CaptureDataSpec): ...
-
-
-class IntrinsicsDataSpec(CaptureDataSpec): ...
+    def get_getter_class(self) -> Type["DataGetter"]:
+        return PromptDataGetter
 
 
-class TimestampDataSpec(CaptureDataSpec): ...
+class PoseDataSpec(CaptureDataSpec):
+    def get_getter_class(self) -> Type["DataGetter"]:
+        return PoseDataGetter
 
 
-class RayDataSpec(CameraDataSpec): ...
+class IntrinsicsDataSpec(CaptureDataSpec):
+    def get_getter_class(self) -> Type["DataGetter"]:
+        return IntrinsicsDataGetter
+
+
+class TimestampDataSpec(CaptureDataSpec):
+    def get_getter_class(self) -> Type["DataGetter"]:
+        return TimestampDataGetter
+
+
+class RayDataSpec(CameraDataSpec):
+    def get_getter_class(self) -> Type["DataGetter"]:
+        return RayDataGetter
 
 
 _SPLIT_SCORE = {"train": 0, "validation": 1, "test": 2}
@@ -528,14 +562,6 @@ def get_cam_idxs(infos: Iterable[SampleInfo]) -> Dict[str, Dict[str, int]]:
 
         cam_to_idx[info.scene][info.sample] = len(cam_to_idx[info.scene])
     return cam_to_idx
-
-
-@dataclass
-class SampleArguments:
-    sample_info: SampleInfo
-    crop_size: Optional[Tuple[int, int]] = None
-    crop_top_left: Optional[Tuple[int, int]] = None
-    do_flip: Optional[bool] = None
 
 
 class InfoGetter(ABC):
@@ -704,17 +730,30 @@ class PandasetInfoGetter(InfoGetter):
         return sample_path
 
 
+class SampleArgument(BaseModel):
+    sample_info: SampleInfo
+    crop_size: Optional[Tuple[int, int]] = None
+    crop_top_left: Optional[Tuple[int, int]] = None
+    do_flip: Optional[bool] = None
+
+
 class DataGetter(ABC):
-    def __init__(self, info_getter: InfoGetter, data_spec: DataSpec) -> None:
+    def __init__(
+        self,
+        info_getter: InfoGetter,
+        data_spec: DataSpec,
+        sample_config: "SampleConfig",
+    ) -> None:
         super().__init__()
         self.info_getter = info_getter
         self.data_spec = data_spec
+        self.sample_config = sample_config
 
     def get_data_path(self, info: SampleInfo) -> Path:
         return self.info_getter.get_path(info, self.data_spec)
 
     @abstractmethod
-    def get_data(self, args: SampleArguments) -> Any:
+    def get_data(self, args: SampleArgument) -> Any:
         raise NotImplementedError
 
 
@@ -723,8 +762,9 @@ class PromptDataGetter(DataGetter):
         self,
         info_getter: InfoGetter,
         data_spec: PromptDataSpec,
+        sample_config: "SampleConfig",
     ):
-        super().__init__(info_getter, data_spec)
+        super().__init__(info_getter, data_spec, sample_config)
         self.data_spec = data_spec
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.data_spec.model_id,
@@ -732,7 +772,7 @@ class PromptDataGetter(DataGetter):
             subfolder=self.data_spec.subfolder,
         )
 
-    def get_data(self, args: SampleArguments) -> Tensor:
+    def get_data(self, args: SampleArgument) -> Tensor:
         from nerfstudio.generative.diffusion_model import tokenize_prompt
 
         return tokenize_prompt(self.tokenizer, self.data_spec.prompt)
@@ -743,8 +783,9 @@ class RGBDataGetter(DataGetter):
         self,
         info_getter: InfoGetter,
         data_spec: RgbDataSpec,
+        sample_config: "SampleConfig",
     ):
-        super().__init__(info_getter, data_spec)
+        super().__init__(info_getter, data_spec, sample_config)
         self.data_spec = data_spec
 
         self.transform = tvtf.Compose(
@@ -754,11 +795,13 @@ class RGBDataGetter(DataGetter):
                     if data_spec.normalize
                     else tvtf.ToDtype(DTYPE_CONVERSION[data_spec.dtype])
                 ),
-                tvtf.Resize((data_spec.height, data_spec.width), antialias=True),
+                tvtf.Resize(
+                    (sample_config.img_height, sample_config.img_width), antialias=True
+                ),
             ]
         )
 
-    def get_data(self, args: SampleArguments) -> Tensor:
+    def get_data(self, args: SampleArgument) -> Tensor:
         rgb_path = self.get_data_path(args.sample_info)
         rgb = read_image(rgb_path, self.transform)
 
@@ -782,11 +825,12 @@ class LidarDataGetter(DataGetter):
         self,
         info_getter: InfoGetter,
         data_spec: LidarDataSpec,
+        sample_config: "SampleConfig",
     ):
-        super().__init__(info_getter, data_spec)
+        super().__init__(info_getter, data_spec, sample_config)
         self.data_spec = data_spec
 
-    def get_data(self, args: SampleArguments) -> Tensor:
+    def get_data(self, args: SampleArgument) -> Tensor:
         path = self.get_data_path(args.sample_info)
         data = pd.read_pickle(path)
 
@@ -798,10 +842,11 @@ class PoseDataGetter(DataGetter):
         self,
         info_getter: InfoGetter,
         data_spec: PoseDataSpec,
+        sample_config: "SampleConfig",
     ):
-        super().__init__(info_getter, data_spec)
+        super().__init__(info_getter, data_spec, sample_config)
 
-    def get_data(self, args: SampleArguments) -> Tensor:
+    def get_data(self, args: SampleArgument) -> Tensor:
         file_path = self.get_data_path(args.sample_info)
         poses = load_json(file_path)
 
@@ -816,10 +861,11 @@ class IntrinsicsDataGetter(DataGetter):
         self,
         info_getter: InfoGetter,
         data_spec: IntrinsicsDataSpec,
+        sample_config: "SampleConfig",
     ):
-        super().__init__(info_getter, data_spec)
+        super().__init__(info_getter, data_spec, sample_config)
 
-    def get_data(self, args: SampleArguments) -> Tensor:
+    def get_data(self, args: SampleArgument) -> Tensor:
         file_path = self.get_data_path(args.sample_info)
 
         data = load_json(file_path)
@@ -838,10 +884,11 @@ class TimestampDataGetter(DataGetter):
         self,
         info_getter: InfoGetter,
         data_spec: TimestampDataSpec,
+        sample_config: "SampleConfig",
     ):
-        super().__init__(info_getter, data_spec)
+        super().__init__(info_getter, data_spec, sample_config)
 
-    def get_data(self, args: SampleArguments) -> float:
+    def get_data(self, args: SampleArgument) -> float:
         file_path = self.get_data_path(args.sample_info)
 
         all_timestamps = load_json(file_path)
@@ -854,24 +901,27 @@ class NerfOutputDataGetter(DataGetter):
         self,
         info_getter: InfoGetter,
         data_spec: NerfOutputSpec,
+        sample_config: "SampleConfig",
     ):
-        super().__init__(info_getter, data_spec)
+        super().__init__(info_getter, data_spec, sample_config)
 
-        self.transform = tvtf.Compose(
-            [
-                (
-                    tvtf.ConvertImageDtype(DTYPE_CONVERSION[data_spec.dtype])
-                    if data_spec.normalize
-                    else tvtf.ToDtype(DTYPE_CONVERSION[data_spec.dtype])
-                ),
-                tvtf.CenterCrop(
-                    int(data_spec.crop_to_final_ratio * data_spec.final_size)
-                ),
-                tvtf.Resize(data_spec.final_size, antialias=True),
-            ]
-        )
+        tf_layers = [
+            (
+                tvtf.ConvertImageDtype(DTYPE_CONVERSION[data_spec.dtype])
+                if data_spec.normalize
+                else tvtf.ToDtype(DTYPE_CONVERSION[data_spec.dtype])
+            ),
+            tvtf.Resize(
+                (sample_config.img_height, sample_config.img_width),
+                antialias=True,
+            ),
+        ]
+        if sample_config.crop_size:
+            tf_layers.append(tvtf.CenterCrop(sample_config.crop_size))
 
-    def get_data(self, args: SampleArguments) -> Tensor:
+        self.transform = tvtf.Compose(tf_layers)
+
+    def get_data(self, args: SampleArgument) -> Tensor:
         path = self.get_data_path(args.sample_info)
         data = read_image(path, self.transform)
 
@@ -883,35 +933,45 @@ class CameraDataGetter(DataGetter):
         self,
         info_getter: InfoGetter,
         data_spec: CameraDataSpec,
+        sample_config: "SampleConfig",
     ):
-        super().__init__(info_getter, data_spec)
+        super().__init__(info_getter, data_spec, sample_config)
+
+        if info_getter.dataset_name == "pandaset" and data_spec.camera == "back":
+            raise NotImplementedError(
+                "Back camera not supported yet for backcamera (needs 1080-250 height)."
+            )
 
         self.cam_to_idx = get_cam_idxs(self.info_getter.sample_infos)
         self.cameras: Dict[str, Cameras] = load_cameras(
+            sample_config,
             self.info_getter.sample_infos,
             PoseDataGetter(
                 info_getter,
                 PoseDataSpec(
                     name="pose", camera=data_spec.camera, shift=data_spec.shift
                 ),
+                sample_config,
             ),
             TimestampDataGetter(
                 info_getter,
                 TimestampDataSpec(
                     name="timestamp", camera=data_spec.camera, shift=data_spec.shift
                 ),
+                sample_config,
             ),
             IntrinsicsDataGetter(
                 info_getter,
                 IntrinsicsDataSpec(
                     name="pose", camera=data_spec.camera, shift=data_spec.shift
                 ),
+                sample_config,
             ),
-            data_spec.img_width,
-            data_spec.img_height,
+            sample_config.img_width,
+            sample_config.img_height,
         )
 
-    def get_data(self, args: SampleArguments) -> Cameras:
+    def get_data(self, args: SampleArgument) -> Cameras:
         return self.cameras[args.sample_info.scene][int(args.sample_info.sample)]
 
 
@@ -920,13 +980,14 @@ class RayDataGetter(CameraDataGetter):
         self,
         info_getter: InfoGetter,
         data_spec: RayDataSpec,
+        sample_config: "SampleConfig",
     ):
-        super().__init__(info_getter, data_spec)
+        super().__init__(info_getter, data_spec, sample_config)
         self.ray_generators = {
             scene: RayGenerator(cameras) for scene, cameras in self.cameras.items()
         }
 
-    def get_data(self, args: SampleArguments) -> Tensor:
+    def get_data(self, args: SampleArgument) -> Tensor:
         if args.crop_size is None or args.crop_top_left is None:
             raise ValueError(
                 f"RayDataGetter requires crop_size and crop_top_left to be set."
@@ -947,237 +1008,122 @@ class RayDataGetter(CameraDataGetter):
         return ray
 
 
-INFO_GETTER_BUILDERS: Dict[str, Callable[[], InfoGetter]] = {
-    "pandaset": PandasetInfoGetter,
-}
-
-DATA_GETTER_BUILDERS: Dict[str, Callable[[InfoGetter, DataSpec], DataGetter]] = cast(
-    Dict[str, Callable[[InfoGetter, DataSpec], DataGetter]],
+_INFO_GETTER_BUILDERS = cast(
+    Dict[str, Callable[[Path, Dict], InfoGetter]],
     {
-        "ref-rgb": NerfOutputDataGetter,
-        "gt-rgb": RGBDataGetter,
-        "gt": RGBDataGetter,
-        "rgb": RGBDataGetter,
-        "lidar": LidarDataGetter,
-        "prompt": PromptDataGetter,
-        "intrinsics": IntrinsicsDataGetter,
-        "pose": PoseDataGetter,
+        "pandaset": PandasetInfoGetter,
     },
 )
 
 
-@dataclass(init=True, slots=True, frozen=True)
-class ConditioningSignalInfo:
-    cn_type: str
-    num_channels: int
-    camera: str
-    data_type: Optional[str] = None
+def get_info_getter(dataset_name: str, dataset_path: Path, data_tree: Dict[str, Any]):
+    return _INFO_GETTER_BUILDERS[dataset_name](dataset_path, data_tree)
 
-    @staticmethod
-    def from_signal_name(name: str) -> Optional["ConditioningSignalInfo"]:
-        pattern_match = CN_SIGNAL_PATTERN.match(name)
-        if not pattern_match:
-            return None
 
-        group = pattern_match.groupdict()
-        group["num_channels"] = int(group["num_channels"])
-        if group["cn_type"] in DATA_GETTER_BUILDERS:
-            group["data_type"] = group["cn_type"]
+def construct_data_getters(
+    info_getter: InfoGetter,
+    data_specs: Dict[str, DataSpec],
+    sample_config: "SampleConfig",
+):
+    return {
+        spec_name: spec.create_getter(info_getter, sample_config)
+        for spec_name, spec in data_specs.items()
+    }
 
-        return ConditioningSignalInfo(**group)
 
-    @property
-    def name(self):
-        return f"cn_{self.cn_type}_{self.num_channels}_{self.camera}"
+class SampleConfig(BaseModel):
+    rgb_flip_prob: float = 0
+    random_crop: bool = False
+    crop_size: Optional[Tuple[int, int]] = (512, 512)
+    img_height: int = 1080
+    img_width: int = 1920
+
+
+class DatasetConfig(BaseModel):
+    dataset_name: str
+    dataset_path: Path
+    data_specs: Dict[str, DataSpec]
+    data_tree: DataTreeType
+    sample_config: SampleConfig
+
+
+def construct_sample_argument(
+    sample_config: SampleConfig, sample_info: SampleInfo
+) -> SampleArgument:
+
+    if sample_config.crop_size:
+        crop_size = sample_config.crop_size
+
+        if sample_config.random_crop:
+            cy = int(
+                torch.randint(0, sample_config.img_height - crop_size[0], (1,)).item()
+            )
+            cx = int(
+                torch.randint(0, sample_config.img_width - crop_size[1], (1,)).item()
+            )
+            top_left = (cy, cx)
+
+        else:  # center_crop
+            top_left = (
+                (sample_config.img_height - crop_size[0]) // 2,
+                (sample_config.img_width - crop_size[1]) // 2,
+            )
+
+    else:
+        top_left = crop_size = None
+
+    do_flip = torch.rand(1).item() < sample_config.rgb_flip_prob
+
+    return SampleArgument(
+        sample_info=sample_info,
+        crop_size=crop_size,
+        crop_top_left=top_left,
+        do_flip=do_flip,
+    )
 
 
 class DynamicDataset(Dataset):  # Dataset / Scene / Sample
     def __init__(
         self,
-        dataset_path: Path,
-        data_tree: Dict[str, Any],
-        info_getter: InfoGetter,
-        data_getters: Dict[str, DataGetter],
-        data_transforms: Dict[str, Callable[[str], int]] = None,
-        preprocess_func=None,
+        dataset_config: DatasetConfig,
+        info_getter: Optional[InfoGetter] = None,
+        data_getters: Optional[Dict[str, DataGetter]] = None,
     ):
-        self.sample_infos: list[SampleInfo] = info_getter.parse_tree(
-            dataset_path, data_tree
+        self.dataset_config = dataset_config
+        self.info_getter = info_getter or get_info_getter(
+            dataset_config.dataset_name,
+            dataset_config.dataset_path,
+            dataset_config.data_tree,
         )
-        self.info_getter = info_getter
-        self.data_getters = data_getters
-        self.dataset_path = dataset_path
-        self.preprocess_func = preprocess_func
-
-        for getter in data_getters.values():
-            if getter.data_spec["data_type"] == "camera":
-                cam_getter = typing.cast(CameraDataGetter, getter)
-                cam = cam_getter.data_spec.get("camera", "front")
-                cam_getter.load_cameras(
-                    dataset_path,
-                    self.sample_infos,
-                    PoseDataGetter(info_getter, {"data_type": "pose", "camera": cam}),
-                    TimestampDataGetter(
-                        info_getter, {"data_type": "timestamp", "camera": cam}
-                    ),
-                    IntrinsicsDataGetter(
-                        info_getter, {"data_type": "intrinsics", "camera": cam}
-                    ),
-                    img_width=1920,  # Hardcoded for now
-                    img_height=1080 if cam != "back" else 1080 - 250,
-                )
-
-        self.data_transforms = {**data_transforms} if data_transforms else {}
-        for data_type in data_getters.keys():
-            if data_type not in self.data_transforms:
-                self.data_transforms[data_type] = []
-
-        self.reset_index()
-
-    def reset_index(self):
-        self.idxs = np.arange(len(self.sample_infos))
-
-    def shuffle_index(self):
-        np.random.shuffle(self.idxs)
-
-    def limit_size(self, size: float | int):
-        if size is None:
-            size = self.true_len
-
-        elif isinstance(size, float):
-            size = int(self.true_len * size)
-
-        self.idxs = self.idxs[:size]
-
-    @property
-    def true_len(self):
-        return len(self.sample_infos)
-
-    @classmethod
-    def from_config(cls, dataset_config: Union[Path, Dict[str, Any]], **kwargs):
-        if isinstance(dataset_config, Path):
-            dataset_config = read_yaml(dataset_config)
-            dataset_config = typing.cast(Dict[str, Any], dataset_config)
-
-        dataset_path = Path(dataset_config["path"])
-        data_tree = read_data_tree(dataset_config["data_tree"])
-        dataset_name = dataset_config["dataset"]
-
-        info_getter_factory = INFO_GETTER_BUILDERS[dataset_name]
-        info_getter = info_getter_factory()
-
-        data_getters = {}
-
-        for spec_name, spec in dataset_config["data_getters"].items():
-            data_type = spec.get("data_type")
-            if not data_type:
-                if spec_name in DATA_GETTER_BUILDERS:
-                    data_type = spec_name
-
-                elif signal_info := ConditioningSignalInfo.from_signal_name(spec_name):
-                    if not signal_info.data_type:
-                        continue
-
-                    data_type = signal_info.data_type
-
-                else:
-                    raise NotImplementedError(
-                        f"Could not find a builder for {data_type}"
-                    )
-
-            spec["name"] = spec_name
-
-            data_getter_factory = DATA_GETTER_BUILDERS[data_type]
-            data_getter = data_getter_factory(info_getter, spec)
-
-            data_getters[spec_name] = data_getter
-
-        return DynamicDataset(
-            dataset_path, data_tree, info_getter, data_getters, **kwargs
+        self.data_getters = data_getters or (
+            construct_data_getters(
+                self.info_getter,
+                dataset_config.data_specs,
+                dataset_config.sample_config,
+            )
         )
 
     @property
     def name(self) -> str:
         return self.info_getter.dataset_name
 
-    def iter_range(
-        self, id: int = 0, id_start: int = 0, id_stop: int = 0, verbose: bool = True
-    ):
-        """Iterate cyclically with a range, such that a specific offset is matched with the right index.
-            Example: (id: 14, id_start: 10, id_stop: 25)
-                id=10 should be assigned i=0, id=11 gets i=1, etc...
-                This continues until id=25, after which it repeats at id=10.
-                We therefore get the map:
-                {10: 0, 11: 1, 12: 2, 13: 3, 14: 4, ...,
-                 10: 15, 11: 16, 12: 17, 13: 18, 14: 19, ...}
-                Thus, id=14 will be assigned indexes 4, 19, 34, 49, ..., until the dataset is exhausted.
-
-        Args:
-            id: Offset between the id range and index range. Defaults to 0.
-            id_start: Starting index of the cycle. Defaults to 0.
-            id_stop (int, optional): Final id in the index range before restarting the cycle. Defaults to 0.
-            verbose: Whether or not to log each index. Defaults to True.
-
-        Yields:
-            Sample at specified index.
-        """
-        assert id_start <= id <= id_stop
-
-        skip = id_stop - id_start + 1
-        start = id - id_start
-        stop = len(self)
-
-        for i in range(start, stop, skip):
-            if verbose:
-                logging.info(f"Sample {i}/{stop} (skip: {skip})")
-
-            yield self[i]
-
     def __len__(self) -> int:
-        return len(self.idxs)
+        return len(self.info_getter.sample_infos)
 
     def __iter__(self) -> Generator[Dict[str, Any], None, None]:
         for i in range(len(self)):
             yield self[i]
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        i = self.idxs[idx]
-
-        info = self.sample_infos[i]
+        info = self.info_getter.sample_infos[idx]
         sample = {}
 
+        sample_argument = construct_sample_argument(
+            self.dataset_config.sample_config, info
+        )
+
         for data_type, getter in self.data_getters.items():
-            data = getter.get_data(self.dataset_path, info)
-
-            for data_transform in self.data_transforms[data_type]:
-                data = data_transform(data)
-
+            data = getter.get_data(sample_argument)
             sample[data_type] = data
 
-        if self.preprocess_func:
-            sample = self.preprocess_func(sample)
-
         return sample
-
-    def iter_attrs(
-        self, attrs: Iterable[str]
-    ) -> Generator[Tuple[Any, ...], None, None]:
-        for sample in self:
-            yield tuple(sample[attr] for attr in attrs)
-
-    def get_matching(
-        self, other: "DynamicDataset", match_attrs: Iterable[str] = ("scene", "sample")
-    ) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
-        match_dict = {}
-        for sample_self in self:
-            sample_query = tuple(sample_self[attr] for attr in match_attrs)
-            match_dict[sample_query] = sample_self
-
-        matches = []
-        for sample_other in other:
-            sample_query = tuple(sample_other[attr] for attr in match_attrs)
-            if sample_query in match_dict:
-                sample_self = match_dict[sample_query]
-                matches.append((sample_self, sample_other))
-
-        return matches
