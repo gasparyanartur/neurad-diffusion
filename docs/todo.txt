@@ -4,10 +4,10 @@ Update Data and Conditioning
 - Add RayGetter (maybe merge with camera getter) [x]
 - Add all preprocessing logit to datagetters [x]
 - Create dataspec constructor [x]
-- Update dynamic dataset
-- Make datatree statically typed
-- Remove prepare preprocessing 
-- Fix conditioning signals (i don't even know where to start)
+- Update dynamic dataset [x]
+- Make datatree statically typed [x]
+- Remove prepare preprocessing [x]
+- Update run_train_lora with new dynamic dataset
 - Add random and center crop to training loop (dynamic dataset?)
 - Test new signals
 

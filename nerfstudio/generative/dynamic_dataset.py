@@ -1,5 +1,6 @@
 import typing
-from pydantic import BaseModel
+from typing_extensions import Annotated
+from pydantic import BaseModel, StringConstraints
 from typing import Any, Dict, List, Set, Type, Union, Optional, Tuple, cast
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
@@ -238,71 +239,38 @@ def read_yaml(path: Path) -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 
-DataTreeType = Dict[str, Dict[str, Union[str, List[str]]]]
+SampleNameString = Annotated[str, StringConstraints(pattern=re.compile(r"\d{2}"))]
+SceneNameString = Annotated[str, StringConstraints(pattern=re.compile(r"\d{3}"))]
+SplitNameString = Annotated[str, StringConstraints(pattern=re.compile(r"\w+"))]
+DatasetNameString = Annotated[str, StringConstraints(pattern=re.compile(r"[\w-]+"))]
 
 
-def read_data_tree(
-    data_tree: Union[Dict, Path], scene_name_len: int = 3, sample_name_len: int = 2
-):
-    if isinstance(data_tree, (str, Path)):
-        data_tree = Path(data_tree)
-        data_tree = read_yaml(data_tree)
+class DatasetTreeSample(BaseModel):
+    sample_name: SampleNameString
 
-    dataset_dict = {}
-    for dataset_name, dataset in data_tree.items():
-        scene_dict = {}
-        for scene_name, scene in dataset.items():
-            if isinstance(scene, str):
-                if scene == "*":
-                    sample_list = (None, None, None)
 
-                elif RANGE_SEP in scene:
-                    sample_list = scene.strip().split(RANGE_SEP)
-                    assert len(sample_list) == 3
+class DatasetTreeScene(BaseModel, ABC):
+    scene_name: SceneNameString
 
-                    start_range = int(sample_list[0]) if sample_list[0] != "" else None
-                    end_range = int(sample_list[1]) if sample_list[1] != "" else None
-                    skip_range = int(sample_list[2]) if sample_list[2] != "" else None
 
-                    sample_list = (start_range, end_range, skip_range)
+class DatasetTreeSceneList(DatasetTreeScene):
+    samples: List[DatasetTreeSample]
 
-                else:
-                    raise NotImplementedError
 
-            else:
-                sample_list = []
-                for sample in scene:
-                    sample = str(sample)
-                    sample = sample.replace(" ", "")
-                    if sample.isdigit():
-                        sample = sample.rjust(sample_name_len, "0")
-                        sample_list.append(sample)
-                    else:
-                        assert "-" in sample
-                        sample_from, sample_to = sample.split("-")
-                        assert sample_from.isdigit() and sample_to.isdigit()
-                        sample_list.extend(
-                            iter_numeric_names(
-                                sample_from, sample_to, fixed_len=sample_name_len
-                            )
-                        )
+class DatasetTreeSceneRange(DatasetTreeScene):
+    start_scene: Optional[SampleNameString]
+    end_scene: Optional[SampleNameString]
+    skip_scene: Optional[int]
 
-            scene_name = str(scene_name)
-            if scene_name.isdigit():
-                scene_name = scene_name.rjust(scene_name_len, "0")
-                scene_dict[scene_name] = sample_list
-            else:
-                assert "-" in scene_name
-                scene_from, scene_to = scene_name.split("-")
-                assert scene_from.isdigit() and scene_to.isdigit()
 
-                for new_scene_name in iter_numeric_names(
-                    scene_from, scene_to, fixed_len=scene_name_len
-                ):
-                    scene_dict[new_scene_name] = sample_list
+class DatasetTreeSplit(BaseModel):
+    split_name: SplitNameString
+    scenes: Dict[SceneNameString, DatasetTreeScene]
 
-        dataset_dict[dataset_name] = scene_dict
-    return dataset_dict
+
+class DatasetTree(BaseModel):
+    dataset_name: DatasetNameString
+    splits: Dict[SplitNameString, DatasetTreeSplit]
 
 
 def _pandaset_pose_to_matrix(pandaset_pose):
@@ -398,7 +366,7 @@ def load_cameras(
     assert (info.dataset == dataset for info in sample_infos)
 
     unique_scenes = {info.scene for info in sample_infos}
-    data_tree = {
+    scenes = {
         scene: [
             info
             for info in sample_infos
@@ -407,7 +375,7 @@ def load_cameras(
         for scene in unique_scenes
     }
 
-    for scene, samples in data_tree.items():
+    for scene, samples in scenes.items():
         args = [construct_sample_argument(sample_config, info) for info in samples]
 
         poses = torch.stack([pose_getter.get_data(arg) for arg in args])
@@ -566,12 +534,12 @@ def get_cam_idxs(infos: Iterable[SampleInfo]) -> Dict[str, Dict[str, int]]:
 
 class InfoGetter(ABC):
     def __init__(
-        self, dataset_name: str, dataset_path: Path, data_tree: Dict[str, Any]
+        self, dataset_name: str, dataset_path: Path, dataset_tree: DatasetTree
     ) -> None:
         super().__init__()
         self.dataset_name = dataset_name
         self.dataset_path = dataset_path
-        self.data_tree = data_tree
+        self.data_tree = dataset_tree
         self.sample_infos: List[SampleInfo] = []
 
         self._parse_tree()
@@ -600,40 +568,49 @@ class InfoGetter(ABC):
     def _parse_tree(self) -> None:
         self.sample_infos = []
 
-        for dataset, dataset_dict in self.data_tree.items():
-            for split, split_dict in dataset_dict.items():
-                existing_scenes = self.get_scenes(split)
+        for split_name, split_tree in self.data_tree.splits.items():
+            existing_scenes = self.get_scenes(split_name)
 
-                for scene, sample_list in split_dict.items():
-                    if scene not in existing_scenes:
+            for scene_name, sample_tree in split_tree.scenes.items():
+                if scene_name not in existing_scenes:
+                    continue
+
+                if isinstance(sample_tree, DatasetTreeSceneRange):
+                    samples = sorted(self.get_samples(scene_name, split_name))
+
+                    start_range = (
+                        int(sample_tree.start_scene) if sample_tree.start_scene else 0
+                    )
+                    end_range = (
+                        int(sample_tree.end_scene)
+                        if sample_tree.end_scene
+                        else len(samples)
+                    )
+                    skip_range = sample_tree.skip_scene or 1
+
+                    sample_infos = samples[start_range:end_range:skip_range]
+
+                elif isinstance(sample_tree, DatasetTreeSceneList):
+                    if not sample_tree:
                         continue
 
-                    if isinstance(sample_list, tuple) and len(sample_list) == 3:
-                        start_range, end_range, skip_range = sample_list
+                    assert isinstance(sample_tree, list)
+                    assert isinstance(sample_tree[0], str)
 
-                        samples = sorted(self.get_samples(scene, split))
-
-                        start_range = start_range or 0
-                        end_range = end_range or len(samples)
-                        skip_range = skip_range or 1
-
-                        self.sample_infos.extend(
-                            samples[start_range:end_range:skip_range]
+                    sample_infos = [
+                        SampleInfo(
+                            self.data_tree.dataset_name,
+                            scene_name,
+                            sample.sample_name,
+                            split_name,
                         )
+                        for sample in sample_tree.samples
+                    ]
 
-                    else:
-                        if not sample_list:
-                            continue
+                else:
+                    raise NotImplementedError
 
-                        assert isinstance(sample_list, list)
-                        assert isinstance(sample_list[0], str)
-
-                        self.sample_infos.extend(
-                            [
-                                SampleInfo(dataset, scene, sample, split)
-                                for sample in sample_list
-                            ]
-                        )
+                self.sample_infos.extend(sample_infos)
 
 
 class PandasetInfoGetter(InfoGetter):
@@ -1016,7 +993,7 @@ _INFO_GETTER_BUILDERS = cast(
 )
 
 
-def get_info_getter(dataset_name: str, dataset_path: Path, data_tree: Dict[str, Any]):
+def get_info_getter(dataset_name: str, dataset_path: Path, data_tree: DatasetTree):
     return _INFO_GETTER_BUILDERS[dataset_name](dataset_path, data_tree)
 
 
@@ -1043,7 +1020,7 @@ class DatasetConfig(BaseModel):
     dataset_name: str
     dataset_path: Path
     data_specs: Dict[str, DataSpec]
-    data_tree: DataTreeType
+    data_tree: DatasetTree
     sample_config: SampleConfig
 
 

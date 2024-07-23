@@ -73,8 +73,11 @@ from nerfstudio.generative.dynamic_dataset import (
     _INFO_GETTER_BUILDERS,
     CameraDataGetter,
     ConditioningSignalInfo,
+    DatasetConfig,
     IntrinsicsDataGetter,
     PoseDataGetter,
+    RgbDataSpec,
+    SampleConfig,
     SampleInfo,
     TimestampDataGetter,
     crop_to_ray_idxs,
@@ -233,6 +236,22 @@ class TrainState:
     guidance_scale: float = 0
     do_classifier_free_guidance: bool = True
 
+    train_dataset_config: DatasetConfig = DatasetConfig(
+        dataset_path=Path("data/pandaset"),
+        dataset_name="pandaset",
+        data_specs={
+            "rgb": RgbDataSpec("rgb", "front", "0m"),  # TODO
+        },
+        sample_config=SampleConfig(
+            rgb_flip_prob=0,
+            random_crop=True,
+            crop_size=(512, 512),
+            image_height=1080,
+            image_width=1920,
+        ),
+        data_tree={},
+    )
+
     def update_values(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -344,83 +363,6 @@ def generate_timestep_weights(args, num_timesteps):
     weights /= weights.sum()
 
     return weights
-
-
-def preprocess_rgb(
-    batch, preprocessors, target_size: Tuple[int, int], center_crop: bool
-):
-    # preprocess rgb:
-    # out: rgb, original_size, crop_top_left, target_size
-
-    rgb = batch["rgb"]
-
-    th, tw = target_size
-    h0, w0 = rgb.shape[-2:]
-
-    if resizer := preprocessors.get("resizer"):
-        rgb = resizer(rgb)
-
-    if flipper := preprocessors.get("flipper"):
-        rgb = flipper(rgb)
-
-    if cropper := preprocessors.get("cropper"):
-        if center_crop:
-            cy = (h0 - th) // 2
-            cx = (w0 - tw) // 2
-            rgb = cropper(rgb)
-
-        else:
-            cy, cx, h, w = cropper.get_params(rgb, target_size)
-            rgb = transforms.functional.crop(rgb, cy, cx, h, w)
-    else:
-        cx, cy = 0, 0
-        h, w = h0, w0
-
-    original_size = torch.tensor((h0, w0))
-    target_size = torch.tensor(target_size)
-    crop_top_left = torch.tensor((cy, cx), device=rgb.device)
-
-    return {
-        "rgb": rgb,
-        "original_size": original_size,
-        "crop_top_left": crop_top_left,
-        "target_size": target_size,
-    }
-
-
-def preprocess_prompt(batch, models):
-    prompt = batch["prompt"]["positive_prompt"]
-
-    assert "tokenizer" in models
-
-    if isinstance(prompt, list):
-        prompt = tuple(prompt)
-
-    input_ids = tokenize_prompt(models["tokenizer"], prompt)[0]
-    return {"input_ids": input_ids}
-
-
-def preprocess_ray(
-    batch: Dict[str, Any],
-    ray_generators: Dict[str, RayGenerator],
-    cam_to_idx: Dict[str, Dict[str, int]],
-) -> Dict[str, Tensor]:
-    crop_size: Tensor = batch["target_size"]
-    crop_top_left: Tensor = batch["crop_top_left"]
-    meta: SampleInfo = batch["meta"]
-
-    ray_generator = ray_generators[meta.scene]
-    cam_idxs = torch.tensor(
-        [cam_to_idx[meta.scene][meta.sample]], device=crop_top_left.device
-    )
-    ray_idxs = crop_to_ray_idxs(cam_idxs, crop_top_left, crop_size)
-    rays = ray_generator.forward(ray_idxs)
-
-    ray = torch.concat([rays.origins, rays.directions], dim=-1)
-    ray = ray.reshape(int(crop_size[0].item()), int(crop_size[1].item()), 6).permute(
-        2, 0, 1
-    )
-    return {"ray": ray}
 
 
 def preprocess_sample(
@@ -729,149 +671,6 @@ def find_checkpoint_paths(
     cp_paths = [d for d in path.iterdir() if d.name.startswith(cp_prefix)]
     cp_paths = sorted(cp_paths, key=lambda d: int(d.name.split(cp_delim)[1]))
     return cp_paths
-
-
-def prepare_rgb_preprocess_steps(
-    train_state: TrainState, is_split_train: bool, crop_size, downsample_size
-):
-    steps = {}
-
-    steps["resizer"] = transforms.Resize(
-        downsample_size,
-        interpolation=transforms.InterpolationMode.BILINEAR,
-        antialias=True,
-    )
-
-    if is_split_train:
-        steps["flipper"] = transforms.RandomHorizontalFlip(p=train_state.flip_prob)
-
-        steps["cropper"] = (
-            transforms.CenterCrop(crop_size)
-            if train_state.center_crop
-            else transforms.RandomCrop(crop_size)
-        )
-
-    else:
-        steps["cropper"] = transforms.CenterCrop(crop_size)
-
-    return steps
-
-
-def prepare_preprocessors(models, train_state: TrainState):
-    crop_height = train_state.crop_height or train_state.image_height
-    crop_width = train_state.crop_width or train_state.image_width
-    resize_factor = train_state.resize_factor or 1
-
-    crop_size = (
-        nearest_multiple(crop_height * resize_factor, 8),
-        nearest_multiple(crop_width * resize_factor, 8),
-    )
-    downsample_size = (
-        nearest_multiple(train_state.image_height * resize_factor, 8),
-        nearest_multiple(train_state.image_width * resize_factor, 8),
-    )
-
-    dataset = train_state.datasets["train_data"]  # Assume train and val the same
-
-    dataset_path = Path(dataset["path"])
-    data_tree = read_data_tree(dataset["data_tree"])
-    info_getter = _INFO_GETTER_BUILDERS[dataset["dataset"]]()
-    infos = info_getter.parse_tree(dataset_path, data_tree)
-    unique_scenes = {info.scene for info in infos}
-    cam_to_idx = {}
-    for info in infos:
-        if info.scene not in cam_to_idx:
-            cam_to_idx[info.scene] = {}
-
-        cam_to_idx[info.scene][info.sample] = len(cam_to_idx[info.scene])
-
-    preprocessors = {"train": {}, "val": {}}
-
-    _train_rgb_preprocess_steps = prepare_rgb_preprocess_steps(
-        train_state, True, crop_size, downsample_size
-    )
-    _val_rgb_preprocess_steps = prepare_rgb_preprocess_steps(
-        train_state, False, crop_size, downsample_size
-    )
-
-    rgb_keys = ["rgb"]
-    ref_keys = ["ref-rgb"]
-    ray_keys = []
-    prompt_keys = ["prompt"]
-
-    ray_cams = {}
-
-    for signal_info in train_state.conditioning_signal_infos:
-        match signal_info.cn_type:
-            case "rgb":
-                rgb_keys.append(signal_info.name)
-            case "ray":
-                ray_keys.append(signal_info.name)
-                ray_cams[signal_info.name] = signal_info.camera
-            case "prompt":
-                prompt_keys.append(signal_info.name)
-            case _:
-                raise NotImplementedError
-
-    # It is important that the Ray preprocesors occur after the RGB ones, since they need the output
-    preprocessor_order = []
-
-    for key in rgb_keys:
-        preprocessor_order.append(key)
-        preprocessors["train"][key] = functools.partial(
-            preprocess_rgb,
-            preprocessors=_train_rgb_preprocess_steps,
-            target_size=crop_size,
-            center_crop=train_state.center_crop,
-        )
-
-        preprocessors["val"][key] = functools.partial(
-            preprocess_rgb,
-            preprocessors=_val_rgb_preprocess_steps,
-            target_size=crop_size,
-            center_crop=True,
-        )
-
-    for key in ref_keys:
-        preprocessor_order.append(key)
-
-    for key in ray_keys:
-        preprocessor_order.append(key)
-
-        cam = ray_cams[key]
-        cam_getter = CameraDataGetter(info_getter, {"camera": cam})
-        cam_getter.load_cameras(
-            dataset_path,
-            infos,
-            PoseDataGetter(info_getter, {"data_type": "pose", "camera": cam}),
-            TimestampDataGetter(info_getter, {"data_type": "timestamp", "camera": cam}),
-            IntrinsicsDataGetter(
-                info_getter, {"data_type": "intrinsics", "camera": cam}
-            ),
-            img_width=train_state.image_width,
-            img_height=train_state.image_height,
-        )
-
-        ray_generators = {
-            scene: RayGenerator(cam_getter.cameras[scene]) for scene in unique_scenes
-        }
-
-        preprocessors["train"][key] = functools.partial(
-            preprocess_ray, ray_generators=ray_generators, cam_to_idx=cam_to_idx
-        )
-        preprocessors["val"][key] = functools.partial(
-            preprocess_ray, ray_generators=ray_generators, cam_to_idx=cam_to_idx
-        )
-
-    for key in prompt_keys:
-        preprocessor_order.append(key)
-        preprocessors["train"][key] = functools.partial(
-            preprocess_prompt, models=models
-        )
-
-        preprocessors["val"][key] = functools.partial(preprocess_prompt, models=models)
-
-    return preprocessors, preprocessor_order
 
 
 def get_diffusion_noise(
@@ -1695,7 +1494,6 @@ def main(args: Namespace) -> None:
     # ===   Setup data   ===
     # ======================
 
-    preprocessors, key_order = prepare_preprocessors(models, train_state)
     train_dataset = DynamicDataset.from_config(
         train_state.datasets["train_data"],
         preprocess_func=functools.partial(
