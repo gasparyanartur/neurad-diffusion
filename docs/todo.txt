@@ -7,8 +7,13 @@ Update Data and Conditioning
 - Update dynamic dataset [x]
 - Make datatree statically typed [x]
 - Remove prepare preprocessing [x]
-- Update run_train_lora with new dynamic dataset
+- Update TrainState to use DynamicDataset [x]
+- Refactor TrainState to use Pydantic [x]
+- Update run_train_lora with new dynamic dataset [ ]
+- Move dynamic fields out from train_state
+- Add meta by default to DynamicDataset
 - Add random and center crop to training loop (dynamic dataset?)
+- Replace "best" metric to be dynamic
 - Test new signals
 
 Start ControlNet

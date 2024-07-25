@@ -130,37 +130,10 @@ def save_yaml(path: Path, data: Dict[str, Any]):
         yaml.dump(data, f, default_flow_style=False)
 
 
-def setup_project(config_path: Path, override_values: Dict[str, Any] = {}):
-    logging.getLogger().setLevel(logging.INFO)
-
-    if not torch.cuda.is_available():
-        logging.warning(
-            f"CUDA not detected. Running on CPU. The code is not supported for CPU and will most likely give incorrect results. Proceed with caution."
-        )
-
-    if "config_path" in override_values:
-        config_path = Path(override_values.pop("config_path"))
-
-    if config_path is None:
-        project_dir = get_env("PROJECT_DIR") or Path.cwd()
-        config_path = project_dir / "proj_config.yml"
-        if not config_path.exists():
-            raise ValueError(f"No config path specified")
-
-    else:
-        if not config_path.exists():
-            raise ValueError(f"Could not find config at specified path: {config_path}")
-
-    config = read_yaml(config_path)
-    config.update(override_values)
-
-    project_dir = config.get("project_path") or get_env("PROJECT_DIR", Path.cwd())
-    cache_dir = config.get("cache_dir") or get_env("CACHE_DIR", project_dir / ".cache")
+def setup_project(cache_dir: Path, logging_level: int = logging.INFO):
 
     set_env("HF_HUB_CACHE", cache_dir / "hf")  # Huggingface cache dir
     set_env("MPLCONFIGDIR", cache_dir / "mpl")  # Matplotlib cache dir
-
-    return config
 
 
 def img_float_to_img(img: Tensor):

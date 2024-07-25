@@ -12,6 +12,8 @@ from dataclasses import dataclass, asdict, field
 import math
 import itertools as it
 
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
 import torch.utils
 import torch.utils.data
 import tqdm
@@ -72,8 +74,12 @@ from nerfstudio.generative.diffusion_model import (
 from nerfstudio.generative.dynamic_dataset import (
     _INFO_GETTER_BUILDERS,
     CameraDataGetter,
-    ConditioningSignalInfo,
+    DataSpec,
     DatasetConfig,
+    DatasetTree,
+    DatasetTreeSample,
+    DatasetTreeSceneList,
+    DatasetTreeSplit,
     IntrinsicsDataGetter,
     PoseDataGetter,
     RgbDataSpec,
@@ -81,7 +87,6 @@ from nerfstudio.generative.dynamic_dataset import (
     SampleInfo,
     TimestampDataGetter,
     crop_to_ray_idxs,
-    read_data_tree,
     read_yaml,
     save_yaml,
     setup_project,
@@ -113,22 +118,20 @@ from nerfstudio.model_components.ray_generators import RayGenerator
 check_min_version("0.27.0")
 logger = get_logger(__name__, log_level="INFO")
 
-LORA_MODEL_PREFIX = "lora_"
-
-
 metric_improvement_direction = {"lpips": "<", "ssim": ">", "psnr": ">"}
 
 
-@dataclass(init=True)
-class TrainState:
-    job_id: Optional[str] = None
+class TrainState(BaseSettings):
+    output_dir: Path = Field()
+    cache_dir: Path = Field()
+    logging_dir: Path = Field()
+
+    job_id: str = Field(default="0", alias="slurm_job_id")
     project_name: str = "ImagineDriving"
-    project_dir: Optional[str] = None
-    cache_dir: Optional[str] = None
-    datasets: Dict[str, Any] = field(default_factory=dict)
 
-    prediction_type: Optional[str] = None
+    checkpoint_path: Optional[str] = None
 
+    noise_scheduler_prediction_type: Optional[str] = None
     enable_gradient_checkpointing: bool = False
 
     checkpoint_strategy: str = "best"
@@ -136,18 +139,15 @@ class TrainState:
     max_num_checkpoints: int = (
         0  # How many checkpoints, besides the latest, that will be stored
     )
-    checkpoint_path: Optional[str] = None
 
     n_epochs: int = 100
     max_train_samples: Optional[int] = None
     val_freq: int = 10
     frac_dataset_per_epoch: float = 1.0
 
-    # https://www.crosslabs.org//blog/diffusion-with-offset-noise
-    noise_offset: float = 0
-
-    # https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    allow_tf32: bool = True
+    allow_tf32: bool = (
+        True  # https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
+    )
     torch_backend: str = "cudagraphs"
 
     scale_lr: bool = False
@@ -162,46 +162,32 @@ class TrainState:
     adam_epsilon: float = 1e-08
     snr_gamma: Optional[float] = None
     max_grad_norm: float = 1.0
-
-    conditioning_signal_infos: List[ConditioningSignalInfo] = field(
-        default_factory=lambda: []
+    noise_offset: float = (
+        0  # https://www.crosslabs.org//blog/diffusion-with-offset-noise
     )
 
     rec_loss_strength: float = 0.1
 
-    max_train_steps: Optional[int] = None  # Gets set later
-    num_update_steps_per_epoch: Optional[int] = None  # Gets set later
+    max_train_steps: int = -1
+    num_update_steps_per_epoch: int = -1
 
+    # TODO: Make these global, not in train_states
     global_step: int = 0
     epoch: int = 0
-
     best_ssim: float = 0
     best_saved_ssim: float = 0
 
-    compile_models: List[str] = field(default_factory=list)
+    compile_models: List[str] = []
 
     # "linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"]'
     lr_scheduler: str = "constant"
     lr_warmup_steps: int = 500
-    lr_scheduler_kwargs: Dict[str, Any] = field(default_factory=dict)
+    lr_scheduler_kwargs: Dict[str, Any] = {}
 
-    image_width: int = 1920
-    image_height: int = 1080
-
-    center_crop: bool = False
-    flip_prob: float = 0.5
-
-    crop_height: float = 512
-    crop_width: float = 512
-    resize_factor: float = 1.0
-
-    loggers: List[str] = field(default_factory=list)
+    loggers: List[str] = []
     wandb_project: str = "ImagineDriving"
     wandb_entity: str = "arturruiqi"
     wandb_group: str = "finetune-lora"
-
-    output_dir: Optional[str] = None
-    logging_dir: Optional[str] = None
 
     push_to_hub: bool = False  # Not Implemented
     hub_token: Optional[str] = None
@@ -224,51 +210,70 @@ class TrainState:
     val_noise_strength: float = 0.25
     use_cached_tokens: bool = True
 
-    lora_base_ranks: Dict[str, int] = field(
-        default_factory=lambda: {"unet": 4, "controlnet": 4, "text_encoder": 4}
-    )
+    lora_base_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4, "text_encoder": 4}
     use_dora: bool = False
     lora_model_prefix: str = "lora_"
 
-    conditioning_signals: List[str] = field(default_factory=lambda: [])
-    models_to_train_lora: List[str] = field(default_factory=list)
+    conditioning_signals: List[str] = []
+    models_to_train_lora: List[str] = []
 
     guidance_scale: float = 0
     do_classifier_free_guidance: bool = True
 
+    image_width: int = 1920
+    image_height: int = 1080
+
+    center_crop: bool = False
+    flip_prob: float = 0.5
+
+    crop_height: float = 512
+    crop_width: float = 512
+    resize_factor: float = 1.0
+
     train_dataset_config: DatasetConfig = DatasetConfig(
         dataset_path=Path("data/pandaset"),
         dataset_name="pandaset",
-        data_specs={
-            "rgb": RgbDataSpec("rgb", "front", "0m"),  # TODO
-        },
+        data_specs=cast(
+            Dict[str, DataSpec],
+            {
+                "rgb": RgbDataSpec(name="rgb", camera="front", shift="0m"),  # TODO
+            },
+        ),
         sample_config=SampleConfig(
             rgb_flip_prob=0,
             random_crop=True,
             crop_size=(512, 512),
-            image_height=1080,
-            image_width=1920,
+            img_height=1080,
+            img_width=1920,
         ),
-        data_tree={},
+        data_tree=DatasetTree(
+            dataset_name="pandaset",
+            splits={
+                "train": DatasetTreeSplit(
+                    split_name="train",
+                    scenes={
+                        "001": DatasetTreeSceneList(
+                            scene_name="001",
+                            samples=[DatasetTreeSample(sample_name="01")],
+                        )
+                    },
+                ),
+                "val": DatasetTreeSplit(
+                    split_name="val",
+                    scenes={
+                        "001": DatasetTreeSceneList(
+                            scene_name="001",
+                            samples=[DatasetTreeSample(sample_name="01")],
+                        )
+                    },
+                ),
+            },
+        ),
     )
 
     def update_values(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
-
-
-def init_job_id(train_state: TrainState) -> None:
-    if train_state.job_id is not None:
-        return
-
-    if "SLURM_JOB_ID" in os.environ:
-        train_state.job_id = os.environ["SLURM_JOB_ID"]
-        return
-    logger.warning(
-        f"Could not find SLURM_JOB_ID or predefined job_id, setting job_id to 0"
-    )
-    train_state.job_id = "0"
-    return
 
 
 def unwrap_model(accelerator: Accelerator, model, unpeft: bool = True):
@@ -279,29 +284,6 @@ def unwrap_model(accelerator: Accelerator, model, unpeft: bool = True):
         model = model.base_model.model
 
     return model
-
-
-def parse_args():
-    parser = ArgumentParser(
-        "train_model", description="Finetune a given model on a dataset"
-    )
-    parser.add_argument("config_path", type=Path)
-    parser.add_argument("--n_epochs", type=int, default=None)
-    parser.add_argument("--noise_strength", type=float, default=None)
-    parser.add_argument("--scene", type=str, default=None)
-    parser.add_argument("--model_type", type=str, default=None)
-    parser.add_argument("--snr_gamma", type=float, default=None)
-    parser.add_argument("--learning_rate", type=float, default=None)
-    parser.add_argument(
-        "--lora_base_ranks", type=str, default=None, help='{"model_name":lora_rank}'
-    )
-    parser.add_argument("--dataloader_num_workers", type=int, default=None)
-    parser.add_argument("--use_debug_metrics", action="store_true")
-    parser.add_argument("--use_recreation_loss", action="store_true")
-    parser.add_argument("--conditioning", nargs="*", default=None)
-
-    args = parser.parse_args()
-    return args
 
 
 def get_diffusion_config_from_train_state(
@@ -475,9 +457,7 @@ def save_lora_weights(
         unwrapped_model = unwrap_model(accelerator, loaded_model, unpeft=False)
         models_to_save[model_name] = unwrapped_model
 
-    dst_dir = Path(
-        cast(str, train_state.output_dir), cast(str, train_state.job_id), dir_name
-    )
+    dst_dir = train_state.output_dir / train_state.job_id / dir_name
     dst_dir.mkdir(exist_ok=True, parents=True)
 
     for model_name, model in models_to_save.items():
@@ -567,10 +547,10 @@ def load_model_hook(
         model_name = model_dir.name
 
         # Assuming adapter name is same as model name prefixed with lora_ (i.e. lora_unet, lora_text_encoder, lora_controlnet)
-        if not model_name.startswith(LORA_MODEL_PREFIX):
+        if not model_name.startswith(train_state.lora_model_prefix):
             continue
 
-        model_name = model_name[len(LORA_MODEL_PREFIX) :]
+        model_name = model_name[len(train_state.lora_model_prefix) :]
 
         if model_name not in loaded_models_dict:
             logger.warning(
@@ -607,9 +587,7 @@ def load_model_hook(
 
 def save_checkpoint(accelerator: Accelerator, train_state: TrainState) -> None:
     # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-    output_dir = Path(
-        typing.cast(str, train_state.output_dir), typing.cast(str, train_state.job_id)
-    )
+    output_dir = train_state.output_dir / train_state.job_id
 
     if train_state.max_num_checkpoints is not None:
         cp_paths = find_checkpoint_paths(output_dir)
@@ -634,35 +612,32 @@ def save_checkpoint(accelerator: Accelerator, train_state: TrainState) -> None:
 
 
 def resume_from_checkpoint(accelerator, train_state: TrainState):
-    if train_state.checkpoint_path:
+    if train_state.checkpoint_path is None:
+        train_state.global_step = 0
+        return
 
-        if train_state.checkpoint_path == "latest":
-            # Get the most recent checkpoint
-            cp_paths = find_checkpoint_paths(
-                Path(cast(str, train_state.output_dir), cast(str, train_state.job_id))
+    if train_state.checkpoint_path == "latest":
+        # Get the most recent checkpoint
+        cp_paths = find_checkpoint_paths(train_state.output_dir / train_state.job_id)
+
+        if len(cp_paths) == 0:
+            accelerator.print(
+                f"Checkpoint '{train_state.checkpoint_path}' does not exist. Starting a new training run."
             )
+            return
 
-            if len(cp_paths) == 0:
-                accelerator.print(
-                    f"Checkpoint '{train_state.checkpoint_path}' does not exist. Starting a new training run."
-                )
-                return
-
-            path = cp_paths[-1]
-
-        else:
-            path = Path(train_state.checkpoint_path)
-
-        accelerator.print(f"Resuming from checkpoint {path}")
-        accelerator.load_state(path)
-
-        train_state.global_step = int(path.name.split("-")[-1])
-        train_state.epoch = cast(int, train_state.global_step) // cast(
-            int, train_state.num_update_steps_per_epoch
-        )
+        path = cp_paths[-1]
 
     else:
-        train_state.global_step = 0
+        path = Path(train_state.checkpoint_path)
+
+    accelerator.print(f"Resuming from checkpoint {path}")
+    accelerator.load_state(path)
+
+    train_state.global_step = int(path.name.split("-")[-1])
+    train_state.epoch = cast(int, train_state.global_step) // cast(
+        int, train_state.num_update_steps_per_epoch
+    )
 
 
 def find_checkpoint_paths(
@@ -693,9 +668,11 @@ def get_diffusion_loss(
     noise_scheduler = models["noise_scheduler"]
 
     # Get the target for loss depending on the prediction type
-    if train_state.prediction_type is not None:
+    if train_state.noise_scheduler_prediction_type is not None:
         # set prediction_type of scheduler if defined
-        noise_scheduler.register_to_config(prediction_type=train_state.prediction_type)
+        noise_scheduler.register_to_config(
+            prediction_type=train_state.noise_scheduler_prediction_type
+        )
 
     match noise_scheduler.config.prediction_type:
         case "epsilon":
@@ -1289,80 +1266,20 @@ def train_epoch(
     train_state.epoch += 1
 
 
-def main(args: Namespace) -> None:
+def main() -> None:
     # ========================
     # ===   Setup script   ===
     # ========================
 
-    config = setup_project(args.config_path)
+    logging.getLogger().setLevel(logging.INFO)
+    if not torch.cuda.is_available():
+        logging.warning(
+            f"CUDA not detected. Running on CPU. The code is not supported for CPU and will most likely give incorrect results. Proceed with caution."
+        )
 
-    train_state = TrainState(
-        **config
-    )  # TODO: Implement `from_config` to enable support for dataclasses
+    train_state = TrainState()
 
-    if args.n_epochs is not None:
-        train_state.n_epochs = args.n_epochs
-
-    if args.noise_strength is not None:
-        train_state.train_noise_strength = args.noise_strength
-        train_state.val_noise_strength = args.noise_strength
-
-    if args.scene is not None:
-        new_datasets = {}
-        for dataset_name, dataset in train_state.datasets:
-            scene_list = list(dataset.keys())
-            if not len(scene_list) == 1:
-                raise ValueError(
-                    f"Cannot override scene if there is more than one scene per dataset"
-                )
-
-            new_datasets[dataset_name] = {}
-            for scene in scene_list:
-                new_datasets[dataset_name][args.scene] = dataset[scene]
-        train_state.datasets = new_datasets
-
-    if args.model_type is not None:
-        train_state.model_type = args.model_type
-
-        if args.model_type == "sd":
-            if "controlnet" in train_state.models_to_train_lora:
-                train_state.models_to_train_lora.remove("controlnet")
-
-            train_state.conditioning_signals = []
-            train_state.conditioning_signal_infos = []
-
-        elif args.model_type == "cn":
-            if "controlnet" not in train_state.models_to_train_lora:
-                train_state.models_to_train_lora.append("controlnet")
-
-            if not train_state.conditioning_signals and not args.conditioning:
-                raise ValueError(f"Cannot run controlnet with no conditioning signals")
-
-    if args.snr_gamma is not None:
-        train_state.snr_gamma = args.snr_gamma
-
-    if args.learning_rate is not None:
-        train_state.learning_rate = args.learning_rate
-
-    if args.lora_base_ranks is not None:
-        parsed_lora_base_ranks = json.loads(args.lora_base_ranks)
-        for k, v in parsed_lora_base_ranks.items():
-            if k not in train_state.lora_base_ranks.keys():
-                raise ValueError(f"Could not set lora base rank of model with name {k}")
-
-            train_state.lora_base_ranks[k] = v
-
-    if args.dataloader_num_workers is not None:
-        train_state.dataloader_num_workers = args.dataloader_num_workers
-
-    if args.use_debug_metrics:
-        train_state.use_debug_metrics = True
-
-    if args.use_recreation_loss:
-        train_state.use_recreation_loss = True
-
-    if args.conditioning is not None:
-        train_state.conditioning_signals = args.conditioning
+    setup_project(train_state.cache_dir)
 
     accelerator = Accelerator(
         gradient_accumulation_steps=train_state.gradient_accumulation_steps,
@@ -1371,22 +1288,14 @@ def main(args: Namespace) -> None:
         ),
         log_with=train_state.loggers,
         project_config=ProjectConfiguration(
-            project_dir=train_state.output_dir,
-            logging_dir=train_state.logging_dir,
+            project_dir=str(train_state.output_dir),
+            logging_dir=str(train_state.logging_dir),
         ),
         kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)],
     )
-    init_job_id(train_state)
     logger.info(f"Launching script under id: {train_state.job_id}")
     logger.info(
         f"Number of cuda detected devices: {torch.cuda.device_count()}, Using device: {accelerator.device}, distributed: {accelerator.distributed_type}"
-    )
-
-    train_state.conditioning_signal_infos.extend(
-        [
-            ConditioningSignalInfo.from_signal_name(signal)
-            for signal in train_state.conditioning_signals
-        ]
     )
 
     logging.basicConfig(
@@ -1418,9 +1327,9 @@ def main(args: Namespace) -> None:
         )
 
     if accelerator.is_main_process:
-        Path(train_state.output_dir).mkdir(exist_ok=True, parents=True)
-        Path(train_state.output_dir, train_state.job_id).mkdir(exist_ok=True)
-        Path(train_state.logging_dir).mkdir(exist_ok=True)
+        train_state.output_dir.mkdir(exist_ok=True, parents=True)
+        (train_state.output_dir / train_state.job_id).mkdir(exist_ok=True)
+        train_state.logging_dir.mkdir(exist_ok=True)
 
         if train_state.push_to_hub:
             raise NotImplementedError
@@ -1750,5 +1659,4 @@ def main(args: Namespace) -> None:
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    main()
