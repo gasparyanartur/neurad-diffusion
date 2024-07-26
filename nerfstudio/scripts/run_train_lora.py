@@ -177,8 +177,6 @@ class TrainState(BaseSettings):
     best_ssim: float = 0
     best_saved_ssim: float = 0
 
-    compile_models: List[str] = []
-
     # "linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"]'
     lr_scheduler: str = "constant"
     lr_warmup_steps: int = 500
@@ -198,27 +196,15 @@ class TrainState(BaseSettings):
 
     seed: Optional[int] = None
 
-    model_type: str = DiffusionModelType.sd
-    model_id: str = DiffusionModelId.sd_v2_1
-    revision: Optional[str] = "main"
-    variant: Optional[str] = None
-    dtype: str = "fp32"
-
     train_noise_strength: float = 0.5
     train_noise_num_steps: Optional[int] = None
-    val_noise_num_steps: int = 50
-    val_noise_strength: float = 0.25
     use_cached_tokens: bool = True
 
     lora_base_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4, "text_encoder": 4}
     use_dora: bool = False
     lora_model_prefix: str = "lora_"
 
-    conditioning_signals: List[str] = []
-    models_to_train_lora: List[str] = []
-
-    guidance_scale: float = 0
-    do_classifier_free_guidance: bool = True
+    conditioning_signals: Tuple[str, ...] = ()
 
     image_width: int = 1920
     image_height: int = 1080
@@ -229,6 +215,23 @@ class TrainState(BaseSettings):
     crop_height: float = 512
     crop_width: float = 512
     resize_factor: float = 1.0
+
+    diffusion_config: DiffusionModelConfig = DiffusionModelConfig(
+        model_type=DiffusionModelType.sd,
+        model_id=DiffusionModelId.sd_v2_1,
+        dtype="fp32",
+        noise_strength=0.2,
+        num_inference_steps=50,
+        enable_progress_bar=False,
+        lora_weights=None,
+        models_to_train_lora=("unet",),
+        models_to_load_lora=(),
+        lora_base_ranks={"unet": 4, "controlnet": 4, "text_encoder": 4},
+        use_dora=True,
+        lora_model_prefix="lora_",
+        conditioning_signals=conditioning_signals,
+        guidance_scale=0,
+    )
 
     train_dataset_config: DatasetConfig = DatasetConfig(
         dataset_path=Path("data/pandaset"),
@@ -284,26 +287,6 @@ def unwrap_model(accelerator: Accelerator, model, unpeft: bool = True):
         model = model.base_model.model
 
     return model
-
-
-def get_diffusion_config_from_train_state(
-    train_state: TrainState, lora_weights_dir: str
-):
-    configs = DiffusionModelConfig(
-        model_type=train_state.model_type,
-        model_id=train_state.model_id,
-        lora_weights=lora_weights_dir,
-        noise_strength=train_state.val_noise_strength,
-        num_inference_steps=train_state.val_noise_num_steps,
-        conditioning_signals=train_state.conditioning_signals,
-        guidance_scale=train_state.guidance_scale,
-        do_classifier_free_guidance=train_state.do_classifier_free_guidance,
-        models_to_train_lora=train_state.models_to_train_lora,
-        lora_base_ranks=train_state.lora_base_ranks,
-        use_dora=train_state.use_dora,
-        dtype=train_state.dtype,
-    )
-    return configs
 
 
 def generate_timestep_weights(args, num_timesteps):
@@ -445,7 +428,8 @@ def save_lora_weights(
         return
 
     trainable_models = {
-        model: models[model] for model in train_state.models_to_train_lora
+        model: models[model]
+        for model in train_state.diffusion_config.models_to_train_lora
     }
     models_to_save: Dict[str, Dict[str, Union[nn.Module, Tensor]]] = {}
     other_models = {}
@@ -516,8 +500,7 @@ def save_model_hook(
 
         model.save_pretrained(str(dst_dir))
 
-    configs = get_diffusion_config_from_train_state(train_state, str(dst_dir))
-    save_yaml(dst_dir / "config.yml", asdict(configs))
+    save_yaml(dst_dir / "config.yml", train_state.dict())
 
 
 def load_model_hook(
@@ -554,7 +537,7 @@ def load_model_hook(
 
         if model_name not in loaded_models_dict:
             logger.warning(
-                f"Found weights {model_name} in weight directory, but model not found in {train_state.models_to_train_lora}. Skipping"
+                f"Found weights {model_name} in weight directory, but model not found in {train_state.diffusion_config.models_to_train_lora}. Skipping"
             )
         model = loaded_models_dict[model_name]
         loaded_models_dict[model_name] = PeftModel.from_pretrained(
@@ -562,11 +545,11 @@ def load_model_hook(
         )
 
     # Make sure the trainable params are in float32.
-    if train_state.dtype in LOWER_DTYPES:
+    if train_state.diffusion_config.dtype in LOWER_DTYPES:
         models_to_cast = [
             loaded_model
             for model_name, loaded_model in loaded_models_dict.items()
-            if model_name in train_state.models_to_train_lora
+            if model_name in train_state.diffusion_config.models_to_train_lora
         ]
         cast_training_params(models_to_cast, dtype=torch.float32)
 
@@ -674,16 +657,15 @@ def get_diffusion_loss(
             prediction_type=train_state.noise_scheduler_prediction_type
         )
 
-    match noise_scheduler.config.prediction_type:
-        case "epsilon":
-            target = noise
-        case "v_prediction":
-            # TODO: Update this with timesteps
-            target = noise_scheduler.get_velocity(model_input, noise, timesteps)
-        case _:
-            raise ValueError(
-                f"Unknown prediction type {noise_scheduler.config.prediction_type}"
-            )
+    if noise_scheduler.config.prediction_type == "epsilon":
+        target = noise
+    elif noise_scheduler.config.prediction_type == "v_prediction":
+        # TODO: Update this with timesteps
+        target = noise_scheduler.get_velocity(model_input, noise, timesteps)
+    else:
+        raise ValueError(
+            f"Unknown prediction type {noise_scheduler.config.prediction_type}"
+        )
 
     if train_state.snr_gamma is None:
         loss = nn.functional.mse_loss(
@@ -718,41 +700,7 @@ def prepare_models(
     # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
 
-    models = {}
-    models["noise_scheduler"] = DDPMScheduler.from_pretrained(
-        train_state.model_id, subfolder="scheduler"
-    )
-    models["tokenizer"] = AutoTokenizer.from_pretrained(
-        train_state.model_id,
-        subfolder="tokenizer",
-        revision=train_state.revision,
-        use_fast=False,
-    )
-    text_encoder_cls = import_encoder_class_from_model_name_or_path(
-        train_state.model_id, train_state.revision, subfolder="text_encoder"
-    )
-    models["text_encoder"] = text_encoder_cls.from_pretrained(
-        train_state.model_id,
-        subfolder="text_encoder",
-        revision=train_state.revision,
-        variant=train_state.variant,
-    )
-    models["vae"] = AutoencoderKL.from_pretrained(
-        train_state.model_id,
-        subfolder="vae",
-        revision=train_state.revision,
-        variant=train_state.variant,
-    )
-    models["unet"] = UNet2DConditionModel.from_pretrained(
-        train_state.model_id,
-        subfolder="unet",
-        revision=train_state.revision,
-        variant=train_state.variant,
-    )
-
-    models["image_processor"] = VaeImageProcessor()
-
-    if train_state.model_type == "cn":
+    if train_state.diffusion_config.model_type == "cn":
         raise NotImplementedError
         models["controlnet"] = ControlLoRAModel.from_unet(
             unet=models["unet"],
@@ -768,19 +716,15 @@ def prepare_models(
     # === Config Lora ===
     # ===================
 
-    config = get_diffusion_config_from_train_state(train_state, None)
-
     # models get modified in the StableDiffusionModel init function, loading LoRA and other stuff
     diffusion_model = StableDiffusionModel(
-        config, device=device, pipe_models=models, requires_grad=False
+        train_state.diffusion_config,
+        device=device,
     )
+    models = diffusion_model.pipe_models
 
-    # Sanity check
-    for model_name in train_state.models_to_train_lora:
-        if not model_name in models:
-            raise ValueError(f"Found trainable model {model_name} not in models")
-
-        if train_state.enable_gradient_checkpointing:
+    if train_state.enable_gradient_checkpointing:
+        for model_name in train_state.diffusion_config.models_to_train_lora:
             models[model_name].enable_gradient_checkpointing()
 
     return models, diffusion_model
@@ -811,10 +755,10 @@ def get_conditioning_signals(batch, train_state):
 
 
 def get_diffusion_output_from_batch(
-    train_state, step, batch, sd_model, device, models, rgb=None
+    train_state, step, batch, sd_model, device, models, rgb=None, rgb_key: str = "rgb", tokens_key: str = "input_ids"
 ):
     if rgb is None:
-        rgb = batch["rgb"].to(dtype=sd_model.dtype, device=device)
+        rgb = batch[rgb_key].to(dtype=sd_model.dtype, device=device)
 
     diffusion_inputs = {}
     diffusion_inputs["rgb"] = rgb
@@ -828,10 +772,10 @@ def get_diffusion_output_from_batch(
         torch.Generator(device=device).manual_seed(int(seed)) for seed in random_seeds
     ]
 
-    if "input_ids" in batch:
+    if tokens_key in batch:
         diffusion_inputs["prompt_embeds"] = encode_tokens(
             models["text_encoder"],
-            batch["input_ids"].to(device=device),
+            batch[tokens_key].to(device=device),
             use_cache=True,
         )
 
@@ -1284,7 +1228,9 @@ def main() -> None:
     accelerator = Accelerator(
         gradient_accumulation_steps=train_state.gradient_accumulation_steps,
         mixed_precision=(
-            train_state.dtype if train_state.dtype in LOWER_DTYPES else "no"
+            train_state.diffusion_config.dtype
+            if train_state.diffusion_config.dtype in LOWER_DTYPES
+            else "no"
         ),
         log_with=train_state.loggers,
         project_config=ProjectConfiguration(
@@ -1350,14 +1296,14 @@ def main() -> None:
 
         if accelerator.is_local_main_process:
             wandb.init(
-                project=train_state.wandb_project or get_env("WANDB_PROJECT"),
-                entity=train_state.wandb_entity or get_env("WANDB_ENTITY"),
+                project=train_state.wandb_project or os.getenv("WANDB_PROJECT"),
+                entity=train_state.wandb_entity or os.getenv("WANDB_ENTITY"),
                 dir=(
                     train_state.logging_dir
                     if train_state.logging_dir
                     else get_env("WANDB_DIR")
                 ),
-                group=train_state.wandb_group or get_env("WANDB_GROUP"),
+                group=train_state.wandb_group or os.getenv("WANDB_GROUP"),
                 reinit=True,
                 config=asdict(train_state),
             )
@@ -1525,7 +1471,9 @@ def main() -> None:
     optimizer, train_dataloader, lr_scheduler, *trainable_models = accelerator.prepare(
         optimizer, train_dataloader, lr_scheduler, *sd_model.get_models_to_train()
     )
-    for model, model_name in zip(trainable_models, train_state.models_to_train_lora):
+    for model, model_name in zip(
+        trainable_models, train_state.diffusion_config.models_to_train_lora
+    ):
         models[model_name] = model
     sd_model.pipe_models = models
 

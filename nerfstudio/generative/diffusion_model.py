@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 from typing import Union, Optional, Tuple, Dict, Iterable, Any, List
 from functools import lru_cache
 from collections.abc import Iterable
@@ -297,11 +298,14 @@ class DiffusionModelConfig(InstantiateConfig):
 
     model_type: str = DiffusionModelType.sd
     model_id: str = DiffusionModelId.sd_v2_1
+    variant: Optional[str] = None
+    revision: str = "main"
+    use_safetensors: bool = True
 
     low_mem_mode: bool = False
     """If applicable, prioritize options which lower GPU memory requirements at the expense of performance."""
 
-    compile_model: bool = False
+    compile_models: Tuple[str, ...] = ()
     """If applicable, compile Diffusion pipeline using available torch backend."""
 
     dtype: str = "fp32"
@@ -375,8 +379,6 @@ class DiffusionModelConfig(InstantiateConfig):
     do_classifier_free_guidance: bool = True
     guidance_scale: float = 0
 
-    compile_models: Tuple[str, ...] = ()
-
 
 class DiffusionModel(ABC):
     config: DiffusionModelConfig
@@ -421,7 +423,7 @@ class DiffusionModel(ABC):
         }
         model = model_type_to_constructor[config.model_type]
 
-        if config.compile_model and config.lora_weights:
+        if config.compile_models and config.lora_weights:
             logging.warning(
                 "Compiling the model currently leads to a bug when a LoRA is loaded, proceed with caution"
             )
@@ -551,12 +553,7 @@ class StableDiffusionModel(DiffusionModel):
         self,
         config: DiffusionModelConfig,
         device: torch.device = get_device(),
-        use_safetensors: bool = True,
-        variant: Optional[str] = None,
-        revision: Optional[str] = None,
         pipe_models: Optional[Dict[str, Any]] = None,
-        requires_grad: bool = False,
-        do_classifier_free_guidance: bool = True,
     ):
         super().__init__()
 
@@ -573,9 +570,9 @@ class StableDiffusionModel(DiffusionModel):
             pipe_models["unet"] = UNet2DConditionModel.from_pretrained(
                 config.model_id,
                 subfolder="unet",
-                revision=revision,
-                variant=variant,
-                use_safetensors=use_safetensors,
+                revision=config.revision,
+                variant=config.variant,
+                use_safetensors=config.use_safetensors,
                 torch_dtype=dtype,
             )
 
@@ -583,10 +580,10 @@ class StableDiffusionModel(DiffusionModel):
             pipe_models["tokenizer"] = AutoTokenizer.from_pretrained(
                 config.model_id,
                 subfolder="tokenizer",
-                revision=revision,
-                variant=variant,
+                revision=config.revision,
+                variant=config.variant,
                 use_fast=False,
-                use_safetensors=True,
+                use_safetensors=config.use_safetensors,
                 torch_dtype=dtype,
             )
 
@@ -597,19 +594,19 @@ class StableDiffusionModel(DiffusionModel):
             pipe_models["noise_scheduler"] = DDPMScheduler.from_pretrained(
                 config.model_id,
                 subfolder="scheduler",
-                variant=variant,
-                revision=revision,
-                use_safetensors=use_safetensors,
+                variant=config.variant,
+                revision=config.revision,
+                use_safetensors=config.use_safetensors,
                 torch_dtype=dtype,
             )
 
         if "text_encoder" not in pipe_models:
             pipe_models["text_encoder"] = import_encoder(
                 config.model_id,
-                revision,
+                config.revision,
                 "text_encoder",
-                variant,
-                use_safetensors=use_safetensors,
+                config.variant,
+                use_safetensors=config.use_safetensors,
                 torch_dtype=dtype,
             )
 
@@ -617,13 +614,11 @@ class StableDiffusionModel(DiffusionModel):
             pipe_models["vae"] = AutoencoderKL.from_pretrained(
                 config.model_id,
                 subfolder="vae",
-                revision=revision,
-                variant=variant,
-                use_safetensors=use_safetensors,
+                revision=config.revision,
+                variant=config.variant,
+                use_safetensors=config.use_safetensors,
                 torch_dtype=dtype,
             )
-
-        self.requires_grad = requires_grad
 
         self.vae.requires_grad_(False)
         self.vae.to(device=device, dtype=dtype)
@@ -640,8 +635,6 @@ class StableDiffusionModel(DiffusionModel):
 
             self.controlnet.requires_grad_(False)
             self.controlnet.to(device=device, dtype=dtype)
-
-        self.do_classifier_free_guidance = do_classifier_free_guidance
 
         self.diffusion_metrics = {
             metric_name: _make_metric(metric_name, device)
@@ -787,24 +780,7 @@ class StableDiffusionModel(DiffusionModel):
         sample: Dict[str, Any],
         strength: float = 0.2,
         num_inference_steps: int = 50,
-        **kwargs,
-    ):
-        if self.requires_grad:
-            return self._get_diffusion_output(
-                sample, strength, num_inference_steps, **kwargs
-            )
-
-        else:
-            with torch.no_grad():
-                return self._get_diffusion_output(
-                    sample, strength, num_inference_steps, **kwargs
-                )
-
-    def _get_diffusion_output(
-        self,
-        sample: Dict[str, Any],
-        strength: float = 0.2,
-        num_inference_steps: int = 50,
+        rgb_key: str = "rgb",
         **kwargs,
     ):
         """Denoise image with diffusion model.
@@ -823,7 +799,7 @@ class StableDiffusionModel(DiffusionModel):
         if "generator" in kwargs:
             logging.warning(f"Provided generator, but not implementet yet.")
 
-        image = sample["rgb"]
+        image = sample[rgb_key]
         image = batch_if_not_iterable(image)
         batch_size = len(image)
 
@@ -837,73 +813,80 @@ class StableDiffusionModel(DiffusionModel):
         if not channel_first:
             image = image.permute(0, 3, 1, 2)  # Diffusion model is channel first
 
-        _prepare_prompt(sample, self.tokenizer, self.text_encoder, batch_size)
+        with torch.no_grad():
+            _prepare_prompt(sample, self.tokenizer, self.text_encoder, batch_size)
 
-        latent = encode_img(
-            self.img_processor,
-            self.vae,
-            image,
-            device=self.device,
-            seed=kwargs.get("seed"),
-        )
+            latent = encode_img(
+                self.img_processor,
+                self.vae,
+                image,
+                device=self.device,
+                seed=kwargs.get("seed"),
+            )
 
-        timesteps, num_inference_steps = get_timesteps(
-            self.noise_scheduler, num_inference_steps, strength, self.device
-        )
-        noisy_latent = add_noise_to_latent(latent, timesteps[0], self.noise_scheduler)
-        prompt_embeds = sample["prompt_embeds"]
+            timesteps, num_inference_steps = get_timesteps(
+                self.noise_scheduler, num_inference_steps, strength, self.device
+            )
+            noisy_latent = add_noise_to_latent(
+                latent, timesteps[0], self.noise_scheduler
+            )
+            prompt_embeds = sample["prompt_embeds"]
 
-        if self.do_classifier_free_guidance:
-            prompt_embeds = torch.cat((prompt_embeds, prompt_embeds))
+            if self.config.do_classifier_free_guidance:
+                prompt_embeds = torch.cat((prompt_embeds, prompt_embeds))
 
-        if self.using_controlnet:
-            # TODO Add controlnet
-            conditioning = combine_conditioning_info(
-                batch, train_state.conditioning_signal_infos
-            ).to(noisy_model_input.device)
-            raise NotImplementedError
-            # TODO: Port this code to the StableDiffusionModel
-            conditioning = combine_conditioning_info(
-                batch, train_state.conditioning_signal_infos
-            ).to(noisy_model_input.device)
+            if self.using_controlnet:
+                # TODO Add controlnet
+                conditioning = combine_conditioning_info(
+                    batch, train_state.conditioning_signal_infos
+                ).to(noisy_model_input.device)
+                raise NotImplementedError
+                # TODO: Port this code to the StableDiffusionModel
+                conditioning = combine_conditioning_info(
+                    batch, train_state.conditioning_signal_infos
+                ).to(noisy_model_input.device)
 
-            down_block_res_samples, mid_block_res_sample = models["controlnet"](
-                noisy_model_input,
+                down_block_res_samples, mid_block_res_sample = models["controlnet"](
+                    noisy_model_input,
+                    timesteps,
+                    encoder_hidden_states=prompt_hidden_state,
+                    controlnet_cond=conditioning,
+                    return_dict=False,
+                )
+                unet_kwargs["down_block_additional_residuals"] = [
+                    sample.to(dtype=weights_dtype) for sample in down_block_res_samples
+                ]
+                unet_kwargs["mid_block_additional_residual"] = mid_block_res_sample.to(
+                    dtype=weights_dtype
+                )
+
+            denoised_latent = denoise_latent(
+                noisy_latent,
+                self.unet,
                 timesteps,
-                encoder_hidden_states=prompt_hidden_state,
-                controlnet_cond=conditioning,
-                return_dict=False,
-            )
-            unet_kwargs["down_block_additional_residuals"] = [
-                sample.to(dtype=weights_dtype) for sample in down_block_res_samples
-            ]
-            unet_kwargs["mid_block_additional_residual"] = mid_block_res_sample.to(
-                dtype=weights_dtype
+                self.noise_scheduler,
+                prompt_embeds,
+                do_classifier_free_guidance=self.config.do_classifier_free_guidance,
+                guidance_scale=self.config.guidance_scale,
             )
 
-        denoised_latent = denoise_latent(
-            noisy_latent,
-            self.unet,
-            timesteps,
-            self.noise_scheduler,
-            prompt_embeds,
-            do_classifier_free_guidance=self.config.do_classifier_free_guidance,
-            guidance_scale=self.config.guidance_scale,
-        )
+            image = decode_img(self.img_processor, self.vae, denoised_latent)
 
-        image = decode_img(self.img_processor, self.vae, denoised_latent)
-
-        if not channel_first:
-            image = image.permute(0, 2, 3, 1)
+            if not channel_first:
+                image = image.permute(0, 2, 3, 1)
 
         return {"rgb": image}
 
     def get_diffusion_metrics(
-        self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any]
+        self,
+        batch_pred: Dict[str, Any],
+        batch_gt: Dict[str, Any],
+        pred_rgb_key="rgb",
+        gt_rgb_key="rgb",
     ) -> Dict[str, Any]:
         # Currently only handles RGB case, assumes all metrics take in an RGB image.
-        rgb_pred = batch_pred["rgb"]
-        rgb_gt = batch_gt["rgb"]
+        rgb_pred = batch_pred[pred_rgb_key]
+        rgb_gt = batch_gt[gt_rgb_key]
 
         return {
             metric_name: metric(rgb_pred, rgb_gt)
@@ -915,10 +898,12 @@ class StableDiffusionModel(DiffusionModel):
         batch_pred: Dict[str, Any],
         batch_gt: Dict[str, Any],
         metrics_dict: Dict[str, Any],
+        pred_rgb_key="rgb",
+        gt_rgb_key="rgb",
     ) -> Dict[str, Any]:
         # Currently only handles RGB case, assumes all metrics take in an RGB image.
-        rgb_pred = batch_pred["rgb"]
-        rgb_gt = batch_gt["rgb"]
+        rgb_pred = batch_pred[pred_rgb_key]
+        rgb_gt = batch_gt[gt_rgb_key]
 
         loss_dict = {}
         for loss_name, loss in self.diffusion_losses.items():

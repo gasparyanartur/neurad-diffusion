@@ -444,7 +444,6 @@ method_configs["imaginedriving"] = TrainerConfig(
             model_type=DiffusionModelType.sd,
             model_id=DiffusionModelId.sd_v2_1,
             low_mem_mode=False,
-            compile_model=False,
             lora_weights=None,
             noise_strength=0.1,
             num_inference_steps=50,
