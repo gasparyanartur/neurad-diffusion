@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
-from typing import Union, Optional, Tuple, Dict, Iterable, Any, List
+from typing import Union, Optional, Tuple, Dict, Iterable, Any, List, cast
 from functools import lru_cache
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -553,21 +553,21 @@ class StableDiffusionModel(DiffusionModel):
         self,
         config: DiffusionModelConfig,
         device: torch.device = get_device(),
-        pipe_models: Optional[Dict[str, Any]] = None,
+        models: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
 
-        pipe_models = pipe_models or {}
+        models = models or {}
 
         self.config = config
         self.device = device
 
         dtype = DTYPE_CONVERSION[config.dtype]
 
-        self.pipe_models = pipe_models
+        self.models = models
 
-        if "unet" not in self.pipe_models:
-            pipe_models["unet"] = UNet2DConditionModel.from_pretrained(
+        if "unet" not in self.models:
+            models["unet"] = UNet2DConditionModel.from_pretrained(
                 config.model_id,
                 subfolder="unet",
                 revision=config.revision,
@@ -576,8 +576,8 @@ class StableDiffusionModel(DiffusionModel):
                 torch_dtype=dtype,
             )
 
-        if "tokenizer" not in self.pipe_models:
-            pipe_models["tokenizer"] = AutoTokenizer.from_pretrained(
+        if "tokenizer" not in self.models:
+            models["tokenizer"] = AutoTokenizer.from_pretrained(
                 config.model_id,
                 subfolder="tokenizer",
                 revision=config.revision,
@@ -587,11 +587,11 @@ class StableDiffusionModel(DiffusionModel):
                 torch_dtype=dtype,
             )
 
-        if "img_processor" not in pipe_models:
-            pipe_models["img_processor"] = VaeImageProcessor()
+        if "img_processor" not in models:
+            models["img_processor"] = VaeImageProcessor()
 
-        if "noise_scheduler" not in pipe_models:
-            pipe_models["noise_scheduler"] = DDPMScheduler.from_pretrained(
+        if "noise_scheduler" not in models:
+            models["noise_scheduler"] = DDPMScheduler.from_pretrained(
                 config.model_id,
                 subfolder="scheduler",
                 variant=config.variant,
@@ -600,8 +600,8 @@ class StableDiffusionModel(DiffusionModel):
                 torch_dtype=dtype,
             )
 
-        if "text_encoder" not in pipe_models:
-            pipe_models["text_encoder"] = import_encoder(
+        if "text_encoder" not in models:
+            models["text_encoder"] = import_encoder(
                 config.model_id,
                 config.revision,
                 "text_encoder",
@@ -610,8 +610,8 @@ class StableDiffusionModel(DiffusionModel):
                 torch_dtype=dtype,
             )
 
-        if "vae" not in pipe_models:
-            pipe_models["vae"] = AutoencoderKL.from_pretrained(
+        if "vae" not in models:
+            models["vae"] = AutoencoderKL.from_pretrained(
                 config.model_id,
                 subfolder="vae",
                 revision=config.revision,
@@ -630,8 +630,8 @@ class StableDiffusionModel(DiffusionModel):
         self.text_encoder.to(device=device, dtype=dtype)
 
         if self.using_controlnet:
-            if "controlnet" not in pipe_models:
-                pipe_models["controlnet"] = ControlNetModel.from_unet(unet=self.unet)
+            if "controlnet" not in models:
+                models["controlnet"] = ControlNetModel.from_unet(unet=self.unet)
 
             self.controlnet.requires_grad_(False)
             self.controlnet.to(device=device, dtype=dtype)
@@ -654,7 +654,7 @@ class StableDiffusionModel(DiffusionModel):
 
             cast_training_params(
                 [
-                    self.pipe_models[model_name]
+                    self.models[model_name]
                     for model_name in self.config.models_to_train_lora
                 ],
                 dtype=torch.float32,
@@ -662,56 +662,75 @@ class StableDiffusionModel(DiffusionModel):
 
         if self.config.compile_models:
             for model in self.config.compile_models:
-                self.pipe_models[model] = torch.compile(self.pipe_models[model])
+                self.models[model] = torch.compile(self.models[model])
 
     @property
-    def using_controlnet(self):
+    def using_controlnet(self) -> bool:
         return self.config.model_type == "cn"
 
     @property
-    def controlnet(self):
-        return self.pipe_models["controlnet"]
+    def controlnet(self) -> ControlNetModel:
+        return self.models["controlnet"]
 
     @property
-    def unet(self):
-        return self.pipe_models["unet"]
+    def unet(self) -> UNet2DConditionModel:
+        return self.models["unet"]
 
     @property
-    def vae(self):
-        return self.pipe_models["vae"]
+    def vae(self) -> AutoencoderKL:
+        return self.models["vae"]
 
     @property
-    def text_encoder(self):
-        return self.pipe_models["text_encoder"]
+    def text_encoder(self) -> CLIPTextModel:
+        return self.models["text_encoder"]
 
     @property
-    def noise_scheduler(self):
-        return self.pipe_models["noise_scheduler"]
+    def noise_scheduler(self) -> DDPMScheduler:
+        return self.models["noise_scheduler"]
 
     @property
-    def tokenizer(self):
-        return self.pipe_models["tokenizer"]
+    def tokenizer(self) -> CLIPTokenizer:
+        return self.models["tokenizer"]
 
     @property
-    def img_processor(self):
-        return self.pipe_models["img_processor"]
+    def img_processor(self) -> VaeImageProcessor:
+        return self.models["img_processor"]
 
     @property
-    def dtype(self):
+    def dtype(self) -> torch.dtype:
         return DTYPE_CONVERSION[self.config.dtype]
 
-    def get_models_to_train(self):
+    def get_models_to_train(self) -> Iterable[PeftModel]:
         for model_name in self.config.models_to_train_lora:
-            yield self.pipe_models[model_name]
+            yield self.models[model_name]
 
-    def set_training(self, mode: bool = False):
+    def get_models_to_train_with_name(self) -> Iterable[Tuple[str, PeftModel]]:
         for model_name in self.config.models_to_train_lora:
-            self.pipe_models[model_name].train(mode)
+            yield model_name, self.models[model_name]
+
+    def set_model(self, model_name: str, model: PeftModel) -> None:
+        self.models[model_name] = model
+
+    def set_models(self, model_names: Iterable[str], models: List[PeftModel]) -> None:
+        for model_name, model in zip(model_names, models):
+            self.set_model(model_name, model)
+
+    def set_gradient_checkpointing(self, mode: bool = False) -> None:
+        if mode:
+            for model_name in self.config.models_to_train_lora:
+                self.models[model_name].enable_gradient_checkpointing()
+        else:
+            for model_name in self.config.models_to_train_lora:
+                self.models[model_name].disable_gradient_checkpointing()
+
+    def set_training(self, mode: bool = False) -> None:
+        for model_name in self.config.models_to_train_lora:
+            self.models[model_name].train(mode)
 
     def is_model_trained(self, model_name: str) -> bool:
         return model_name in self.config.models_to_train_lora
 
-    def load_adapter(self, model_name: str, copy_model: bool = True):
+    def load_adapter(self, model_name: str, copy_model: bool = True) -> None:
         # TODO: Test this
 
         if not self.config.lora_weights:
@@ -727,20 +746,20 @@ class StableDiffusionModel(DiffusionModel):
         lora_path = Path(self.config.lora_weights)
         model_path = lora_path / (self.config.lora_model_prefix + model_name)
 
-        model = self.pipe_models[model_name]
+        model = self.models[model_name]
 
         if copy_model:
             model = deepcopy(model)
 
         model = PeftModel.from_pretrained(model, model_path)
-        self.pipe_models[model_name] = model
+        self.models[model_name] = model
 
     def add_adapter(
         self,
         model_name: str,
         adapter_config: Optional[LoraConfig] = None,
         copy_model: bool = True,
-    ):
+    ) -> None:
         # TODO: Test this
 
         if not model_name in self.config.models_to_train_lora:
@@ -748,7 +767,7 @@ class StableDiffusionModel(DiffusionModel):
                 f"Cannot add adapter for {model_name} - model not in list of trainable models: {self.config.models_to_train_lora}"
             )
 
-        model = self.pipe_models[model_name]
+        model = self.models[model_name]
         if adapter_config is None:
             model_target_ranks = self.config.lora_rank_mults[model_name]
             model_ranks = parse_target_ranks(model_target_ranks)
@@ -773,7 +792,7 @@ class StableDiffusionModel(DiffusionModel):
         model = get_peft_model(
             model, adapter_config, self.config.lora_model_prefix + model_name
         )
-        self.pipe_models[model_name] = model
+        self.models[model_name] = model
 
     def get_diffusion_output(
         self,
@@ -782,7 +801,7 @@ class StableDiffusionModel(DiffusionModel):
         num_inference_steps: int = 50,
         rgb_key: str = "rgb",
         **kwargs,
-    ):
+    ) -> Dict[str, Any]:
         """Denoise image with diffusion model.
 
         Interesting kwargs:
@@ -800,7 +819,7 @@ class StableDiffusionModel(DiffusionModel):
             logging.warning(f"Provided generator, but not implementet yet.")
 
         image = sample[rgb_key]
-        image = batch_if_not_iterable(image)
+        image = cast(Tensor, batch_if_not_iterable(image))
         batch_size = len(image)
 
         if image.size(1) == 3:
@@ -837,9 +856,6 @@ class StableDiffusionModel(DiffusionModel):
 
             if self.using_controlnet:
                 # TODO Add controlnet
-                conditioning = combine_conditioning_info(
-                    batch, train_state.conditioning_signal_infos
-                ).to(noisy_model_input.device)
                 raise NotImplementedError
                 # TODO: Port this code to the StableDiffusionModel
                 conditioning = combine_conditioning_info(

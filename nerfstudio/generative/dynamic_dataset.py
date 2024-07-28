@@ -130,8 +130,7 @@ def save_yaml(path: Path, data: Dict[str, Any]):
         yaml.dump(data, f, default_flow_style=False)
 
 
-def setup_project(cache_dir: Path, logging_level: int = logging.INFO):
-
+def setup_cache(cache_dir: Path):
     set_env("HF_HUB_CACHE", cache_dir / "hf")  # Huggingface cache dir
     set_env("MPLCONFIGDIR", cache_dir / "mpl")  # Matplotlib cache dir
 
@@ -244,6 +243,32 @@ class DatasetTreeSplit(BaseModel):
 class DatasetTree(BaseModel):
     dataset_name: DatasetNameString
     splits: Dict[SplitNameString, DatasetTreeSplit]
+
+    @classmethod
+    def single_split_single_scene(
+        cls,
+        dataset_name: DatasetNameString,
+        split_name: SplitNameString,
+        scene_name: SceneNameString,
+        sample_names: List[SampleNameString],
+    ) -> "DatasetTree":
+        return DatasetTree(
+            dataset_name=dataset_name,
+            splits={
+                split_name: DatasetTreeSplit(
+                    split_name=split_name,
+                    scenes={
+                        scene_name: DatasetTreeSceneList(
+                            scene_name=scene_name,
+                            samples=[
+                                DatasetTreeSample(sample_name=sample_name)
+                                for sample_name in sample_names
+                            ],
+                        )
+                    },
+                )
+            },
+        )
 
 
 def _pandaset_pose_to_matrix(pandaset_pose):
@@ -429,8 +454,8 @@ class CameraDataSpec(DataSpec):
 
 
 class CaptureDataSpec(DataSpec):
-    camera: str
-    shift: str
+    camera: str = "front"
+    shift: str = "0m"
 
     def get_getter_class(self) -> Type["DataGetter"]:
         return RGBDataGetter
@@ -444,6 +469,7 @@ class LidarDataSpec(DataSpec):
 
 
 class RgbDataSpec(CaptureDataSpec):
+    name: str = "rgb"
     num_channels: int = 3
     width: int = 1920
     height: int = 1080
@@ -455,15 +481,16 @@ class RgbDataSpec(CaptureDataSpec):
 
 
 class NerfOutputSpec(RgbDataSpec):
-    nerf_output_path: str
-    data_name: str
+    nerf_output_path: str = "data/nerf_outputs"
+    data_name: str = "rgb"
 
     def get_getter_class(self) -> Type["DataGetter"]:
         return NerfOutputDataGetter
 
 
 class PromptDataSpec(DataSpec):
-    prompt: str
+    name: str = "input_ids"
+    prompt: str = ""
     model_id: str = "stabilityai/stable-diffusion-2-1"
     subfolder: str = "tokenizer"
     revision: str = "main"
@@ -966,6 +993,13 @@ _INFO_GETTER_BUILDERS = cast(
 )
 
 
+RGB_SPEC_TYPES = {RgbDataSpec, NerfOutputSpec}
+
+
+def is_data_spec_type_rgb(data_type: Type[DataSpec]) -> bool:
+    return data_type in RGB_SPEC_TYPES
+
+
 def get_info_getter(dataset_name: str, dataset_path: Path, data_tree: DatasetTree):
     return _INFO_GETTER_BUILDERS[dataset_name](dataset_path, data_tree)
 
@@ -990,9 +1024,12 @@ class SampleConfig(BaseModel):
 
 
 class DatasetConfig(BaseModel):
-    dataset_name: str
-    dataset_path: Path
-    data_specs: Dict[str, DataSpec]
+    dataset_name: str = "pandaset"
+    dataset_path: Path = Path("data/pandaset")
+    data_specs: Dict[str, DataSpec] = {
+        "rgb": RgbDataSpec(name="rgb", camera="front", shift="0m"),
+        "input_ids": PromptDataSpec(name="input_ids", prompt=""),
+    }
     data_tree: DatasetTree
     sample_config: SampleConfig
 
@@ -1066,11 +1103,11 @@ class DynamicDataset(Dataset):  # Dataset / Scene / Sample
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         info = self.info_getter.sample_infos[idx]
-        sample = {}
-
         sample_argument = construct_sample_argument(
             self.dataset_config.sample_config, info
         )
+
+        sample = {"meta": info, "args": sample_argument}
 
         for data_type, getter in self.data_getters.items():
             data = getter.get_data(sample_argument)

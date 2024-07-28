@@ -1,19 +1,16 @@
 # Adapted from https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image_lora.py
 
-import json
-import typing
-from typing import Any, Callable, Dict, Tuple, List, Optional, Union, Sequence, cast
+from typing import Any, Dict, Tuple, List, Optional, Union, Sequence, cast
 from collections.abc import Iterable
 from pathlib import Path
-from argparse import ArgumentParser, Namespace
 import logging
 import os
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict
 import math
 import itertools as it
 
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 import torch.utils
 import torch.utils.data
 import tqdm
@@ -25,33 +22,18 @@ import torch
 import wandb
 from torch import nn
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 import transformers
-import torchvision.transforms.v2 as transforms
-from transformers import AutoTokenizer
 import diffusers
-from diffusers import (
-    AutoencoderKL,
-    DDPMScheduler,
-    StableDiffusionImg2ImgPipeline,
-    UNet2DConditionModel,
-)
-from diffusers.image_processor import VaeImageProcessor
-from diffusers.loaders import LoraLoaderMixin
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import (
-    _set_state_dict_into_text_encoder,
     cast_training_params,
     compute_snr,
 )
 from diffusers.utils import (
     check_min_version,
-    convert_state_dict_to_diffusers,
-    convert_unet_state_dict_to_peft,
     is_wandb_available,
 )
-from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
-from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -60,60 +42,45 @@ from accelerate.utils import (
     ProjectConfiguration,
     set_seed,
 )
-from peft import LoraConfig, set_peft_model_state_dict, PeftModel
-from peft.utils import get_peft_model_state_dict
+from peft import PeftModel
 from torchmetrics.image import StructuralSimilarityIndexMeasure, PeakSignalNoiseRatio
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
-from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.generative.diffusion_model import (
     StableDiffusionModel,
     encode_img,
-    import_encoder_class_from_model_name_or_path,
 )
 from nerfstudio.generative.dynamic_dataset import (
-    _INFO_GETTER_BUILDERS,
-    CameraDataGetter,
     DataSpec,
     DatasetConfig,
     DatasetTree,
     DatasetTreeSample,
     DatasetTreeSceneList,
     DatasetTreeSplit,
-    IntrinsicsDataGetter,
-    PoseDataGetter,
+    NerfOutputSpec,
+    PromptDataSpec,
     RgbDataSpec,
     SampleConfig,
-    SampleInfo,
-    TimestampDataGetter,
-    crop_to_ray_idxs,
+    is_data_spec_type_rgb,
     read_yaml,
     save_yaml,
-    setup_project,
+    setup_cache,
     DynamicDataset,
 )
 from nerfstudio.generative.diffusion_model import (
-    generate_noise_pattern,
     get_noised_img,
-    tokenize_prompt,
     encode_tokens,
     DiffusionModelConfig,
-    DiffusionModel,
     decode_img,
     combine_conditioning_info,
-    parse_target_ranks,
     get_random_timesteps,
     DiffusionModelType,
     DiffusionModelId,
 )
 from nerfstudio.generative.utils import (
-    DTYPE_CONVERSION,
     LOWER_DTYPES,
     get_env,
-    nearest_multiple,
 )
-from nerfstudio.generative.control_lora import ControlLoRAModel
-from nerfstudio.model_components.ray_generators import RayGenerator
 
 check_min_version("0.27.0")
 logger = get_logger(__name__, log_level="INFO")
@@ -121,10 +88,42 @@ logger = get_logger(__name__, log_level="INFO")
 metric_improvement_direction = {"lpips": "<", "ssim": ">", "psnr": ">"}
 
 
-class TrainState(BaseSettings):
-    output_dir: Path = Field()
-    cache_dir: Path = Field()
-    logging_dir: Path = Field()
+class TrainingDatasetConfigs(BaseModel):
+    train_dataset: DatasetConfig
+    val_dataset: DatasetConfig
+    render_dataset: Optional[DatasetConfig] = None
+    nerf_out_dataset: Optional[DatasetConfig] = None
+
+
+def make_dataset_loader(
+    dataset_config: DatasetConfig,
+    shuffle: bool,
+    batch_size: int,
+    num_workers: int,
+    pin_memory: bool,
+) -> Tuple[DynamicDataset, DataLoader]:
+
+    dataset = DynamicDataset(dataset_config)
+    dataloader = DataLoader(
+        dataset,
+        shuffle=shuffle,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        collate_fn=functools.partial(
+            collate_fn, data_specs=dataset.dataset_config.data_specs
+        ),
+    )
+
+    return dataset, dataloader
+
+
+class TrainConfig(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="lora_train_")
+
+    output_dir: Path = Field(default="", validate_default=False)
+    cache_dir: Path = Field(default="", validate_default=False)
+    logging_dir: Path = Field(default="", validate_default=False)
 
     job_id: str = Field(default="0", alias="slurm_job_id")
     project_name: str = "ImagineDriving"
@@ -168,15 +167,6 @@ class TrainState(BaseSettings):
 
     rec_loss_strength: float = 0.1
 
-    max_train_steps: int = -1
-    num_update_steps_per_epoch: int = -1
-
-    # TODO: Make these global, not in train_states
-    global_step: int = 0
-    epoch: int = 0
-    best_ssim: float = 0
-    best_saved_ssim: float = 0
-
     # "linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"]'
     lr_scheduler: str = "constant"
     lr_warmup_steps: int = 500
@@ -206,16 +196,6 @@ class TrainState(BaseSettings):
 
     conditioning_signals: Tuple[str, ...] = ()
 
-    image_width: int = 1920
-    image_height: int = 1080
-
-    center_crop: bool = False
-    flip_prob: float = 0.5
-
-    crop_height: float = 512
-    crop_width: float = 512
-    resize_factor: float = 1.0
-
     diffusion_config: DiffusionModelConfig = DiffusionModelConfig(
         model_type=DiffusionModelType.sd,
         model_id=DiffusionModelId.sd_v2_1,
@@ -231,52 +211,78 @@ class TrainState(BaseSettings):
         lora_model_prefix="lora_",
         conditioning_signals=conditioning_signals,
         guidance_scale=0,
+        metrics=("lpips", "ssim", "psnr", "mse"),
     )
 
-    train_dataset_config: DatasetConfig = DatasetConfig(
-        dataset_path=Path("data/pandaset"),
-        dataset_name="pandaset",
-        data_specs=cast(
-            Dict[str, DataSpec],
-            {
-                "rgb": RgbDataSpec(name="rgb", camera="front", shift="0m"),  # TODO
+    dataset_configs = TrainingDatasetConfigs(
+        train_dataset=DatasetConfig(
+            data_specs={
+                "rgb": RgbDataSpec(),
+                "input_ids": PromptDataSpec(),
             },
+            sample_config=SampleConfig(
+                random_crop=True,
+            ),
+            data_tree=DatasetTree.single_split_single_scene(
+                "pandaset", "train", "001", ["01"]
+            ),
         ),
-        sample_config=SampleConfig(
-            rgb_flip_prob=0,
-            random_crop=True,
-            crop_size=(512, 512),
-            img_height=1080,
-            img_width=1920,
-        ),
-        data_tree=DatasetTree(
-            dataset_name="pandaset",
-            splits={
-                "train": DatasetTreeSplit(
-                    split_name="train",
-                    scenes={
-                        "001": DatasetTreeSceneList(
-                            scene_name="001",
-                            samples=[DatasetTreeSample(sample_name="01")],
-                        )
-                    },
-                ),
-                "val": DatasetTreeSplit(
-                    split_name="val",
-                    scenes={
-                        "001": DatasetTreeSceneList(
-                            scene_name="001",
-                            samples=[DatasetTreeSample(sample_name="01")],
-                        )
-                    },
-                ),
+        val_dataset=DatasetConfig(
+            data_specs={
+                "rgb": RgbDataSpec(),
+                "input_ids": PromptDataSpec(),
             },
+            sample_config=SampleConfig(),
+            data_tree=DatasetTree.single_split_single_scene(
+                "pandaset", "train", "001", ["01"]
+            ),
+        ),
+        render_dataset=DatasetConfig(
+            data_specs={
+                "rgb": RgbDataSpec(),
+                "input_ids": PromptDataSpec(),
+            },
+            sample_config=SampleConfig(),
+            data_tree=DatasetTree.single_split_single_scene(
+                "pandaset", "train", "001", ["01"]
+            ),
+        ),
+        nerf_out_dataset=DatasetConfig(
+            data_specs={
+                "rgb-nerf": NerfOutputSpec(
+                    name="rgb",
+                    camera="front_left",
+                    nerf_output_path="data/reference_neurad",
+                    data_name="rgb",
+                ),
+                "rgb-gt": RgbDataSpec(name="rgb", camera="front_left", shift="0m"),
+                "input_ids": PromptDataSpec(),
+            },
+            sample_config=SampleConfig(),
+            data_tree=DatasetTree.single_split_single_scene(
+                "pandaset", "val", "001", ["01"]
+            ),
         ),
     )
 
     def update_values(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+
+class TrainState(BaseModel):
+    max_train_steps: int = -1
+    num_update_steps_per_epoch: int = -1
+
+    global_step: int = 0
+    epoch: int = 0
+
+    best_ssim: float = 0
+    best_saved_ssim: float = 0
+
+    @property
+    def max_epoch(self) -> int:
+        return self.max_train_steps // self.num_update_steps_per_epoch
 
 
 def unwrap_model(accelerator: Accelerator, model, unpeft: bool = True):
@@ -330,85 +336,28 @@ def generate_timestep_weights(args, num_timesteps):
     return weights
 
 
-def preprocess_sample(
-    batch: Dict[str, Any],
-    preprocessors: Dict[str, Callable],
-    preprocessor_order: List[str],
-) -> Dict[str, Any]:
-    sample = {}
-    sample["meta"] = SampleInfo(**batch["meta"])
-
-    for preprocess_name in preprocessor_order:
-
-        if preprocess_name == "rgb":
-            processor = preprocessors[preprocess_name]
-            pp_out = processor({"rgb": batch["rgb"]})
-
-            sample["rgb"] = pp_out["rgb"]
-            sample["original_size"] = pp_out["original_size"]
-            sample["crop_top_left"] = pp_out["crop_top_left"]
-            sample["target_size"] = pp_out["target_size"]
-
-        elif preprocess_name == "ref-rgb":
-            if "ref-rgb" not in batch:
-                continue
-
-            ref = batch["ref-rgb"]
-            sample["ref_rgb"] = ref["rgb"]
-            sample["ref_gt"] = ref["gt"]
-
-        elif preprocess_name == "prompt":
-            processor = preprocessors[preprocess_name]
-            pp_out = processor({"prompt": batch["prompt"]})
-            sample["input_ids"] = pp_out["input_ids"]
-
-        elif signal := ConditioningSignalInfo.from_signal_name(preprocess_name):
-            processor = preprocessors[preprocess_name]
-            if signal.cn_type == "rgb":
-                pp_out = processor({"rgb": batch["rgb"]})
-                sample[preprocess_name] = pp_out["rgb"]
-                sample[preprocess_name + "_crop_top_left"] = pp_out["crop_top_left"]
-
-            elif signal.cn_type == "ray":
-                if (same_cam_rgb_name := f"cn_rgb_3_{signal.camera}") in preprocessors:
-                    crop_top_left_name = same_cam_rgb_name + "_crop_top_left"
-                else:
-                    crop_top_left_name = "crop_top_left"
-
-                pp_out = processor(
-                    {
-                        "rgb": batch["rgb"],
-                        "target_size": sample["target_size"],
-                        "crop_top_left": sample[crop_top_left_name],
-                        "meta": sample["meta"],
-                    }
-                )
-                sample[preprocess_name] = pp_out["ray"]
-
-        else:
-            raise NotImplementedError
-
-    return sample
-
-
 def collate_fn(
-    batch: List[Dict[str, Any]], accelerator: Accelerator
-) -> Dict[List[str], Any]:
-    collated: dict[str, Any] = {}
-    for key, item in batch[0].items():
-        collated[key] = [sample[key] for sample in batch]
+    batch: List[Dict[str, Any]], data_specs: Dict[str, DataSpec]
+) -> Dict[str, Iterable[Any]]:
+    assert len(batch) > 0
 
-        if isinstance(item, (torch.Tensor, np.ndarray, int, float, bool)):
-            collated[key] = torch.stack(collated[key])
+    collated: dict[str, Iterable[Any]] = {}
 
-        elif isinstance(item, (tuple, list)) and isinstance(item[0], (int, float)):
-            collated[key] = torch.tensor(collated[key])
+    for key in batch[0].keys():
+        spec = data_specs.get(key)
 
-    for sample_name, sample in collated.items():
-        if sample_name == "rgb" or sample_name.startswith("cn_rgb"):
-            collated[sample_name] = sample.to(
-                memory_format=torch.contiguous_format, dtype=torch.float32
-            )
+        item = [sample[key] for sample in batch]
+
+        if isinstance(item[0], (list, tuple, np.ndarray, int, float, bool)):
+            item = list(map(torch.tensor, item))
+
+        if isinstance(item[0], torch.Tensor):
+            item = torch.stack(item)
+
+            if spec and is_data_spec_type_rgb(type(spec)):
+                item = item.contiguous(memory_format=torch.contiguous_format)
+
+        collated[key] = item
 
     return collated
 
@@ -421,35 +370,39 @@ def is_model_equal_type(accelerator, model_1, model_2, unwrap: bool = True) -> b
     return isinstance(model_1, type(model_2))
 
 
+def find_matching_model(
+    accelerator: Accelerator, accelerator_model, diffusion_model: StableDiffusionModel
+):
+    # Map the list of loaded_models given by accelerator to keys given in train_config.
+    # NOTE: This mapping is done by type, so two objects of the same type will be treated as the same object.
+
+    for model_name, other_model in diffusion_model.models.items():
+        if is_model_equal_type(accelerator, accelerator_model, other_model):
+            return model_name
+
+    return None
+
+
 def save_lora_weights(
-    accelerator: Accelerator, models, train_state: TrainState, dir_name: str = "weights"
+    accelerator: Accelerator,
+    diffusion_model: StableDiffusionModel,
+    train_config: TrainConfig,
+    dir_name: str = "weights",
 ) -> None:
     if not accelerator.is_main_process:
         return
 
-    trainable_models = {
-        model: models[model]
-        for model in train_state.diffusion_config.models_to_train_lora
-    }
-    models_to_save: Dict[str, Dict[str, Union[nn.Module, Tensor]]] = {}
-    other_models = {}
-
-    for model_name, loaded_model in trainable_models.items():
-        # Map the list of loaded_models given by accelerator to keys given in train_state.
-        # NOTE: This mapping is done by type, so two objects of the same type will be treated as the same object.
-
-        unwrapped_model = unwrap_model(accelerator, loaded_model, unpeft=False)
-        models_to_save[model_name] = unwrapped_model
-
-    dst_dir = train_state.output_dir / train_state.job_id / dir_name
+    dst_dir = train_config.output_dir / train_config.job_id / dir_name
     dst_dir.mkdir(exist_ok=True, parents=True)
 
-    for model_name, model in models_to_save.items():
-        if not isinstance(model, PeftModel):
-            raise ValueError(
-                f"Attempted to save model of type {type(model)}, which is not a PeftModel"
-            )
+    models_to_save = [
+        unwrap_model(accelerator, model, unpeft=False)
+        for model in diffusion_model.get_models_to_train()
+    ]
 
+    assert all(isinstance(model, PeftModel) for model in models_to_save)
+
+    for model in models_to_save:
         model.save_pretrained(str(dst_dir))
 
 
@@ -458,86 +411,72 @@ def save_model_hook(
     weights,
     output_dir: str,
     accelerator: Accelerator,
-    models,
+    diffusion_model: StableDiffusionModel,
+    train_config: TrainConfig,
     train_state: TrainState,
 ):
     if not accelerator.is_main_process:
         return
 
-    peft_models_to_save = {}
-    other_models = {}
-
-    for loaded_accelerator_model in loaded_models:
-        # Map the list of loaded_models given by accelerator to keys given in train_state.
-        # NOTE: This mapping is done by type, so two objects of the same type will be treated as the same object.
-
-        for model_name, model in models.items():
-            if is_model_equal_type(accelerator, loaded_accelerator_model, model):
-                peft_models_to_save[model_name] = unwrap_model(
-                    accelerator, loaded_accelerator_model, unpeft=False
-                )
-                # peft_models_to_save[model_name] = #get_peft_model_state_dict(
-                # model=unwrap_model(
-                #    accelerator, loaded_accelerator_model, unpeft=False
-                # ),
-                # adapter_name=train_state.lora_model_prefix + model_name,
-                # )
-                break
-
-        # make sure to pop weight so that corresponding model is not saved again
-        if weights:
-            weights.pop()
-
     dst_dir = Path(output_dir, "weights")
     if not dst_dir.exists():
         dst_dir.mkdir(exist_ok=True, parents=True)
 
-    for model_name, model in peft_models_to_save.items():
-        if not isinstance(model, PeftModel):
-            raise ValueError(
-                f"Attempted to save model of type {type(model)}, which is not a PeftModel"
-            )
+    for loaded_accelerator_model in loaded_models:
+        # make sure to pop weight so that corresponding model is not saved again
+        if weights:
+            weights.pop()
+
+        matching_model_name = find_matching_model(
+            accelerator, loaded_accelerator_model, diffusion_model
+        )
+        if not matching_model_name:
+            continue
+
+        model = unwrap_model(accelerator, loaded_accelerator_model, unpeft=False)
+        assert isinstance(model, PeftModel)
 
         model.save_pretrained(str(dst_dir))
 
-    save_yaml(dst_dir / "config.yml", train_state.dict())
+    save_yaml(dst_dir / "config.yml", train_config.model_dump(mode="json"))
+    save_yaml(dst_dir / "state.yml", train_state.model_dump(mode="json"))
 
 
 def load_model_hook(
-    loaded_models,
+    loaded_models: List[PeftModel],
     input_dir: Path,
     accelerator: Accelerator,
-    models,
-    sd_model: StableDiffusionModel,
+    diffusion_model: StableDiffusionModel,
+    train_config: TrainConfig,
     train_state: TrainState,
 ):
     loaded_models_dict = {}
     while loaded_models:
-        # Map the list of loaded_models given by accelerator to keys given in train_state.
+        # Map the list of loaded_models given by accelerator to keys given in train_config.
         # NOTE: This mapping is done by type, so two objects of the same type will be treated as the same object.
 
         loaded_model = loaded_models.pop()
-        for model_name, model in models.items():
-            if is_model_equal_type(accelerator, loaded_model, model):
-                loaded_models_dict[model_name] = loaded_model
-                break
-
-        else:
+        matching_model_name = find_matching_model(
+            accelerator, loaded_model, diffusion_model
+        )
+        if not matching_model_name:
             raise ValueError(f"unexpected save model: {type(loaded_model)}")
+
+        loaded_models_dict[matching_model_name] = loaded_model
 
     weights_dir = input_dir / "weights"
     for model_dir in weights_dir.iterdir():
         model_name = model_dir.name
 
         # Assuming adapter name is same as model name prefixed with lora_ (i.e. lora_unet, lora_text_encoder, lora_controlnet)
-        if not model_name.startswith(train_state.lora_model_prefix):
+        if not model_name.startswith(train_config.diffusion_config.lora_model_prefix):
             continue
 
-        model_name = model_name[len(train_state.lora_model_prefix) :]
+        model_name = model_name[len(train_config.diffusion_config.lora_model_prefix) :]
 
         if model_name not in loaded_models_dict:
             logger.warning(
-                f"Found weights {model_name} in weight directory, but model not found in {train_state.diffusion_config.models_to_train_lora}. Skipping"
+                f"Found weights {model_name} in weight directory, but model not found in {train_config.diffusion_config.models_to_train_lora}. Skipping"
             )
         model = loaded_models_dict[model_name]
         loaded_models_dict[model_name] = PeftModel.from_pretrained(
@@ -545,40 +484,33 @@ def load_model_hook(
         )
 
     # Make sure the trainable params are in float32.
-    if train_state.diffusion_config.dtype in LOWER_DTYPES:
+    if train_config.diffusion_config.dtype in LOWER_DTYPES:
         models_to_cast = [
             loaded_model
             for model_name, loaded_model in loaded_models_dict.items()
-            if model_name in train_state.diffusion_config.models_to_train_lora
+            if model_name in train_config.diffusion_config.models_to_train_lora
         ]
         cast_training_params(models_to_cast, dtype=torch.float32)
 
-    configs = read_yaml(input_dir / "config.yml")
-
-    fields_to_update = [
-        "max_train_steps",
-        "num_update_steps_per_epoch",
-        "global_step",
-        "epoch",
-        "best_ssim",
-        "best_saved_ssim",
-    ]
-    train_state.update_values(**{f: configs[f] for f in fields_to_update})
-
-    sd_model.pipe_models = models
+    state = read_yaml(input_dir / "state.yml")
+    for f in train_state.model_fields.keys():
+        if f in state:
+            setattr(train_state, f, state[f])
 
 
-def save_checkpoint(accelerator: Accelerator, train_state: TrainState) -> None:
+def save_checkpoint(
+    accelerator: Accelerator, train_config: TrainConfig, train_state: TrainState
+) -> None:
     # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-    output_dir = train_state.output_dir / train_state.job_id
+    output_dir = train_config.output_dir / train_config.job_id
 
-    if train_state.max_num_checkpoints is not None:
+    if train_config.max_num_checkpoints is not None:
         cp_paths = find_checkpoint_paths(output_dir)
 
         # before we save the new checkpoint, we need to have at most `checkpoints_total_limit - 1` checkpoints
-        if len(cp_paths) >= train_state.max_num_checkpoints:
+        if len(cp_paths) >= train_config.max_num_checkpoints:
             # Remove one more to make space for the new one
-            num_to_remove = len(cp_paths) - train_state.max_num_checkpoints + 1
+            num_to_remove = len(cp_paths) - train_config.max_num_checkpoints + 1
             cps_to_remove = cp_paths[num_to_remove:]
 
             logger.info(
@@ -594,32 +526,34 @@ def save_checkpoint(accelerator: Accelerator, train_state: TrainState) -> None:
     logger.info(f"Saved state to path {cp_path}")
 
 
-def resume_from_checkpoint(accelerator, train_state: TrainState):
-    if train_state.checkpoint_path is None:
+def resume_from_checkpoint(
+    accelerator, train_config: TrainConfig, train_state: TrainState
+):
+    if train_config.checkpoint_path is None:
         train_state.global_step = 0
         return
 
-    if train_state.checkpoint_path == "latest":
+    if train_config.checkpoint_path == "latest":
         # Get the most recent checkpoint
-        cp_paths = find_checkpoint_paths(train_state.output_dir / train_state.job_id)
+        cp_paths = find_checkpoint_paths(train_config.output_dir / train_config.job_id)
 
         if len(cp_paths) == 0:
             accelerator.print(
-                f"Checkpoint '{train_state.checkpoint_path}' does not exist. Starting a new training run."
+                f"Checkpoint '{train_config.checkpoint_path}' does not exist. Starting a new training run."
             )
             return
 
         path = cp_paths[-1]
 
     else:
-        path = Path(train_state.checkpoint_path)
+        path = Path(train_config.checkpoint_path)
 
     accelerator.print(f"Resuming from checkpoint {path}")
     accelerator.load_state(path)
 
     train_state.global_step = int(path.name.split("-")[-1])
-    train_state.epoch = cast(int, train_state.global_step) // cast(
-        int, train_state.num_update_steps_per_epoch
+    train_state.epoch = (
+        train_state.global_step // train_state.num_update_steps_per_epoch
     )
 
 
@@ -632,13 +566,13 @@ def find_checkpoint_paths(
 
 
 def get_diffusion_noise(
-    size: Sequence[int], device: torch.device, train_state: TrainState
+    size: Sequence[int], device: torch.device, train_config: TrainConfig
 ) -> Tensor:
     noise = torch.randn(size, device=device)
 
-    if train_state.noise_offset:
+    if train_config.noise_offset:
         # https://www.crosslabs.org//blog/diffusion-with-offset-noise
-        noise += train_state.noise_offset * torch.randn(
+        noise += train_config.noise_offset * torch.randn(
             (size[0], size[1], 1, 1),
             device=device,
         )
@@ -646,15 +580,15 @@ def get_diffusion_noise(
 
 
 def get_diffusion_loss(
-    models, train_state: TrainState, model_input, model_pred, noise, timesteps
+    models, train_config: TrainConfig, model_input, model_pred, noise, timesteps
 ):
     noise_scheduler = models["noise_scheduler"]
 
     # Get the target for loss depending on the prediction type
-    if train_state.noise_scheduler_prediction_type is not None:
+    if train_config.noise_scheduler_prediction_type is not None:
         # set prediction_type of scheduler if defined
         noise_scheduler.register_to_config(
-            prediction_type=train_state.noise_scheduler_prediction_type
+            prediction_type=train_config.noise_scheduler_prediction_type
         )
 
     if noise_scheduler.config.prediction_type == "epsilon":
@@ -667,7 +601,7 @@ def get_diffusion_loss(
             f"Unknown prediction type {noise_scheduler.config.prediction_type}"
         )
 
-    if train_state.snr_gamma is None:
+    if train_config.snr_gamma is None:
         loss = nn.functional.mse_loss(
             model_pred.float(), target.float(), reduction="mean"
         )
@@ -677,7 +611,7 @@ def get_diffusion_loss(
         # This is discussed in Section 4.2 of the same paper.
         snr = compute_snr(noise_scheduler, timesteps)
         mse_loss_weights = torch.stack(
-            [snr, train_state.snr_gamma * torch.ones_like(timesteps)],
+            [snr, train_config.snr_gamma * torch.ones_like(timesteps)],
             dim=1,
         ).min(dim=1)[0]
         if noise_scheduler.config.prediction_type == "epsilon":
@@ -694,101 +628,49 @@ def get_diffusion_loss(
     return loss
 
 
-def prepare_models(
-    train_state: TrainState, device
-) -> Tuple[Dict[str, Any], StableDiffusionModel]:
-    # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
-    # as these weights are only used for inference, keeping weights in full precision is not required.
-
-    if train_state.diffusion_config.model_type == "cn":
-        raise NotImplementedError
-        models["controlnet"] = ControlLoRAModel.from_unet(
-            unet=models["unet"],
-            conditioning_channels=sum(
-                info.num_channels for info in train_state.conditioning_signal_infos
-            ),
-            lora_linear_rank=train_state.control_lora_rank_linear,
-            lora_conv2d_rank=train_state.control_lora_rank_conv2d,
-            use_dora=train_state.use_dora,
-        )
-
-    # ===================
-    # === Config Lora ===
-    # ===================
-
-    # models get modified in the StableDiffusionModel init function, loading LoRA and other stuff
-    diffusion_model = StableDiffusionModel(
-        train_state.diffusion_config,
-        device=device,
-    )
-    models = diffusion_model.pipe_models
-
-    if train_state.enable_gradient_checkpointing:
-        for model_name in train_state.diffusion_config.models_to_train_lora:
-            models[model_name].enable_gradient_checkpointing()
-
-    return models, diffusion_model
-
-
-def get_conditioning_signals(batch, train_state):
-    signals = {}
-    for conditioning in train_state.conditioning_signal_infos:
-        signal_name = conditioning.name
-
-        if signal_name in batch:
-            signal_value = batch[signal_name]
-
-        else:
-            for name, value in batch.items():
-                if (
-                    signal := ConditioningSignalInfo.from_signal_name(name)
-                ) and signal.cn_type == conditioning.cn_type:
-                    signal_value = value
-            else:
-                raise ValueError(
-                    f"Failed to match conditioning signal {conditioning} with data {batch.keys()}"
-                )
-
-        signals[signal_name] = signal_value
-
-    return signals
-
-
 def get_diffusion_output_from_batch(
-    train_state, step, batch, sd_model, device, models, rgb=None, rgb_key: str = "rgb", tokens_key: str = "input_ids"
+    step: int,
+    batch: Dict[str, Union[Tensor, List[Any]]],
+    diffusion_model: StableDiffusionModel,
+    rgb: Optional[Tensor] = None,
+    rgb_key: str = "rgb",
+    tokens_key: str = "input_ids",
 ):
     if rgb is None:
-        rgb = batch[rgb_key].to(dtype=sd_model.dtype, device=device)
+        rgb = cast(Tensor, batch[rgb_key])
+        rgb = rgb.to(dtype=diffusion_model.dtype, device=diffusion_model.device)
 
-    diffusion_inputs = {}
-    diffusion_inputs["rgb"] = rgb
+    diffusion_inputs: Dict[str, Any] = {"rgb": rgb}
     batch_size = len(rgb)
     random_seeds = np.arange(batch_size * step, batch_size * (step + 1))
 
-    if "controlnet" in models:
-        diffusion_inputs.update(get_conditioning_signals(diffusion_inputs, train_state))
+    if diffusion_model.using_controlnet:
+        # TODO
+        ...
 
     diffusion_inputs["generator"] = [
-        torch.Generator(device=device).manual_seed(int(seed)) for seed in random_seeds
+        torch.Generator(device=diffusion_model.device).manual_seed(int(seed))
+        for seed in random_seeds
     ]
 
     if tokens_key in batch:
+        tokens = cast(Tensor, batch[tokens_key])
         diffusion_inputs["prompt_embeds"] = encode_tokens(
-            models["text_encoder"],
-            batch[tokens_key].to(device=device),
+            diffusion_model.text_encoder,
+            tokens.to(device=diffusion_model.device),
             use_cache=True,
         )
 
-    return sd_model.get_diffusion_output(
+    return diffusion_model.get_diffusion_output(
         diffusion_inputs,
-        strength=train_state.val_noise_strength,
-        num_inference_steps=train_state.val_noise_num_steps,
+        strength=diffusion_model.config.noise_strength,
+        num_inference_steps=diffusion_model.config.num_inference_steps,
     )
 
 
 @torch.no_grad()
 def get_validation_metrics(
-    accelerator, train_state, metrics, dataloader, sd_model, models, run_prefix
+    accelerator, train_config, metrics, dataloader, sd_model, models, run_prefix
 ):
     running_metrics = {
         name: torch.zeros(1, dtype=torch.float32) for name in metrics.keys()
@@ -799,7 +681,7 @@ def get_validation_metrics(
         rgb = batch["rgb"].to(dtype=sd_model.dtype, device=accelerator.device)
 
         diffusion_output = get_diffusion_output_from_batch(
-            train_state, step, batch, sd_model, accelerator.device, models, rgb=rgb
+            step, batch, sd_model, rgb=rgb
         )
 
         rgb_out = diffusion_output["rgb"]
@@ -813,11 +695,11 @@ def get_validation_metrics(
 
             running_metrics[metric_name] += torch.sum(values)
 
-            if train_state.use_debug_metrics:
+            if train_config.use_debug_metrics:
                 value_dict = {str(i): float(v) for i, v in enumerate(values)}
                 accelerator.log(
                     {f"{run_prefix}_{metric_name}_{str(batch['meta'])}": value_dict},
-                    step=train_state.global_step,
+                    step=train_config.global_step,
                 )
 
     mean_metrics = {}
@@ -829,7 +711,7 @@ def get_validation_metrics(
 
 
 @torch.no_grad()
-def get_validation_renders(accelerator, train_state, dataloader, sd_model, models):
+def get_validation_renders(accelerator, train_config, dataloader, sd_model, models):
 
     vis_rgb_gts = []
     vis_rgbs_noisy = []
@@ -839,13 +721,13 @@ def get_validation_renders(accelerator, train_state, dataloader, sd_model, model
     for step, batch in enumerate(dataloader):
         rgb_gt = batch["rgb"].to(dtype=sd_model.dtype, device=accelerator.device)
         diffusion_output = get_diffusion_output_from_batch(
-            train_state, step, batch, sd_model, accelerator.device, models, rgb=rgb_gt
+            step, batch, sd_model, rgb=rgb_gt
         )
         rgb_out = diffusion_output["rgb"]
 
         # Renders
         val_start_timestep = int(
-            (1 - train_state.val_noise_strength)
+            (1 - train_config.val_noise_strength)
             * len(models["noise_scheduler"].timesteps)
         )
 
@@ -872,13 +754,20 @@ def get_validation_renders(accelerator, train_state, dataloader, sd_model, model
 
 @torch.no_grad
 def get_reference_outputs(
-    accelerator, train_state, models, sd_model, dataloader, metrics, run_prefix
+    accelerator: Accelerator,
+    train_config: TrainConfig,
+    train_state: TrainState,
+    sd_model: StableDiffusionModel,
+    dataloader: DataLoader,
+    run_prefix: str,
 ):
     ref_nvs_running_metrics = {
-        name: torch.zeros(1, dtype=torch.float32) for name in metrics.keys()
+        name: torch.zeros(1, dtype=torch.float32)
+        for name in sd_model.diffusion_metrics.keys()
     }
     ref_running_metrics = {
-        name: torch.zeros(1, dtype=torch.float32) for name in metrics.keys()
+        name: torch.zeros(1, dtype=torch.float32)
+        for name in sd_model.diffusion_metrics.keys()
     }
     ref_running_count = 0
     ref_gts = []
@@ -891,7 +780,7 @@ def get_reference_outputs(
         ref_gt = batch["ref_gt"].to(dtype=sd_model.dtype, device=accelerator.device)
 
         diffusion_output = get_diffusion_output_from_batch(
-            train_state, step, batch, sd_model, accelerator.device, models, rgb=ref_rgb
+            step, batch, sd_model, rgb=ref_rgb
         )
         ref_gen_out = diffusion_output["rgb"]
 
@@ -902,41 +791,33 @@ def get_reference_outputs(
         ref_gts.extend(list(ref_gt.detach().cpu()))
         ref_metas.extend(batch["meta"])
 
-        for metric_name, metric in metrics.items():
+        for metric_name, metric in sd_model.diffusion_metrics.items():
             values: Tensor = metric(ref_gen_out, ref_gt).detach().cpu()
             if len(values.shape) == 0:
                 values = torch.tensor([values.item()])
 
-            ref_running_metrics[metric_name] += torch.sum(values)
-
-            if train_state.use_debug_metrics:
-                value_dict = {str(i): float(v) for i, v in enumerate(values)}
-                accelerator.log(
-                    {
-                        f"{run_prefix}_ref_{metric_name}_{str(batch['meta'])}": value_dict
-                    },
-                    step=train_state.global_step,
-                )
-
-        for metric_name, metric in metrics.items():
             values_nvs: Tensor = metric(ref_rgb, ref_gt).detach().cpu()
             if len(values_nvs.shape) == 0:
                 values_nvs = torch.tensor([values_nvs.item()])
 
+            ref_running_metrics[metric_name] += torch.sum(values)
             ref_nvs_running_metrics[metric_name] += torch.sum(values_nvs)
 
-            if train_state.use_debug_metrics:
-                value_dict = {str(i): float(v) for i, v in enumerate(values_nvs)}
+            if train_config.use_debug_metrics:
+                value_dict = {str(i): float(v) for i, v in enumerate(values)}
+                value_dict_nvs = {str(i): float(v) for i, v in enumerate(values_nvs)}
+
                 accelerator.log(
                     {
-                        f"{run_prefix}_ref_nvs_{metric_name}_{str(batch['meta'])}": value_dict
+                        f"{run_prefix}_ref_nvs_{metric_name}_{str(batch['meta'])}": value_dict_nvs,
+                        f"{run_prefix}_ref_{metric_name}_{str(batch['meta'])}": value_dict,
                     },
                     step=train_state.global_step,
                 )
 
     mean_ref_metrics = {}
     mean_ref_nvs_metrics = {}
-    for metric_name, metric in metrics.items():
+    for metric_name, metric in sd_model.diffusion_metrics.items():
         mean_ref_metrics[f"{run_prefix}_ref_{metric_name}"] = (
             ref_running_metrics[metric_name] / ref_running_count
         ).item()
@@ -978,96 +859,13 @@ def pack_images_for_wandb(labels, all_imgs, metas):
     return packed_imgs
 
 
-@torch.no_grad()
-def validate_model(
-    accelerator,
-    train_state: TrainState,
-    dataloader: torch.utils.data.DataLoader,
-    vis_dataloader: torch.utils.data.DataLoader,
-    ref_dataloader: torch.utils.data.DataLoader,
-    models,
-    sd_model: StableDiffusionModel,
-    metrics: Dict[str, Any],
-    run_prefix: str,
-) -> None:
-    sd_model.set_training(False)
-
-    val_metrics = get_validation_metrics(
-        accelerator, train_state, metrics, dataloader, sd_model, models, run_prefix
-    )
-
-    val_renders = get_validation_renders(
-        accelerator, train_state, vis_dataloader, sd_model, models
-    )
-
-    ref_metrics, ref_renders = get_reference_outputs(
-        accelerator, train_state, models, sd_model, ref_dataloader, metrics, run_prefix
-    )
-
-    for metric_name, metric in val_metrics.items():
-        # TODO: Replace with LPIPS, make configurable
-        if metric_name == "ssim" and metric > train_state.best_ssim:
-            train_state.best_ssim = metric
-
-    accelerator.log(
-        prefix_keys(val_metrics, run_prefix),
-        step=train_state.global_step,
-    )
-
-    accelerator.log(
-        prefix_keys(ref_metrics["ref"], run_prefix),
-        step=train_state.global_step,
-    )
-    accelerator.log(
-        prefix_keys(ref_metrics["ref_nvs"], run_prefix),
-        step=train_state.global_step,
-    )
-
-    for tracker in accelerator.trackers:
-        if tracker.name == "tensorboard":
-            raise NotImplementedError
-
-        elif tracker.name == "wandb":
-            tracker.log_images(
-                {
-                    **pack_images_for_wandb(
-                        [
-                            f"{run_prefix}_ground_truth",
-                            f"{run_prefix}_diffusion_output",
-                            f"noisy_{run_prefix}_ground_truth",
-                        ],
-                        [
-                            val_renders["rgb_gt"],
-                            val_renders["rgb_out"],
-                            val_renders["rgb_noisy"],
-                        ],
-                        val_renders["meta"],
-                    ),
-                    **pack_images_for_wandb(
-                        [
-                            f"{run_prefix}_reference_ground_truth",
-                            f"{run_prefix}_reference_nvs_output",
-                            f"{run_prefix}_reference_diffusion_output",
-                        ],
-                        [
-                            ref_renders["ref_gt"],
-                            ref_renders["ref_nvs_out"],
-                            ref_renders["ref_gen_out"],
-                        ],
-                        ref_renders["ref_meta"],
-                    ),
-                },
-                step=train_state.global_step,
-            )
-
-
 def train_epoch(
     accelerator: Accelerator,
     optimizer: torch.optim.Optimizer,
     lr_scheduler: torch.optim.lr_scheduler.LRScheduler,
+    train_config: TrainConfig,
     train_state: TrainState,
     dataloader: torch.utils.data.DataLoader,
-    models,
     sd_model: StableDiffusionModel,
     params_to_optimize,
     progress_bar: tqdm.tqdm,
@@ -1077,35 +875,23 @@ def train_epoch(
     train_loss = 0.0
 
     for i_batch, batch in enumerate(dataloader):
-        if i_batch >= train_state.num_update_steps_per_epoch:
-            break
-
         assert "rgb" in batch
 
         with accelerator.accumulate(sd_model.get_models_to_train()):
             rgb = batch["rgb"].to(dtype=sd_model.dtype, device=accelerator.device)
             rgb_gt = rgb
 
-            if train_state.use_noise_augment:
-                rgb = generate_noise_pattern(
-                    n_clusters=256,
-                    cluster_size_min=2,
-                    cluster_size_max=8,
-                    noise_strength=0.2,
-                    pattern=rgb,
-                )
-
             model_input = encode_img(
                 sd_model.img_processor, sd_model.vae, rgb, accelerator.device
             )
 
             noise = get_diffusion_noise(
-                model_input.shape, model_input.device, train_state
+                model_input.shape, model_input.device, train_config
             )
 
             timesteps = get_random_timesteps(
-                train_state.train_noise_strength,
-                sd_model.noise_scheduler.config.num_train_timesteps,
+                train_config.train_noise_strength,
+                sd_model.noise_scheduler.config.num_train_timesteps,  # type: ignore
                 model_input.device,
                 model_input.size(0),
             )
@@ -1117,7 +903,7 @@ def train_epoch(
             )
 
             prompt_hidden_state = encode_tokens(
-                models["text_encoder"],
+                sd_model.text_encoder,
                 batch["input_ids"],
                 use_cache=not sd_model.is_model_trained("text_encoder"),
             )
@@ -1125,10 +911,10 @@ def train_epoch(
             unet_added_conditions = {}
             unet_kwargs = {}
 
-            if "controlnet" in models:
+            if sd_model.using_controlnet:
                 raise NotImplementedError
                 conditioning = combine_conditioning_info(
-                    batch, train_state.conditioning_signal_infos
+                    batch, train_config.conditioning_signal_infos
                 ).to(noisy_model_input.device)
 
                 down_block_res_samples, mid_block_res_sample = models["controlnet"](
@@ -1145,7 +931,7 @@ def train_epoch(
                     dtype=weights_dtype
                 )
 
-            model_pred = models["unet"](
+            model_pred = sd_model.unet(
                 noisy_model_input,
                 timesteps,
                 prompt_hidden_state,
@@ -1154,10 +940,10 @@ def train_epoch(
             ).sample
 
             loss = get_diffusion_loss(
-                models, train_state, model_input, model_pred, noise, timesteps
+                models, train_config, model_input, model_pred, noise, timesteps
             )
 
-            if train_state.use_recreation_loss:
+            if train_config.use_recreation_loss:
                 raise NotImplementedError
                 # TODO: Completely change this
                 pred_rgb = decode_img(
@@ -1165,7 +951,7 @@ def train_epoch(
                 )
                 rec_loss = (
                     torch.mean(
-                        train_state.rec_loss_strength
+                        train_config.rec_loss_strength
                         * nn.functional.mse_loss(pred_rgb, rgb_gt, reduce=None)
                         * (1 - (timesteps + 1) / noise_scheduler.num_train_timesteps)
                     )
@@ -1173,7 +959,7 @@ def train_epoch(
                 )
                 loss += rec_loss
 
-            if train_state.use_debug_metrics and "meta" in batch:
+            if train_config.use_debug_metrics and "meta" in batch:
                 for meta in batch["meta"]:
                     accelerator.log(
                         {"loss_for_" + str(meta): loss},
@@ -1182,15 +968,15 @@ def train_epoch(
 
             # Gather the losses across all processes for logging (if we use distributed training).
             avg_loss = accelerator.gather(
-                loss.repeat(train_state.train_batch_size)
+                loss.repeat(train_config.train_batch_size)
             ).mean()
-            train_loss += avg_loss.item() / train_state.gradient_accumulation_steps
+            train_loss += avg_loss.item() / train_config.gradient_accumulation_steps
 
             # Backpropagate
             accelerator.backward(loss)
             if accelerator.sync_gradients:
                 accelerator.clip_grad_norm_(
-                    params_to_optimize, train_state.max_grad_norm
+                    params_to_optimize, train_config.max_grad_norm
                 )
 
             optimizer.step()
@@ -1210,36 +996,131 @@ def train_epoch(
     train_state.epoch += 1
 
 
-def main() -> None:
-    # ========================
-    # ===   Setup script   ===
-    # ========================
+@torch.no_grad()
+def validate_model(
+    accelerator,
+    train_config: TrainConfig,
+    train_state: TrainState,
+    dataloader: torch.utils.data.DataLoader,
+    vis_dataloader: Optional[torch.utils.data.DataLoader],
+    ref_dataloader: Optional[torch.utils.data.DataLoader],
+    sd_model: StableDiffusionModel,
+    run_prefix: str,
+) -> None:
+    sd_model.set_training(False)
 
-    logging.getLogger().setLevel(logging.INFO)
-    if not torch.cuda.is_available():
-        logging.warning(
-            f"CUDA not detected. Running on CPU. The code is not supported for CPU and will most likely give incorrect results. Proceed with caution."
+    models = sd_model.models
+    metrics = sd_model.diffusion_metrics
+
+    val_metrics = get_validation_metrics(
+        accelerator, train_config, metrics, dataloader, sd_model, models, run_prefix
+    )
+
+    val_renders = (
+        get_validation_renders(
+            accelerator, train_config, vis_dataloader, sd_model, models
+        )
+        if vis_dataloader is not None
+        else None
+    )
+
+    ref_metrics, ref_renders = (
+        get_reference_outputs(
+            accelerator,
+            train_config,
+            models,
+            sd_model,
+            ref_dataloader,
+            metrics,
+            run_prefix,
+        )
+        if ref_dataloader is not None
+        else (None, None)
+    )
+
+    for metric_name, metric in val_metrics.items():
+        # TODO: Replace with LPIPS, make configurable
+        if metric_name == "ssim" and metric > train_state.best_ssim:
+            train_state.best_ssim = metric
+
+    accelerator.log(
+        prefix_keys(val_metrics, run_prefix),
+        step=train_state.global_step,
+    )
+
+    if ref_metrics:
+        accelerator.log(
+            prefix_keys(ref_metrics["ref"], run_prefix),
+            step=train_state.global_step,
         )
 
-    train_state = TrainState()
+        accelerator.log(
+            prefix_keys(ref_metrics["ref_nvs"], run_prefix),
+            step=train_state.global_step,
+        )
 
-    setup_project(train_state.cache_dir)
+    imgs_to_log = {}
+    if val_renders:
+        imgs_to_log.update(
+            pack_images_for_wandb(
+                [
+                    f"{run_prefix}_ground_truth",
+                    f"{run_prefix}_diffusion_output",
+                    f"noisy_{run_prefix}_ground_truth",
+                ],
+                [
+                    val_renders["rgb_gt"],
+                    val_renders["rgb_out"],
+                    val_renders["rgb_noisy"],
+                ],
+                val_renders["meta"],
+            )
+        )
+    if ref_renders:
+        imgs_to_log.update(
+            pack_images_for_wandb(
+                [
+                    f"{run_prefix}_reference_ground_truth",
+                    f"{run_prefix}_reference_nvs_output",
+                    f"{run_prefix}_reference_diffusion_output",
+                ],
+                [
+                    ref_renders["ref_gt"],
+                    ref_renders["ref_nvs_out"],
+                    ref_renders["ref_gen_out"],
+                ],
+                ref_renders["ref_meta"],
+            )
+        )
+
+    for tracker in accelerator.trackers:
+        if tracker.name == "tensorboard":
+            raise NotImplementedError
+
+        elif tracker.name == "wandb":
+            tracker.log_images(
+                imgs_to_log,
+                step=train_state.global_step,
+            )
+
+
+def setup_accelerator(train_config: TrainConfig) -> Accelerator:
 
     accelerator = Accelerator(
-        gradient_accumulation_steps=train_state.gradient_accumulation_steps,
+        gradient_accumulation_steps=train_config.gradient_accumulation_steps,
         mixed_precision=(
-            train_state.diffusion_config.dtype
-            if train_state.diffusion_config.dtype in LOWER_DTYPES
+            train_config.diffusion_config.dtype
+            if train_config.diffusion_config.dtype in LOWER_DTYPES
             else "no"
         ),
-        log_with=train_state.loggers,
+        log_with=train_config.loggers,
         project_config=ProjectConfiguration(
-            project_dir=str(train_state.output_dir),
-            logging_dir=str(train_state.logging_dir),
+            project_dir=str(train_config.output_dir),
+            logging_dir=str(train_config.logging_dir),
         ),
         kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)],
     )
-    logger.info(f"Launching script under id: {train_state.job_id}")
+    logger.info(f"Launching script under id: {train_config.job_id}")
     logger.info(
         f"Number of cuda detected devices: {torch.cuda.device_count()}, Using device: {accelerator.device}, distributed: {accelerator.distributed_type}"
     )
@@ -1257,36 +1138,39 @@ def main() -> None:
         transformers.utils.logging.set_verbosity_error()
         diffusers.utils.logging.set_verbosity_error()
 
-    if train_state.seed is not None:
-        set_seed(train_state.seed)
+    if train_config.seed is not None:
+        set_seed(train_config.seed)
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     # Note: this applies to the A100
-    if train_state.allow_tf32:
+    if train_config.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
 
-    if torch.backends.mps.is_available() and train_state.weights_dtype == "bf16":
+    if (
+        torch.backends.mps.is_available()
+        and train_config.diffusion_config.dtype == "bf16"
+    ):
         # due to pytorch#99272, MPS does not yet support bfloat16.
         raise ValueError(
             "Mixed precision training with bfloat16 is not supported on MPS. Please use fp16 (recommended) or fp32 instead."
         )
 
     if accelerator.is_main_process:
-        train_state.output_dir.mkdir(exist_ok=True, parents=True)
-        (train_state.output_dir / train_state.job_id).mkdir(exist_ok=True)
-        train_state.logging_dir.mkdir(exist_ok=True)
+        train_config.output_dir.mkdir(exist_ok=True, parents=True)
+        (train_config.output_dir / train_config.job_id).mkdir(exist_ok=True)
+        train_config.logging_dir.mkdir(exist_ok=True)
 
-        if train_state.push_to_hub:
+        if train_config.push_to_hub:
             raise NotImplementedError
 
-    if "wandb" in train_state.loggers:
+    if "wandb" in train_config.loggers:
         if not is_wandb_available():
             raise ImportError(
                 "Make sure to install wandb if you want to use it for logging during training."
             )
 
-        if train_state.hub_token is not None:
+        if train_config.hub_token is not None:
             raise ValueError(
                 "You cannot use both report_to=wandb and hub_token due to a security risk of exposing your token."
                 " Please use `huggingface-cli login` to authenticate with the Hub."
@@ -1296,43 +1180,112 @@ def main() -> None:
 
         if accelerator.is_local_main_process:
             wandb.init(
-                project=train_state.wandb_project or os.getenv("WANDB_PROJECT"),
-                entity=train_state.wandb_entity or os.getenv("WANDB_ENTITY"),
+                project=train_config.wandb_project or os.getenv("WANDB_PROJECT"),
+                entity=train_config.wandb_entity or os.getenv("WANDB_ENTITY"),
                 dir=(
-                    train_state.logging_dir
-                    if train_state.logging_dir
+                    train_config.logging_dir
+                    if train_config.logging_dir
                     else get_env("WANDB_DIR")
                 ),
-                group=train_state.wandb_group or os.getenv("WANDB_GROUP"),
+                group=train_config.wandb_group or os.getenv("WANDB_GROUP"),
                 reinit=True,
-                config=asdict(train_state),
+                config=asdict(train_config),
             )
 
-    # =======================
-    # ===   Load models   ===
-    # =======================
+    return accelerator
 
-    metrics = {
-        "ssim": StructuralSimilarityIndexMeasure(
-            data_range=(0.0, 1.0), reduction="none"
-        ).to(accelerator.device),
-        "psnr": PeakSignalNoiseRatio(data_range=1.0).to(accelerator.device),
-        "lpips": LearnedPerceptualImagePatchSimilarity(normalize=True).to(
-            accelerator.device
-        ),
-    }
 
-    models, sd_model = prepare_models(train_state, accelerator.device)
+def prepare_models_with_accelerator(
+    train_config: TrainConfig,
+    train_state: TrainState,
+    diffusion_model: StableDiffusionModel,
+    accelerator: Accelerator,
+    dataloader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+):
+    num_epochs = train_config.n_epochs
+    num_processes = accelerator.num_processes
+    lr_warmup_steps = train_config.lr_warmup_steps
+    len_dataloader = len(dataloader)
+    gradient_accumulation_steps = train_config.gradient_accumulation_steps
+    batch_size = train_config.train_batch_size
 
-    # ============================
-    # === Prepare optimization ===
-    # ============================
+    num_warmup_steps = lr_warmup_steps * num_processes
+    len_dataloader_after_sharding = math.ceil(len_dataloader / num_processes)
+    num_update_steps_per_epoch = math.ceil(
+        len_dataloader_after_sharding / gradient_accumulation_steps
+    )
+    num_steps_for_scheduler = num_epochs * num_update_steps_per_epoch * num_processes
+
+    lr_scheduler = get_scheduler(
+        name=train_config.lr_scheduler,
+        optimizer=optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_steps_for_scheduler**train_config.lr_scheduler_kwargs,
+    )
+
+    # Override internal models of diffusion model with the ones prepared with accelerator to ensure correct device placement.
+    optimizer, train_dataloader, lr_scheduler, *trainable_models = accelerator.prepare(
+        optimizer,
+        dataloader,
+        lr_scheduler,
+        *diffusion_model.get_models_to_train(),
+    )
+
+    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
+    len_dataloader = len(train_dataloader)
+    num_update_steps_per_epoch = math.ceil(
+        len(train_dataloader) / train_config.gradient_accumulation_steps
+    )
+    max_train_steps = num_epochs * num_update_steps_per_epoch
+    if num_steps_for_scheduler != max_train_steps * num_processes:
+        logger.warning(
+            f"The length of the 'train_dataloader' after 'accelerator.prepare' ({num_epochs}) does not match "
+            f"the expected length ({len_dataloader_after_sharding}) when the learning rate scheduler was created. "
+            f"This inconsistency may result in the learning rate scheduler not functioning properly."
+        )
+
+    num_epochs = math.ceil(max_train_steps / num_update_steps_per_epoch)
+
+    diffusion_model.set_models(
+        train_config.diffusion_config.models_to_train_lora, trainable_models
+    )
+
+    train_state.num_update_steps_per_epoch = num_update_steps_per_epoch
+    train_state.num_epochs = num_epochs
+    train_state.max_train_steps = max_train_steps
+
+    return lr_scheduler, optimizer
+
+
+def main() -> None:
+    logging.getLogger().setLevel(logging.INFO)
+    if not torch.cuda.is_available():
+        logging.warning(
+            f"CUDA not detected. Running on CPU. The code is not supported for CPU and will most likely give incorrect results. Proceed with caution."
+        )
+
+    train_config = TrainConfig()
+    train_state = TrainState()
+
+    accelerator = setup_accelerator(train_config)
+
+    setup_cache(train_config.cache_dir)
+
+    diffusion_model = StableDiffusionModel(
+        train_config.diffusion_config,
+        device=accelerator.device,
+    )
+    diffusion_model.set_gradient_checkpointing(
+        train_config.enable_gradient_checkpointing
+    )
 
     accelerator.register_save_state_pre_hook(
         functools.partial(
             save_model_hook,
             accelerator=accelerator,
-            models=models,
+            diffusion_model=diffusion_model,
+            train_config=train_config,
             train_state=train_state,
         )
     )
@@ -1340,249 +1293,171 @@ def main() -> None:
         functools.partial(
             load_model_hook,
             accelerator=accelerator,
-            models=models,
-            train_state=train_state,
+            diffusion_model=diffusion_model,
+            train_config=train_config,
         )
     )
 
-    # ======================
-    # ===   Setup data   ===
-    # ======================
-
-    train_dataset = DynamicDataset.from_config(
-        train_state.datasets["train_data"],
-        preprocess_func=functools.partial(
-            preprocess_sample,
-            preprocessors=preprocessors["train"],
-            preprocessor_order=key_order,
-        ),
-    )
-    val_dataset = DynamicDataset.from_config(
-        train_state.datasets["val_data"],
-        preprocess_func=functools.partial(
-            preprocess_sample,
-            preprocessors=preprocessors["val"],
-            preprocessor_order=key_order,
-        ),
-    )
-
-    render_dataset = DynamicDataset.from_config(
-        train_state.datasets["render_data"],
-        preprocess_func=functools.partial(
-            preprocess_sample,
-            preprocessors=preprocessors["val"],
-            preprocessor_order=key_order,
-        ),
-    )
-
-    ref_dataset = DynamicDataset.from_config(
-        train_state.datasets["ref_data"],
-        preprocess_func=functools.partial(
-            preprocess_sample,
-            preprocessors=preprocessors["val"],
-            preprocessor_order=key_order,
-        ),
-    )
-
-    train_dataloader = DataLoader(
-        train_dataset,
+    shared_dataloader_kwargs = {
+        "batch_size": train_config.train_batch_size,
+        "num_workers": train_config.dataloader_num_workers,
+        "pin_memory": train_config.pin_memory,
+    }
+    train_dataset, train_dataloader = make_dataset_loader(
+        train_config.dataset_configs.train_dataset,
         shuffle=True,
-        batch_size=train_state.train_batch_size,
-        num_workers=train_state.dataloader_num_workers,
-        collate_fn=functools.partial(collate_fn, accelerator=accelerator),
-        pin_memory=train_state.pin_memory,
+        **shared_dataloader_kwargs,
     )
 
-    val_dataloader = DataLoader(
-        val_dataset,
+    val_dataset, val_dataloader = make_dataset_loader(
+        train_config.dataset_configs.val_dataset,
         shuffle=False,
-        batch_size=train_state.train_batch_size,
-        num_workers=train_state.dataloader_num_workers,
-        collate_fn=functools.partial(collate_fn, accelerator=accelerator),
-        pin_memory=train_state.pin_memory,
+        **shared_dataloader_kwargs,
     )
 
-    render_dataloader = DataLoader(
-        render_dataset,
-        shuffle=False,
-        batch_size=train_state.train_batch_size,
-        num_workers=train_state.dataloader_num_workers,
-        collate_fn=functools.partial(collate_fn, accelerator=accelerator),
-        pin_memory=train_state.pin_memory,
+    _, render_dataloader = (
+        make_dataset_loader(
+            train_config.dataset_configs.render_dataset,
+            shuffle=False,
+            **shared_dataloader_kwargs,
+        )
+        if train_config.dataset_configs.render_dataset is not None
+        else (None, None)
     )
 
-    ref_dataloader = DataLoader(
-        ref_dataset,
-        shuffle=False,
-        batch_size=train_state.train_batch_size,
-        num_workers=train_state.dataloader_num_workers,
-        collate_fn=functools.partial(collate_fn, accelerator=accelerator),
-        pin_memory=train_state.pin_memory,
+    _, nerf_out_dataloader = (
+        make_dataset_loader(
+            train_config.dataset_configs.nerf_out_dataset,
+            shuffle=False,
+            **shared_dataloader_kwargs,
+        )
+        if train_config.dataset_configs.nerf_out_dataset is not None
+        else (None, None)
     )
 
     # ==========================
     # ===   Setup training   ===
     # ==========================
-
-    if train_state.scale_lr:
-        train_state.learning_rate = (
-            train_state.learning_rate
-            * train_state.gradient_accumulation_steps
-            * train_state.train_batch_size
-            * accelerator.num_processes
-        )
-
     params_to_optimize = list(
         filter(
             lambda p: p.requires_grad,
-            it.chain(*(model.parameters() for model in sd_model.get_models_to_train())),
+            it.chain(
+                *(model.parameters() for model in diffusion_model.get_models_to_train())
+            ),
         )
     )
 
     optimizer_class = torch.optim.AdamW
     optimizer = optimizer_class(
         params_to_optimize,
-        lr=train_state.learning_rate,
-        betas=(train_state.adam_beta1, train_state.adam_beta2),
-        weight_decay=train_state.adam_weight_decay,
-        eps=train_state.adam_epsilon,
+        lr=(
+            (
+                train_config.learning_rate
+                * train_config.gradient_accumulation_steps
+                * train_config.train_batch_size
+                * accelerator.num_processes
+            )
+            if train_config.scale_lr
+            else train_config.learning_rate
+        ),
+        betas=(train_config.adam_beta1, train_config.adam_beta2),
+        weight_decay=train_config.adam_weight_decay,
+        eps=train_config.adam_epsilon,
     )
 
     # Scheduler and math around the number of training steps.
-    train_state.num_update_steps_per_epoch = math.ceil(
-        train_state.frac_dataset_per_epoch
-        * len(train_dataloader)
-        / train_state.gradient_accumulation_steps
-    )
-    train_state.max_train_steps = (
-        train_state.n_epochs * train_state.num_update_steps_per_epoch
-    )
-
-    lr_scheduler = get_scheduler(
-        train_state.lr_scheduler,
-        optimizer=optimizer,
-        num_warmup_steps=train_state.lr_warmup_steps
-        * train_state.gradient_accumulation_steps,
-        num_training_steps=train_state.max_train_steps
-        * train_state.gradient_accumulation_steps,
-        **train_state.lr_scheduler_kwargs,
-    )
-
-    optimizer, train_dataloader, lr_scheduler, *trainable_models = accelerator.prepare(
-        optimizer, train_dataloader, lr_scheduler, *sd_model.get_models_to_train()
-    )
-    for model, model_name in zip(
-        trainable_models, train_state.diffusion_config.models_to_train_lora
-    ):
-        models[model_name] = model
-    sd_model.pipe_models = models
-
-    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    train_state.num_update_steps_per_epoch = math.ceil(
-        train_state.frac_dataset_per_epoch
-        * len(train_dataloader)
-        / train_state.gradient_accumulation_steps
-    )
-    train_state.max_train_steps = (
-        train_state.n_epochs * train_state.num_update_steps_per_epoch
-    )
-
-    # Afterwards we recalculate our number of training epochs
-    train_state.n_epochs = math.ceil(
-        train_state.max_train_steps / train_state.num_update_steps_per_epoch
+    # Check the PR https://github.com/huggingface/diffusers/pull/8312 for detailed explanation.
+    n_epochs, max_num_steps, lr_scheduler, optimizer = prepare_models_with_accelerator(
+        train_config,
+        train_state,
+        diffusion_model,
+        accelerator,
+        train_dataloader,
+        optimizer,
     )
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        accelerator.init_trackers(train_state.wandb_group, config=asdict(train_state))
+        accelerator.init_trackers(train_config.wandb_group, config=asdict(train_config))
 
     # ===================
     # === Train model ===
     # ===================
-    total_batch_size = (
-        train_state.train_batch_size
-        * accelerator.num_processes
-        * train_state.gradient_accumulation_steps
-    )
 
     logger.info("***** Running training *****")
     logger.info(f"  Num training samples = {len(train_dataset)}")
     logger.info(f"  Num validation samples = {len(val_dataset)}")
-    logger.info(f"  Num Epochs = {train_state.n_epochs}")
+    logger.info(f"  Num Epochs = {num_epochs}")
     logger.info(
-        f"  Instantaneous batch size per device = {train_state.train_batch_size}"
+        f"  Instantaneous batch size per device = {train_config.train_batch_size}"
     )
     logger.info(
         f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
     )
     logger.info(
-        f"  Gradient Accumulation steps = {train_state.gradient_accumulation_steps}"
+        f"  Gradient Accumulation steps = {train_config.gradient_accumulation_steps}"
     )
-    logger.info(f"  Total optimization steps = {train_state.max_train_steps}")
-    logger.info(f"Configuration: {train_state}")
+    logger.info(f"  Total optimization steps = {max_train_steps}")
+    logger.info(f"Configuration: {train_config}")
 
-    if train_state.checkpoint_path:
-        resume_from_checkpoint(accelerator, train_state)
+    if train_config.checkpoint_path:
+        resume_from_checkpoint(accelerator, train_config)
 
     progress_bar = tqdm.tqdm(
-        range(0, train_state.max_train_steps),
+        range(0, max_train_steps),
         initial=train_state.global_step,
         desc="Steps",
         # Only show the progress bar once on each machine.
         disable=not accelerator.is_local_main_process,
     )
 
-    while train_state.epoch < train_state.n_epochs:
+    while train_state.epoch < train_config.n_epochs:
         train_epoch(
             accelerator,
             optimizer,
             lr_scheduler,
+            train_config,
             train_state,
             train_dataloader,
-            models,
-            sd_model,
+            diffusion_model,
             params_to_optimize,
             progress_bar,
         )
         torch.cuda.empty_cache()
 
-        if train_state.epoch % train_state.val_freq == 0:
+        if train_config.epoch % train_config.val_freq == 0:
             validate_model(
                 accelerator,
+                train_config,
                 train_state,
                 val_dataloader,
                 render_dataloader,
-                ref_dataloader,
-                models,
-                sd_model,
-                metrics,
+                nerf_out_dataloader,
+                diffusion_model,
                 "val",
             )
         torch.cuda.empty_cache()
 
         # if accelerator.is_main_process and (
-        #    train_state.global_step % train_state.checkpointing_steps == 0
+        #    train_config.global_step % train_config.checkpointing_steps == 0
         # ):
         if accelerator.is_main_process:
             # TODO: Replace best
             if (
-                train_state.checkpoint_strategy == "best"
+                train_config.checkpoint_strategy == "best"
                 and train_state.best_ssim > train_state.best_saved_ssim
             ):
-                save_checkpoint(accelerator, train_state)
+                save_checkpoint(accelerator, train_config)
                 train_state.best_saved_ssim = train_state.best_ssim
 
             elif (
-                train_state.checkpoint_strategy == "latest"
-                and train_state.global_step % train_state.checkpointing_steps == 0
+                train_config.checkpoint_strategy == "latest"
+                and train_state.global_step % train_config.checkpointing_steps == 0
             ):
-                save_checkpoint(accelerator, train_state)
+                save_checkpoint(accelerator, train_config)
 
-        if (
-            train_state.global_step >= train_state.max_train_steps
-            or train_state.epoch > train_state.n_epochs
-        ):
+        if train_state.global_step >= max_train_steps or train_state.epoch > n_epochs:
             break
 
     accelerator.wait_for_everyone()
@@ -1590,18 +1465,16 @@ def main() -> None:
         # Final inference
         validate_model(
             accelerator,
-            train_state,
+            train_config,
             val_dataloader,
             render_dataloader,
-            ref_dataloader,
-            models,
-            sd_model,
-            metrics,
+            nerf_out_dataloader,
+            diffusion_model,
             "test",
         )
 
         # Save the lora layers
-        save_lora_weights(accelerator, models, train_state, "final_weights")
+        save_lora_weights(accelerator, models, train_config, "final_weights")
 
     accelerator.end_training()
 

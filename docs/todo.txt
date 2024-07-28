@@ -9,9 +9,10 @@ Update Data and Conditioning
 - Remove prepare preprocessing [x]
 - Update TrainState to use DynamicDataset [x]
 - Refactor TrainState to use Pydantic [x]
-- Update run_train_lora with new dynamic dataset [ ]
-- Move dynamic fields out from train_state
-- Add meta by default to DynamicDataset
+- Add diffusion config to train state [x]
+- Update run_train_lora with new dynamic dataset [x]
+- Move dynamic fields out from train_state [x]
+- Add meta by default to DynamicDataset 
 - Add random and center crop to training loop (dynamic dataset?)
 - Replace "best" metric to be dynamic
 - Test new signals
