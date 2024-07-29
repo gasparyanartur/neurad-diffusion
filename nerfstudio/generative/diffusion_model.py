@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
+from enum import Enum
 from typing import Union, Optional, Tuple, Dict, Iterable, Any, List, cast
 from functools import lru_cache
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 import logging
@@ -11,6 +12,7 @@ import itertools as it
 import typing
 from copy import deepcopy
 
+import numpy as np
 import torch
 from torch import nn, Tensor
 
@@ -22,14 +24,14 @@ from diffusers import (
     DDPMScheduler,
 )
 from diffusers.training_utils import cast_training_params
-from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import (
-    retrieve_latents,
-)
+
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.models import ControlNetModel
 
 from diffusers import StableDiffusionImg2ImgPipeline
 from diffusers.image_processor import VaeImageProcessor
+from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKLOutput
+
 from peft import LoraConfig, get_peft_model, PeftModel
 
 
@@ -38,7 +40,8 @@ import torchvision
 from nerfstudio.configs.base_config import InstantiateConfig
 
 torchvision.disable_beta_transforms_warning()
-from torchmetrics.image import PeakSignalNoiseRatio
+from torchmetrics.image import StructuralSimilarityIndexMeasure, PeakSignalNoiseRatio
+from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 from transformers import (
     CLIPTextModel,
@@ -58,17 +61,63 @@ from nerfstudio.generative.utils import (
     get_device,
     batch_if_not_iterable,
 )
-from nerfstudio.generative.dynamic_dataset import (
-    ConditioningSignalInfo,
-)
 
 
-def _make_metric(name, device, **kwargs):
-    if name == "psnr":
+class Metrics:
+    psnr = "psnr"
+    mse = "mse"
+    ssim = "ssim"
+    lpips = "lpips"
+
+
+class MetricCompareDirections:
+    lt = "<"
+    gt = ">"
+
+
+metric_improvement_direction = {
+    Metrics.lpips: MetricCompareDirections.lt,
+    Metrics.ssim: MetricCompareDirections.gt,
+    Metrics.psnr: MetricCompareDirections.gt,
+    Metrics.mse: MetricCompareDirections.lt,
+}
+
+
+def is_metric_improved(
+    metric_name: str,
+    original_value: Union[float, Tensor],
+    new_value: Union[float, Tensor],
+    true_on_eq: bool = False,
+):
+    improve_dir = metric_improvement_direction[metric_name]
+
+    if improve_dir == MetricCompareDirections.lt:
+        condition = original_value < new_value
+    elif improve_dir == MetricCompareDirections.gt:
+        condition = original_value > new_value
+    else:
+        raise ValueError(f"Improvement direction not found for metric {metric_name}")
+
+    if true_on_eq:
+        condition = (original_value == new_value) | condition
+
+    return condition
+
+
+def _make_metric(name: str, device: torch.device) -> nn.Module:
+    if name == Metrics.psnr:
         metric = PeakSignalNoiseRatio(data_range=1.0).to(device)
 
-    elif name == "mse":
+    elif name == Metrics.mse:
         metric = nn.MSELoss().to(device)
+
+    elif name == Metrics.ssim:
+        metric = StructuralSimilarityIndexMeasure(
+            data_range=(0.0, 1.0), reduction="none"
+        ).to(device)
+
+    elif name == Metrics.lpips:
+        metric = LearnedPerceptualImagePatchSimilarity(normalize=True).to(device)
 
     else:
         raise NotImplementedError
@@ -123,7 +172,7 @@ def prep_hf_pipe(
 
 def _prepare_image(kwargs):
     image: Tensor = kwargs["image"]
-    image = batch_if_not_iterable(image)
+    image = cast(Tensor, batch_if_not_iterable(image))
     batch_size = len(image)
 
     if image.size(1) == 3:
@@ -140,6 +189,7 @@ def _prepare_image(kwargs):
     return channel_first, batch_size
 
 
+"""
 def combine_conditioning_info(
     sample: Dict[str, Tensor], conditioning_signal_infos: List["ConditioningSignalInfo"]
 ) -> torch.Tensor:
@@ -160,8 +210,10 @@ def combine_conditioning_info(
         signals.append(signal)
 
     return torch.cat(signals, dim=1)
+"""
 
 
+"""
 def _prepare_conditioning(
     kwargs: Dict[str, Any],
     sample: Dict[str, Tensor],
@@ -170,6 +222,7 @@ def _prepare_conditioning(
     kwargs["control_image"] = combine_conditioning_info(
         sample, conditioning_signal_infos
     )
+"""
 
 
 def _prepare_prompt(
@@ -435,7 +488,7 @@ class MockDiffusionModel(DiffusionModel):
     def __init__(
         self,
         config: DiffusionModelConfig,
-        pipe_models: Dict[str, Any] = None,
+        pipe_models: Dict[str, Any] = None,  # type: ignore
         device=get_device(),
         *args,
         **kwargs,
@@ -879,7 +932,7 @@ class StableDiffusionModel(DiffusionModel):
             denoised_latent = denoise_latent(
                 noisy_latent,
                 self.unet,
-                timesteps,
+                timesteps,  # type: ignore
                 self.noise_scheduler,
                 prompt_embeds,
                 do_classifier_free_guidance=self.config.do_classifier_free_guidance,
@@ -935,6 +988,19 @@ class StableDiffusionModel(DiffusionModel):
 class ControlNetDiffusionModel(DiffusionModel): ...
 
 
+def retrieve_latents(
+    encoder_output: AutoencoderKLOutput,
+    generator: Optional[torch.Generator] = None,
+    sample_mode: str = "sample",
+) -> Tensor:
+    if sample_mode == "sample":
+        return encoder_output.latent_dist.sample(generator)
+    elif sample_mode == "argmax":
+        return encoder_output.latent_dist.mode()
+    else:
+        raise AttributeError("Could not access latents of provided encoder_output")
+
+
 def encode_img(
     img_processor: VaeImageProcessor,
     vae: AutoencoderKL,
@@ -943,21 +1009,21 @@ def encode_img(
     seed: Optional[int] = None,
     sample_mode: str = "sample",
 ) -> Tensor:
-    img = img_processor.preprocess(img)
+    img = img_processor.preprocess(img)  # type: ignore
 
-    needs_upcasting = vae.dtype == torch.float16 and vae.config.force_upcast
+    needs_upcasting = vae.dtype == torch.float16 and vae.config.force_upcast  # type: ignore
     if needs_upcasting:
         original_vae_dtype = vae.dtype
         upcast_vae(vae)  # Ensure float32 to avoid overflow
         img = img.float()
 
-    latents = vae.encode(img.to(device))
+    latents = vae.encode(img.to(device), dict=True)  # type: ignore
     latents = retrieve_latents(
         latents,
         generator=(torch.manual_seed(seed) if seed is not None else None),
         sample_mode=sample_mode,
     )
-    latents = latents * vae.config.scaling_factor
+    latents = latents * vae.config.scaling_factor  # type: ignore
 
     if needs_upcasting:
         vae.to(original_vae_dtype)
@@ -969,19 +1035,19 @@ def encode_img(
 def decode_img(
     img_processor: VaeImageProcessor, vae: AutoencoderKL, latents: Tensor
 ) -> Tensor:
-    needs_upcasting = vae.dtype == torch.float16 and vae.config.force_upcast
+    needs_upcasting = vae.dtype == torch.float16 and vae.config.force_upcast  # type: ignore
     if needs_upcasting:
         original_vae_dtype = vae.dtype
         upcast_vae(vae)
         latents = latents.to(next(iter(vae.post_quant_conv.parameters())).dtype)
 
-    img = vae.decode(latents / vae.config.scaling_factor, return_dict=False)[0]
+    img = vae.decode(latents / vae.config.scaling_factor, return_dict=False)[0]  # type: ignore
 
     if needs_upcasting:
         vae.to(original_vae_dtype)
 
-    img = img_processor.postprocess(img, output_type="pt")
-    return img
+    img = img_processor.postprocess(img, output_type="pt")  # type: ignore
+    return img  # type: ignore
 
 
 def upcast_vae(vae):
@@ -1014,7 +1080,7 @@ def add_noise_to_latent(
     )
 
     timesteps = torch.tensor([timestep], device=latent.device, dtype=torch.int)
-    noisy_latents = noise_scheduler.add_noise(latent, noise, timesteps)
+    noisy_latents = noise_scheduler.add_noise(latent, noise, timesteps)  # type: ignore
     return noisy_latents
 
 
@@ -1022,7 +1088,7 @@ def add_noise_to_latent(
 def denoise_latent(
     latent: Tensor,
     unet: UNet2DConditionModel,
-    timesteps: Union[List[int], Tensor],
+    timesteps: Sequence[int],
     noise_scheduler: DDPMScheduler,
     encoder_hidden_states,
     timestep_cond=None,
@@ -1036,7 +1102,7 @@ def denoise_latent(
         extra_step_kwargs = {}
 
     if timesteps[0] < timesteps[-1]:
-        timesteps = reversed(timesteps)
+        timesteps = reversed(timesteps)  # type: ignore
 
     for t in timesteps:
         latent_model_input = (
@@ -1061,7 +1127,7 @@ def denoise_latent(
             )
 
         latent = noise_scheduler.step(
-            noise_pred, t, latent, **extra_step_kwargs, return_dict=False
+            noise_pred, t, latent, **extra_step_kwargs, return_dict=False  # type: ignore
         )[0]
 
     return latent
@@ -1094,7 +1160,7 @@ def tokenize_prompt(
     tokenizer: CLIPTokenizer, prompt: Union[str, Iterable[str]]
 ) -> torch.Tensor:
     text_inputs = tokenizer(
-        prompt,
+        prompt,  # type: ignore
         padding="max_length",
         max_length=tokenizer.model_max_length,
         truncation=True,
@@ -1158,7 +1224,7 @@ def embed_prompt(
 
 def draw_from_bins(start, end, n_draws, device, include_last: bool = False):
     values = torch.zeros(n_draws + int(include_last), dtype=torch.long, device=device)
-    buckets = torch.round(torch.linspace(start, end, n_draws + 1)).int()
+    buckets = np.round(np.linspace(start, end, n_draws + 1)).astype(int)
 
     for i in range(n_draws):
         values[i] = torch.randint(buckets[i], buckets[i + 1], (1,))
@@ -1213,16 +1279,20 @@ def get_timesteps(
     return timesteps, num_inference_steps - t_start
 
 
-def get_matching(model, patterns: Iterable[Union[re.Pattern, str]] = (".*",)):
-    for i, pattern in enumerate(patterns):
-        if isinstance(pattern, str):
-            patterns[i] = re.compile(pattern)
+def get_matching(
+    model: nn.Module, patterns: Iterable[Union[re.Pattern, str]] = (".*",)
+):
+    parsed_patterns = [
+        re.compile(pattern) if isinstance(pattern, str) else pattern
+        for pattern in patterns
+    ]
 
-    li = []
-    for name, mod in model.named_modules():
-        for pattern in patterns:
-            if pattern.match(name):
-                li.append((name, mod))
+    li = [
+        (name, mod)
+        for (name, mod), pattern in it.product(model.named_modules(), parsed_patterns)
+        if pattern.match(name)
+    ]
+
     return li
 
 
@@ -1233,47 +1303,42 @@ def parse_target_ranks(target_ranks, prefix=r""):
         if not item:
             continue
 
-        match name:
-            case "":
-                continue
+        if name == "":
+            continue
 
-            case "downblocks":
-                assert isinstance(item, dict)
-                parsed_targets.update(
-                    parse_target_ranks(item, rf"{prefix}.*down_blocks")
-                )
+        elif name == "downblocks":
+            assert isinstance(item, dict)
+            parsed_targets.update(parse_target_ranks(item, rf"{prefix}.*down_blocks"))
 
-            case "midblocks":
-                assert isinstance(item, dict)
-                parsed_targets.update(
-                    parse_target_ranks(item, rf"{prefix}.*mid_blocks")
-                )
+        elif name == "midblocks":
+            assert isinstance(item, dict)
+            parsed_targets.update(parse_target_ranks(item, rf"{prefix}.*mid_blocks"))
 
-            case "upblocks":
-                assert isinstance(item, dict)
-                parsed_targets.update(parse_target_ranks(item, rf"{prefix}.*up_blocks"))
+        elif name == "upblocks":
+            assert isinstance(item, dict)
+            parsed_targets.update(parse_target_ranks(item, rf"{prefix}.*up_blocks"))
 
-            case "attn":
-                assert isinstance(item, int)
-                parsed_targets[rf"{prefix}.*attn.*to_[kvq]"] = item
-                parsed_targets[rf"{prefix}.*attn.*to_out\.0"] = item
+        elif name == "attn":
+            assert isinstance(item, int)
+            parsed_targets[rf"{prefix}.*attn.*to_[kvq]"] = item
+            parsed_targets[rf"{prefix}.*attn.*to_out\.0"] = item
 
-            case "resnet":
-                assert isinstance(item, int)
-                parsed_targets[rf"{prefix}.*resnets.*conv\d*"] = item
-                parsed_targets[rf"{prefix}.*resnets.*time_emb_proj"] = item
+        elif name == "resnet":
+            assert isinstance(item, int)
+            parsed_targets[rf"{prefix}.*resnets.*conv\d*"] = item
+            parsed_targets[rf"{prefix}.*resnets.*time_emb_proj"] = item
 
-            case "ff":
-                assert isinstance(item, int)
-                parsed_targets[rf"{prefix}.*ff\.net\.0\.proj"] = item
-                parsed_targets[rf"{prefix}.*ff\.net\.2"] = item
+        elif name == "ff":
+            assert isinstance(item, int)
+            parsed_targets[rf"{prefix}.*ff\.net\.0\.proj"] = item
+            parsed_targets[rf"{prefix}.*ff\.net\.2"] = item
 
-            case "proj":
-                assert isinstance(item, int)
-                parsed_targets[rf"{prefix}.*attentions.*proj_in"] = item
-                parsed_targets[rf"{prefix}.*attentions.*proj_out"] = item
+        elif name == "proj":
+            assert isinstance(item, int)
+            parsed_targets[rf"{prefix}.*attentions.*proj_in"] = item
+            parsed_targets[rf"{prefix}.*attentions.*proj_out"] = item
 
-            case "_":
-                raise NotImplementedError(f"Unrecognized target: {name}")
+        else:
+            raise NotImplementedError(f"Unrecognized target: {name}")
 
     return parsed_targets

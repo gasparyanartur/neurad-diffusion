@@ -45,8 +45,10 @@ from accelerate.utils import (
 from peft import PeftModel
 
 from nerfstudio.generative.diffusion_model import (
+    Metrics,
     StableDiffusionModel,
     encode_img,
+    is_metric_improved,
 )
 from nerfstudio.generative.dynamic_dataset import (
     DataSpec,
@@ -79,8 +81,6 @@ from nerfstudio.generative.utils import (
 
 check_min_version("0.27.0")
 logger = get_logger(__name__, log_level="INFO")
-
-metric_improvement_direction = {"lpips": "<", "ssim": ">", "psnr": ">"}
 
 
 class TrainingDatasetConfigs(BaseModel):
@@ -133,6 +133,7 @@ class TrainConfig(BaseSettings):
     max_num_checkpoints: int = (
         0  # How many checkpoints, besides the latest, that will be stored
     )
+    checkpoint_metric: str = Metrics.lpips
 
     n_epochs: int = 100
     max_train_samples: Optional[int] = None
@@ -272,8 +273,8 @@ class TrainState(BaseModel):
     global_step: int = 0
     epoch: int = 0
 
-    best_ssim: float = 0
-    best_saved_ssim: float = 0
+    best_metric: float = 0
+    best_saved_metric: float = 0
 
     @property
     def max_epoch(self) -> int:
@@ -1060,8 +1061,11 @@ def validate_model(
 
     for metric_name, metric in val_metrics.items():
         # TODO: Replace with LPIPS, make configurable
-        if metric_name == "ssim" and metric > train_state.best_ssim:
-            train_state.best_ssim = metric
+        if (
+            metric_name == train_config.checkpoint_metric
+            and metric > train_state.best_metric
+        ):
+            train_state.best_metric = metric
 
     accelerator.log(
         prefix_keys(val_metrics, run_prefix),
@@ -1461,12 +1465,13 @@ def main() -> None:
         # ):
         if accelerator.is_main_process:
             # TODO: Replace best
-            if (
-                train_config.checkpoint_strategy == "best"
-                and train_state.best_ssim > train_state.best_saved_ssim
+            if train_config.checkpoint_strategy == "best" and is_metric_improved(
+                train_config.checkpoint_metric,
+                train_state.best_saved_metric,
+                train_state.best_metric,
             ):
                 save_checkpoint(accelerator, train_config, train_state)
-                train_state.best_saved_ssim = train_state.best_ssim
+                train_state.best_saved_metric = train_state.best_metric
 
             elif (
                 train_config.checkpoint_strategy == "latest"

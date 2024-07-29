@@ -12,9 +12,9 @@ Update Data and Conditioning
 - Add diffusion config to train state [x]
 - Update run_train_lora with new dynamic dataset [x]
 - Move dynamic fields out from train_state [x]
-- Add meta by default to DynamicDataset 
-- Add random and center crop to training loop (dynamic dataset?)
-- Replace "best" metric to be dynamic
+- Add meta by default to DynamicDataset  [x]
+- Add random and center crop to training loop (dynamic dataset?) [x]
+- Replace "best" metric to be dynamic [x]
 - Test refactor
 
 Start ControlNet
