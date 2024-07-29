@@ -15,9 +15,11 @@ Update Data and Conditioning
 - Add meta by default to DynamicDataset 
 - Add random and center crop to training loop (dynamic dataset?)
 - Replace "best" metric to be dynamic
-- Test new signals
+- Test refactor
 
 Start ControlNet
+- Add conditioning signals
+- Test new signals
 - Create controlnet model
 - Make conditioning signals work with controlnet
 - Train controlnet

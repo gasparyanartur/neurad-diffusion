@@ -1067,15 +1067,23 @@ def denoise_latent(
     return latent
 
 
-def get_noised_img(img, timestep, vae, img_processor, noise_scheduler, seed=None):
+def get_noised_img(
+    img: Tensor,
+    timestep: Union[int, Tensor],
+    vae: AutoencoderKL,
+    img_processor: VaeImageProcessor,
+    noise_scheduler: DDPMScheduler,
+    seed: Optional[int] = None,
+) -> Tensor:
     with torch.no_grad():
         model_input = encode_img(
             img_processor, vae, img, device=vae.device, seed=seed, sample_mode="sample"
         )
         noise = torch.randn_like(model_input, device=vae.device)
-        timestep = noise_scheduler.timesteps[timestep]
-        timesteps = torch.tensor([timestep], device=vae.device)
-        noisy_model_input = noise_scheduler.add_noise(model_input, noise, timesteps)
+        timesteps = torch.tensor(
+            [noise_scheduler.timesteps[timestep]], device=vae.device
+        )
+        noisy_model_input = noise_scheduler.add_noise(model_input, noise, timesteps)  # type: ignore
         img_pred = decode_img(img_processor, vae, noisy_model_input)
 
     return img_pred

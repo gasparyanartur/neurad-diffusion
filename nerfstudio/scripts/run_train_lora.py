@@ -20,7 +20,7 @@ import functools
 import numpy as np
 import torch
 import wandb
-from torch import nn
+from torch import FloatTensor, IntTensor, nn
 from torch import Tensor
 from torch.utils.data import DataLoader
 import transformers
@@ -43,8 +43,6 @@ from accelerate.utils import (
     set_seed,
 )
 from peft import PeftModel
-from torchmetrics.image import StructuralSimilarityIndexMeasure, PeakSignalNoiseRatio
-from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 from nerfstudio.generative.diffusion_model import (
     StableDiffusionModel,
@@ -54,9 +52,6 @@ from nerfstudio.generative.dynamic_dataset import (
     DataSpec,
     DatasetConfig,
     DatasetTree,
-    DatasetTreeSample,
-    DatasetTreeSceneList,
-    DatasetTreeSplit,
     NerfOutputSpec,
     PromptDataSpec,
     RgbDataSpec,
@@ -580,26 +575,29 @@ def get_diffusion_noise(
 
 
 def get_diffusion_loss(
-    models, train_config: TrainConfig, model_input, model_pred, noise, timesteps
-):
-    noise_scheduler = models["noise_scheduler"]
+    diffusion_model: StableDiffusionModel,
+    train_config: TrainConfig,
+    model_input: Tensor,
+    model_pred: Tensor,
+    noise: Tensor,
+    timesteps: Tensor,
+) -> Tensor:
+    noise_scheduler = diffusion_model.noise_scheduler
+    prediction_type = noise_scheduler.config.prediction_type  # type: ignore
 
     # Get the target for loss depending on the prediction type
     if train_config.noise_scheduler_prediction_type is not None:
         # set prediction_type of scheduler if defined
-        noise_scheduler.register_to_config(
-            prediction_type=train_config.noise_scheduler_prediction_type
-        )
+        prediction_type = train_config.noise_scheduler_prediction_type
+        noise_scheduler.register_to_config(prediction_type=prediction_type)
 
-    if noise_scheduler.config.prediction_type == "epsilon":
+    if prediction_type == "epsilon":
         target = noise
-    elif noise_scheduler.config.prediction_type == "v_prediction":
+    elif prediction_type == "v_prediction":
         # TODO: Update this with timesteps
-        target = noise_scheduler.get_velocity(model_input, noise, timesteps)
+        target = noise_scheduler.get_velocity(model_input, noise, timesteps)  # type: ignore
     else:
-        raise ValueError(
-            f"Unknown prediction type {noise_scheduler.config.prediction_type}"
-        )
+        raise ValueError(f"Unknown prediction type {prediction_type}")
 
     if train_config.snr_gamma is None:
         loss = nn.functional.mse_loss(
@@ -614,9 +612,9 @@ def get_diffusion_loss(
             [snr, train_config.snr_gamma * torch.ones_like(timesteps)],
             dim=1,
         ).min(dim=1)[0]
-        if noise_scheduler.config.prediction_type == "epsilon":
+        if prediction_type == "epsilon":
             mse_loss_weights = mse_loss_weights / snr
-        elif noise_scheduler.config.prediction_type == "v_prediction":
+        elif prediction_type == "v_prediction":
             mse_loss_weights = mse_loss_weights / (snr + 1)
 
         loss = nn.functional.mse_loss(
@@ -670,25 +668,31 @@ def get_diffusion_output_from_batch(
 
 @torch.no_grad()
 def get_validation_metrics(
-    accelerator, train_config, metrics, dataloader, sd_model, models, run_prefix
+    accelerator: Accelerator,
+    train_config: TrainConfig,
+    train_state: TrainState,
+    dataloader: DataLoader,
+    diffusion_model: StableDiffusionModel,
+    run_prefix: str,
 ):
     running_metrics = {
-        name: torch.zeros(1, dtype=torch.float32) for name in metrics.keys()
+        name: torch.zeros(1, dtype=torch.float32)
+        for name in diffusion_model.diffusion_metrics.keys()
     }
     running_count = 0
 
     for step, batch in enumerate(dataloader):
-        rgb = batch["rgb"].to(dtype=sd_model.dtype, device=accelerator.device)
+        rgb = batch["rgb"].to(dtype=diffusion_model.dtype, device=accelerator.device)
 
         diffusion_output = get_diffusion_output_from_batch(
-            step, batch, sd_model, rgb=rgb
+            step, batch, diffusion_model, rgb=rgb
         )
 
         rgb_out = diffusion_output["rgb"]
 
         # Benchmark
         running_count += len(rgb)
-        for metric_name, metric in metrics.items():
+        for metric_name, metric in diffusion_model.diffusion_metrics.items():
             values: Tensor = metric(rgb_out, rgb).detach().cpu()
             if len(values.shape) == 0:
                 values = torch.tensor([values.item()])
@@ -699,11 +703,11 @@ def get_validation_metrics(
                 value_dict = {str(i): float(v) for i, v in enumerate(values)}
                 accelerator.log(
                     {f"{run_prefix}_{metric_name}_{str(batch['meta'])}": value_dict},
-                    step=train_config.global_step,
+                    step=train_state.global_step,
                 )
 
     mean_metrics = {}
-    for metric_name, metric in metrics.items():
+    for metric_name in diffusion_model.diffusion_metrics.keys():
         mean_metric = (running_metrics[metric_name] / running_count).item()
         mean_metrics[metric_name] = mean_metric
 
@@ -711,7 +715,12 @@ def get_validation_metrics(
 
 
 @torch.no_grad()
-def get_validation_renders(accelerator, train_config, dataloader, sd_model, models):
+def get_validation_renders(
+    accelerator: Accelerator,
+    train_config: TrainConfig,
+    dataloader: DataLoader,
+    diffusion_model: StableDiffusionModel,
+):
 
     vis_rgb_gts = []
     vis_rgbs_noisy = []
@@ -719,24 +728,24 @@ def get_validation_renders(accelerator, train_config, dataloader, sd_model, mode
     vis_outs = []
 
     for step, batch in enumerate(dataloader):
-        rgb_gt = batch["rgb"].to(dtype=sd_model.dtype, device=accelerator.device)
+        rgb_gt = batch["rgb"].to(dtype=diffusion_model.dtype, device=accelerator.device)
         diffusion_output = get_diffusion_output_from_batch(
-            step, batch, sd_model, rgb=rgb_gt
+            step, batch, diffusion_model, rgb=rgb_gt
         )
         rgb_out = diffusion_output["rgb"]
 
         # Renders
         val_start_timestep = int(
-            (1 - train_config.val_noise_strength)
-            * len(models["noise_scheduler"].timesteps)
+            (1 - train_config.diffusion_config.noise_strength)
+            * len(diffusion_model.noise_scheduler.timesteps)
         )
 
         rgb_noised = get_noised_img(
             rgb_gt,
             timestep=val_start_timestep,
-            vae=models["vae"],
-            img_processor=models["img_processor"],
-            noise_scheduler=models["noise_scheduler"],
+            vae=diffusion_model.vae,
+            img_processor=diffusion_model.img_processor,
+            noise_scheduler=diffusion_model.noise_scheduler,
         )
 
         vis_rgb_gts.extend(list(rgb_gt.detach().cpu()))
@@ -866,23 +875,28 @@ def train_epoch(
     train_config: TrainConfig,
     train_state: TrainState,
     dataloader: torch.utils.data.DataLoader,
-    sd_model: StableDiffusionModel,
+    diffusion_model: StableDiffusionModel,
     params_to_optimize,
     progress_bar: tqdm.tqdm,
 ):
-    sd_model.set_training(True)
+    diffusion_model.set_training(True)
 
     train_loss = 0.0
 
     for i_batch, batch in enumerate(dataloader):
         assert "rgb" in batch
 
-        with accelerator.accumulate(sd_model.get_models_to_train()):
-            rgb = batch["rgb"].to(dtype=sd_model.dtype, device=accelerator.device)
+        with accelerator.accumulate(diffusion_model.get_models_to_train()):
+            rgb = batch["rgb"].to(
+                dtype=diffusion_model.dtype, device=accelerator.device
+            )
             rgb_gt = rgb
 
             model_input = encode_img(
-                sd_model.img_processor, sd_model.vae, rgb, accelerator.device
+                diffusion_model.img_processor,
+                diffusion_model.vae,
+                rgb,
+                accelerator.device,
             )
 
             noise = get_diffusion_noise(
@@ -891,27 +905,29 @@ def train_epoch(
 
             timesteps = get_random_timesteps(
                 train_config.train_noise_strength,
-                sd_model.noise_scheduler.config.num_train_timesteps,  # type: ignore
+                diffusion_model.noise_scheduler.config.num_train_timesteps,  # type: ignore
                 model_input.device,
                 model_input.size(0),
             )
 
             # Add noise to the model input according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
-            noisy_model_input = sd_model.noise_scheduler.add_noise(
-                model_input, noise, timesteps
+            noisy_model_input = diffusion_model.noise_scheduler.add_noise(
+                cast(FloatTensor, model_input),
+                cast(FloatTensor, noise),
+                cast(IntTensor, timesteps),
             )
 
             prompt_hidden_state = encode_tokens(
-                sd_model.text_encoder,
+                diffusion_model.text_encoder,
                 batch["input_ids"],
-                use_cache=not sd_model.is_model_trained("text_encoder"),
+                use_cache=not diffusion_model.is_model_trained("text_encoder"),
             )
 
             unet_added_conditions = {}
             unet_kwargs = {}
 
-            if sd_model.using_controlnet:
+            if diffusion_model.using_controlnet:
                 raise NotImplementedError
                 conditioning = combine_conditioning_info(
                     batch, train_config.conditioning_signal_infos
@@ -931,7 +947,7 @@ def train_epoch(
                     dtype=weights_dtype
                 )
 
-            model_pred = sd_model.unet(
+            model_pred = diffusion_model.unet(
                 noisy_model_input,
                 timesteps,
                 prompt_hidden_state,
@@ -940,7 +956,7 @@ def train_epoch(
             ).sample
 
             loss = get_diffusion_loss(
-                models, train_config, model_input, model_pred, noise, timesteps
+                diffusion_model, train_config, model_input, model_pred, noise, timesteps
             )
 
             if train_config.use_recreation_loss:
@@ -967,8 +983,8 @@ def train_epoch(
                     )
 
             # Gather the losses across all processes for logging (if we use distributed training).
-            avg_loss = accelerator.gather(
-                loss.repeat(train_config.train_batch_size)
+            avg_loss = cast(
+                Tensor, accelerator.gather(loss.repeat(train_config.train_batch_size))
             ).mean()
             train_loss += avg_loss.item() / train_config.gradient_accumulation_steps
 
@@ -998,27 +1014,32 @@ def train_epoch(
 
 @torch.no_grad()
 def validate_model(
-    accelerator,
+    accelerator: Accelerator,
     train_config: TrainConfig,
     train_state: TrainState,
     dataloader: torch.utils.data.DataLoader,
     vis_dataloader: Optional[torch.utils.data.DataLoader],
     ref_dataloader: Optional[torch.utils.data.DataLoader],
-    sd_model: StableDiffusionModel,
+    diffusion_model: StableDiffusionModel,
     run_prefix: str,
 ) -> None:
-    sd_model.set_training(False)
-
-    models = sd_model.models
-    metrics = sd_model.diffusion_metrics
+    diffusion_model.set_training(False)
 
     val_metrics = get_validation_metrics(
-        accelerator, train_config, metrics, dataloader, sd_model, models, run_prefix
+        accelerator,
+        train_config,
+        train_state,
+        dataloader,
+        diffusion_model,
+        run_prefix,
     )
 
     val_renders = (
         get_validation_renders(
-            accelerator, train_config, vis_dataloader, sd_model, models
+            accelerator,
+            train_config,
+            vis_dataloader,
+            diffusion_model,
         )
         if vis_dataloader is not None
         else None
@@ -1028,10 +1049,9 @@ def validate_model(
         get_reference_outputs(
             accelerator,
             train_config,
-            models,
-            sd_model,
+            train_state,
+            diffusion_model,
             ref_dataloader,
-            metrics,
             run_prefix,
         )
         if ref_dataloader is not None
@@ -1202,13 +1222,12 @@ def prepare_models_with_accelerator(
     accelerator: Accelerator,
     dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
-):
+) -> Tuple[torch.optim.lr_scheduler.LambdaLR, torch.optim.Optimizer]:
     num_epochs = train_config.n_epochs
     num_processes = accelerator.num_processes
     lr_warmup_steps = train_config.lr_warmup_steps
     len_dataloader = len(dataloader)
     gradient_accumulation_steps = train_config.gradient_accumulation_steps
-    batch_size = train_config.train_batch_size
 
     num_warmup_steps = lr_warmup_steps * num_processes
     len_dataloader_after_sharding = math.ceil(len_dataloader / num_processes)
@@ -1221,7 +1240,8 @@ def prepare_models_with_accelerator(
         name=train_config.lr_scheduler,
         optimizer=optimizer,
         num_warmup_steps=num_warmup_steps,
-        num_training_steps=num_steps_for_scheduler**train_config.lr_scheduler_kwargs,
+        num_training_steps=num_steps_for_scheduler,
+        **train_config.lr_scheduler_kwargs,
     )
 
     # Override internal models of diffusion model with the ones prepared with accelerator to ensure correct device placement.
@@ -1231,12 +1251,12 @@ def prepare_models_with_accelerator(
         lr_scheduler,
         *diffusion_model.get_models_to_train(),
     )
+    lr_scheduler = cast(torch.optim.lr_scheduler.LambdaLR, lr_scheduler)
+    optimizer = cast(torch.optim.Optimizer, optimizer)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     len_dataloader = len(train_dataloader)
-    num_update_steps_per_epoch = math.ceil(
-        len(train_dataloader) / train_config.gradient_accumulation_steps
-    )
+    num_update_steps_per_epoch = math.ceil(len_dataloader / gradient_accumulation_steps)
     max_train_steps = num_epochs * num_update_steps_per_epoch
     if num_steps_for_scheduler != max_train_steps * num_processes:
         logger.warning(
@@ -1245,14 +1265,11 @@ def prepare_models_with_accelerator(
             f"This inconsistency may result in the learning rate scheduler not functioning properly."
         )
 
-    num_epochs = math.ceil(max_train_steps / num_update_steps_per_epoch)
-
     diffusion_model.set_models(
         train_config.diffusion_config.models_to_train_lora, trainable_models
     )
 
     train_state.num_update_steps_per_epoch = num_update_steps_per_epoch
-    train_state.num_epochs = num_epochs
     train_state.max_train_steps = max_train_steps
 
     return lr_scheduler, optimizer
@@ -1367,7 +1384,7 @@ def main() -> None:
 
     # Scheduler and math around the number of training steps.
     # Check the PR https://github.com/huggingface/diffusers/pull/8312 for detailed explanation.
-    n_epochs, max_num_steps, lr_scheduler, optimizer = prepare_models_with_accelerator(
+    lr_scheduler, optimizer = prepare_models_with_accelerator(
         train_config,
         train_state,
         diffusion_model,
@@ -1388,24 +1405,24 @@ def main() -> None:
     logger.info("***** Running training *****")
     logger.info(f"  Num training samples = {len(train_dataset)}")
     logger.info(f"  Num validation samples = {len(val_dataset)}")
-    logger.info(f"  Num Epochs = {num_epochs}")
+    logger.info(f"  Num Epochs = {train_state.max_epoch}")
     logger.info(
         f"  Instantaneous batch size per device = {train_config.train_batch_size}"
     )
     logger.info(
-        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
+        f"  Total train batch size (w. parallel, distributed & accumulation) = {train_state.max_epoch * train_state.num_update_steps_per_epoch * accelerator.num_processes}"
     )
     logger.info(
         f"  Gradient Accumulation steps = {train_config.gradient_accumulation_steps}"
     )
-    logger.info(f"  Total optimization steps = {max_train_steps}")
+    logger.info(f"  Total optimization steps = {train_state.max_train_steps}")
     logger.info(f"Configuration: {train_config}")
 
     if train_config.checkpoint_path:
-        resume_from_checkpoint(accelerator, train_config)
+        resume_from_checkpoint(accelerator, train_config, train_state)
 
     progress_bar = tqdm.tqdm(
-        range(0, max_train_steps),
+        range(0, train_state.max_train_steps),
         initial=train_state.global_step,
         desc="Steps",
         # Only show the progress bar once on each machine.
@@ -1426,7 +1443,7 @@ def main() -> None:
         )
         torch.cuda.empty_cache()
 
-        if train_config.epoch % train_config.val_freq == 0:
+        if train_state.epoch % train_config.val_freq == 0:
             validate_model(
                 accelerator,
                 train_config,
@@ -1448,16 +1465,19 @@ def main() -> None:
                 train_config.checkpoint_strategy == "best"
                 and train_state.best_ssim > train_state.best_saved_ssim
             ):
-                save_checkpoint(accelerator, train_config)
+                save_checkpoint(accelerator, train_config, train_state)
                 train_state.best_saved_ssim = train_state.best_ssim
 
             elif (
                 train_config.checkpoint_strategy == "latest"
                 and train_state.global_step % train_config.checkpointing_steps == 0
             ):
-                save_checkpoint(accelerator, train_config)
+                save_checkpoint(accelerator, train_config, train_state)
 
-        if train_state.global_step >= max_train_steps or train_state.epoch > n_epochs:
+        if (
+            train_state.global_step >= train_state.max_train_steps
+            or train_state.epoch > train_state.max_epoch
+        ):
             break
 
     accelerator.wait_for_everyone()
@@ -1466,6 +1486,7 @@ def main() -> None:
         validate_model(
             accelerator,
             train_config,
+            train_state,
             val_dataloader,
             render_dataloader,
             nerf_out_dataloader,
@@ -1474,7 +1495,7 @@ def main() -> None:
         )
 
         # Save the lora layers
-        save_lora_weights(accelerator, models, train_config, "final_weights")
+        save_lora_weights(accelerator, diffusion_model, train_config, "final_weights")
 
     accelerator.end_training()
 
