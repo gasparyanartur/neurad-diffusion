@@ -454,7 +454,7 @@ class CameraDataSpec(DataSpec):
 
 
 class CaptureDataSpec(DataSpec):
-    camera: str = "front"
+    camera: str = "front_camera"
     shift: str = "0m"
 
     def get_getter_class(self) -> Type["DataGetter"]:
@@ -591,12 +591,6 @@ class InfoGetter(ABC):
                     sample_infos = samples[start_range:end_range:skip_range]
 
                 elif isinstance(sample_tree, DatasetTreeSceneList):
-                    if not sample_tree:
-                        continue
-
-                    assert isinstance(sample_tree, list)
-                    assert isinstance(sample_tree[0], str)
-
                     sample_infos = [
                         SampleInfo(
                             self.data_tree.dataset_name,
@@ -614,7 +608,7 @@ class InfoGetter(ABC):
 
 
 class PandasetInfoGetter(InfoGetter):
-    def __init__(self, dataset_path: Path, data_tree: Dict[str, Any]) -> None:
+    def __init__(self, dataset_path: Path, data_tree: DatasetTree) -> None:
         super().__init__("pandaset", dataset_path, data_tree)
 
     def get_scenes(self, split: str) -> Set[str]:
@@ -658,7 +652,7 @@ class PandasetInfoGetter(InfoGetter):
             suffix = self.get_suffix(spec)
 
         else:
-            sample_dir = self.dataset_path / scene / "camera" / "front"
+            sample_dir = self.dataset_path / scene / "camera" / "front_camera"
             suffix = ""
 
         return [path.stem for path in sample_dir.glob(f"*{suffix}")]
@@ -700,7 +694,7 @@ class PandasetInfoGetter(InfoGetter):
 
         else:
             sample_path = (
-                self.dataset_path / info.scene / "camera" / "front" / info.sample
+                self.dataset_path / info.scene / "camera" / "front_camera" / info.sample
             )
 
         sample_path = sample_path.with_suffix(self.get_suffix(spec))
@@ -1027,7 +1021,7 @@ class DatasetConfig(BaseModel):
     dataset_name: str = "pandaset"
     dataset_path: Path = Path("data/pandaset")
     data_specs: Dict[str, DataSpec] = {
-        "rgb": RgbDataSpec(name="rgb", camera="front", shift="0m"),
+        "rgb": RgbDataSpec(name="rgb", camera="front_camera", shift="0m"),
         "input_ids": PromptDataSpec(name="input_ids", prompt=""),
     }
     data_tree: DatasetTree

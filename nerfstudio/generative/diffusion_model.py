@@ -349,8 +349,8 @@ class DiffusionModelConfig(InstantiateConfig):
         default_factory=lambda: DiffusionModel.from_config
     )
 
-    model_type: str = DiffusionModelType.sd
-    model_id: str = DiffusionModelId.sd_v2_1
+    type: str = DiffusionModelType.sd
+    id: str = DiffusionModelId.sd_v2_1
     variant: Optional[str] = None
     revision: str = "main"
     use_safetensors: bool = True
@@ -474,7 +474,7 @@ class DiffusionModel(ABC):
             DiffusionModelType.cn: ControlNetDiffusionModel,
             DiffusionModelType.mock: MockDiffusionModel,
         }
-        model = model_type_to_constructor[config.model_type]
+        model = model_type_to_constructor[config.type]
 
         if config.compile_models and config.lora_weights:
             logging.warning(
@@ -621,7 +621,7 @@ class StableDiffusionModel(DiffusionModel):
 
         if "unet" not in self.models:
             models["unet"] = UNet2DConditionModel.from_pretrained(
-                config.model_id,
+                config.id,
                 subfolder="unet",
                 revision=config.revision,
                 variant=config.variant,
@@ -631,7 +631,7 @@ class StableDiffusionModel(DiffusionModel):
 
         if "tokenizer" not in self.models:
             models["tokenizer"] = AutoTokenizer.from_pretrained(
-                config.model_id,
+                config.id,
                 subfolder="tokenizer",
                 revision=config.revision,
                 variant=config.variant,
@@ -645,7 +645,7 @@ class StableDiffusionModel(DiffusionModel):
 
         if "noise_scheduler" not in models:
             models["noise_scheduler"] = DDPMScheduler.from_pretrained(
-                config.model_id,
+                config.id,
                 subfolder="scheduler",
                 variant=config.variant,
                 revision=config.revision,
@@ -655,7 +655,7 @@ class StableDiffusionModel(DiffusionModel):
 
         if "text_encoder" not in models:
             models["text_encoder"] = import_encoder(
-                config.model_id,
+                config.id,
                 config.revision,
                 "text_encoder",
                 config.variant,
@@ -665,7 +665,7 @@ class StableDiffusionModel(DiffusionModel):
 
         if "vae" not in models:
             models["vae"] = AutoencoderKL.from_pretrained(
-                config.model_id,
+                config.id,
                 subfolder="vae",
                 revision=config.revision,
                 variant=config.variant,
@@ -719,7 +719,7 @@ class StableDiffusionModel(DiffusionModel):
 
     @property
     def using_controlnet(self) -> bool:
-        return self.config.model_type == "cn"
+        return self.config.type == "cn"
 
     @property
     def controlnet(self) -> ControlNetModel:
@@ -1017,7 +1017,7 @@ def encode_img(
         upcast_vae(vae)  # Ensure float32 to avoid overflow
         img = img.float()
 
-    latents = vae.encode(img.to(device), dict=True)  # type: ignore
+    latents = vae.encode(img.to(device), return_dict=True)  # type: ignore
     latents = retrieve_latents(
         latents,
         generator=(torch.manual_seed(seed) if seed is not None else None),

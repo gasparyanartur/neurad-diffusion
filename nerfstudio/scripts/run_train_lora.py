@@ -19,6 +19,7 @@ import functools
 
 import numpy as np
 import torch
+import tyro
 import wandb
 from torch import FloatTensor, IntTensor, nn
 from torch import Tensor
@@ -69,7 +70,6 @@ from nerfstudio.generative.diffusion_model import (
     encode_tokens,
     DiffusionModelConfig,
     decode_img,
-    combine_conditioning_info,
     get_random_timesteps,
     DiffusionModelType,
     DiffusionModelId,
@@ -114,11 +114,11 @@ def make_dataset_loader(
 
 
 class TrainConfig(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="lora_train_")
+    # model_config = SettingsConfigDict(env_prefix="lora_train_")
 
-    output_dir: Path = Field(default="", validate_default=False)
-    cache_dir: Path = Field(default="", validate_default=False)
-    logging_dir: Path = Field(default="", validate_default=False)
+    output_dir: Path = Field(default=Path(""), validate_default=False)
+    cache_dir: Path = Field(default=Path(""), validate_default=False)
+    logging_dir: Path = Field(default=Path(""), validate_default=False)
 
     job_id: str = Field(default="0", alias="slurm_job_id")
     project_name: str = "ImagineDriving"
@@ -135,9 +135,9 @@ class TrainConfig(BaseSettings):
     )
     checkpoint_metric: str = Metrics.lpips
 
-    n_epochs: int = 100
+    n_epochs: int = 1000
     max_train_samples: Optional[int] = None
-    val_freq: int = 10
+    val_freq: int = 50
     frac_dataset_per_epoch: float = 1.0
 
     allow_tf32: bool = (
@@ -150,7 +150,7 @@ class TrainConfig(BaseSettings):
     train_batch_size: int = 1
     dataloader_num_workers: int = 0
     pin_memory: bool = True
-    learning_rate: float = 1e-4
+    learning_rate: float = 3e-4
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999
     adam_weight_decay: float = 1e-2
@@ -165,10 +165,10 @@ class TrainConfig(BaseSettings):
 
     # "linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"]'
     lr_scheduler: str = "constant"
-    lr_warmup_steps: int = 500
-    lr_scheduler_kwargs: Dict[str, Any] = {}
+    lr_warmup_steps: int = 1000
+    lr_scheduler_kwargs: Dict[str, Any] = Field(default_factory=dict)
 
-    loggers: List[str] = []
+    loggers: List[str] = Field(default_factory=lambda: ["wandb"])
     wandb_project: str = "ImagineDriving"
     wandb_entity: str = "arturruiqi"
     wandb_group: str = "finetune-lora"
@@ -182,21 +182,17 @@ class TrainConfig(BaseSettings):
 
     seed: Optional[int] = None
 
-    train_noise_strength: float = 0.5
+    train_noise_strength: float = 0.1
     train_noise_num_steps: Optional[int] = None
     use_cached_tokens: bool = True
-
-    lora_base_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4, "text_encoder": 4}
-    use_dora: bool = False
-    lora_model_prefix: str = "lora_"
 
     conditioning_signals: Tuple[str, ...] = ()
 
     diffusion_config: DiffusionModelConfig = DiffusionModelConfig(
-        model_type=DiffusionModelType.sd,
-        model_id=DiffusionModelId.sd_v2_1,
+        type=DiffusionModelType.sd,
+        id=DiffusionModelId.sd_v2_1,
         dtype="fp32",
-        noise_strength=0.2,
+        noise_strength=0.1,
         num_inference_steps=50,
         enable_progress_bar=False,
         lora_weights=None,
@@ -210,7 +206,7 @@ class TrainConfig(BaseSettings):
         metrics=("lpips", "ssim", "psnr", "mse"),
     )
 
-    dataset_configs = TrainingDatasetConfigs(
+    dataset_configs: TrainingDatasetConfigs = TrainingDatasetConfigs(
         train_dataset=DatasetConfig(
             data_specs={
                 "rgb": RgbDataSpec(),
@@ -230,7 +226,7 @@ class TrainConfig(BaseSettings):
             },
             sample_config=SampleConfig(),
             data_tree=DatasetTree.single_split_single_scene(
-                "pandaset", "train", "001", ["01"]
+                "pandaset", "test", "001", ["01"]
             ),
         ),
         render_dataset=DatasetConfig(
@@ -240,30 +236,28 @@ class TrainConfig(BaseSettings):
             },
             sample_config=SampleConfig(),
             data_tree=DatasetTree.single_split_single_scene(
-                "pandaset", "train", "001", ["01"]
+                "pandaset", "test", "001", ["01"]
             ),
         ),
         nerf_out_dataset=DatasetConfig(
             data_specs={
-                "rgb-nerf": NerfOutputSpec(
+                "rgb_nerf": NerfOutputSpec(
                     name="rgb",
-                    camera="front_left",
-                    nerf_output_path="data/reference_neurad",
+                    camera="front_left_camera",
+                    nerf_output_path="data/nerf_outputs",
                     data_name="rgb",
                 ),
-                "rgb-gt": RgbDataSpec(name="rgb", camera="front_left", shift="0m"),
+                "rgb_gt": RgbDataSpec(
+                    name="rgb", camera="front_left_camera", shift="0m"
+                ),
                 "input_ids": PromptDataSpec(),
             },
             sample_config=SampleConfig(),
             data_tree=DatasetTree.single_split_single_scene(
-                "pandaset", "val", "001", ["01"]
+                "pandaset", "test", "001", ["01"]
             ),
         ),
     )
-
-    def update_values(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
 
 
 class TrainState(BaseModel):
@@ -434,8 +428,8 @@ def save_model_hook(
 
         model.save_pretrained(str(dst_dir))
 
-    save_yaml(dst_dir / "config.yml", train_config.model_dump(mode="json"))
-    save_yaml(dst_dir / "state.yml", train_state.model_dump(mode="json"))
+    save_yaml(dst_dir / "config.yml", train_config.model_dump())
+    save_yaml(dst_dir / "state.yml", train_state.model_dump())
 
 
 def load_model_hook(
@@ -786,8 +780,8 @@ def get_reference_outputs(
     ref_metas = []
 
     for step, batch in enumerate(dataloader):
-        ref_rgb = batch["ref_rgb"].to(dtype=sd_model.dtype, device=accelerator.device)
-        ref_gt = batch["ref_gt"].to(dtype=sd_model.dtype, device=accelerator.device)
+        ref_rgb = batch["rgb_nerf"].to(dtype=sd_model.dtype, device=accelerator.device)
+        ref_gt = batch["rgb_gt"].to(dtype=sd_model.dtype, device=accelerator.device)
 
         diffusion_output = get_diffusion_output_from_batch(
             step, batch, sd_model, rgb=ref_rgb
@@ -1213,7 +1207,7 @@ def setup_accelerator(train_config: TrainConfig) -> Accelerator:
                 ),
                 group=train_config.wandb_group or os.getenv("WANDB_GROUP"),
                 reinit=True,
-                config=asdict(train_config),
+                config=train_config.model_dump(),
             )
 
     return accelerator
@@ -1400,7 +1394,9 @@ def main() -> None:
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        accelerator.init_trackers(train_config.wandb_group, config=asdict(train_config))
+        accelerator.init_trackers(
+            train_config.wandb_group, config=train_config.model_dump()
+        )
 
     # ===================
     # === Train model ===
@@ -1456,7 +1452,7 @@ def main() -> None:
                 render_dataloader,
                 nerf_out_dataloader,
                 diffusion_model,
-                "val",
+                "test",
             )
         torch.cuda.empty_cache()
 
