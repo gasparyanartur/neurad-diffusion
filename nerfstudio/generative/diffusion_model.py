@@ -391,9 +391,9 @@ class DiffusionModelConfig(InstantiateConfig):
     lora_rank_mults: Dict[str, Any] = field(
         default_factory=lambda: {
             "unet": {
-                "downblocks": {"attn": 1, "resnet": 1},
-                "midblocks": {"attn": 1, "resnet": 1},
-                "upblocks": {"attn": 1, "resnet": 1},
+                "downblocks": {"attn": 1, "resnet": 0},
+                "midblocks": {"attn": 1, "resnet": 0},
+                "upblocks": {"attn": 1, "resnet": 0},
             },
             "controlnet": {
                 "downblocks": {"attn": 1, "resnet": 1},

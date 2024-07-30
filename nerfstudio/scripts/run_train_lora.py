@@ -178,9 +178,9 @@ class TrainConfig(BaseSettings):
 
     use_debug_metrics: bool = False
     use_recreation_loss: bool = False
-    use_noise_augment: bool = True
+    use_noise_augment: bool = False
 
-    seed: Optional[int] = None
+    seed: Optional[int] = 0
 
     train_noise_strength: float = 0.1
     train_noise_num_steps: Optional[int] = None
@@ -213,7 +213,7 @@ class TrainConfig(BaseSettings):
                 "input_ids": PromptDataSpec(),
             },
             sample_config=SampleConfig(
-                random_crop=True,
+                random_crop=False,
             ),
             data_tree=DatasetTree.single_split_single_scene(
                 "pandaset", "train", "001", ["01"]
@@ -266,6 +266,8 @@ class TrainState(BaseModel):
 
     global_step: int = 0
     epoch: int = 0
+
+    loss_history: List[float] = []
 
     best_metric: float = 0
     best_saved_metric: float = 0
@@ -878,7 +880,7 @@ def train_epoch(
 
     train_loss = 0.0
 
-    for i_batch, batch in enumerate(dataloader):
+    for batch in dataloader:
         assert "rgb" in batch
 
         with accelerator.accumulate(diffusion_model.get_models_to_train()):
@@ -887,37 +889,38 @@ def train_epoch(
             )
             rgb_gt = rgb
 
-            model_input = encode_img(
-                diffusion_model.img_processor,
-                diffusion_model.vae,
-                rgb,
-                accelerator.device,
-            )
+            with torch.no_grad():
+                model_input = encode_img(
+                    diffusion_model.img_processor,
+                    diffusion_model.vae,
+                    rgb,
+                    accelerator.device,
+                )
 
-            noise = get_diffusion_noise(
-                model_input.shape, model_input.device, train_config
-            )
+                noise = get_diffusion_noise(
+                    model_input.shape, model_input.device, train_config
+                )
 
-            timesteps = get_random_timesteps(
-                train_config.train_noise_strength,
-                diffusion_model.noise_scheduler.config.num_train_timesteps,  # type: ignore
-                model_input.device,
-                model_input.size(0),
-            )
+                timesteps = get_random_timesteps(
+                    train_config.train_noise_strength,
+                    diffusion_model.noise_scheduler.config.num_train_timesteps,  # type: ignore
+                    model_input.device,
+                    model_input.size(0),
+                )
 
-            # Add noise to the model input according to the noise magnitude at each timestep
-            # (this is the forward diffusion process)
-            noisy_model_input = diffusion_model.noise_scheduler.add_noise(
-                cast(FloatTensor, model_input),
-                cast(FloatTensor, noise),
-                cast(IntTensor, timesteps),
-            )
+                # Add noise to the model input according to the noise magnitude at each timestep
+                # (this is the forward diffusion process)
+                noisy_model_input = diffusion_model.noise_scheduler.add_noise(
+                    cast(FloatTensor, model_input),
+                    cast(FloatTensor, noise),
+                    cast(IntTensor, timesteps),
+                )
 
-            prompt_hidden_state = encode_tokens(
-                diffusion_model.text_encoder,
-                batch["input_ids"],
-                use_cache=not diffusion_model.is_model_trained("text_encoder"),
-            )
+                prompt_hidden_state = encode_tokens(
+                    diffusion_model.text_encoder,
+                    batch["input_ids"],
+                    use_cache=not diffusion_model.is_model_trained("text_encoder"),
+                )
 
             unet_added_conditions = {}
             unet_kwargs = {}
@@ -978,10 +981,16 @@ def train_epoch(
                     )
 
             # Gather the losses across all processes for logging (if we use distributed training).
-            avg_loss = cast(
-                Tensor, accelerator.gather(loss.repeat(train_config.train_batch_size))
-            ).mean()
-            train_loss += avg_loss.item() / train_config.gradient_accumulation_steps
+            avg_loss = (
+                cast(
+                    Tensor,
+                    accelerator.gather(loss.repeat(train_config.train_batch_size)),
+                ).mean()
+                / train_config.gradient_accumulation_steps
+            )
+
+            train_loss += avg_loss.item()
+            train_state.loss_history.append(avg_loss.item())
 
             # Backpropagate
             accelerator.backward(loss)
@@ -998,11 +1007,25 @@ def train_epoch(
         if accelerator.sync_gradients:
             progress_bar.update(1)
             train_state.global_step += 1
-            accelerator.log({"train_loss": train_loss}, step=train_state.global_step)
-            train_loss = 0.0
 
-        logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
-        progress_bar.set_postfix(**logs)
+            loss_window = 100
+            running_loss = np.mean(train_state.loss_history[-loss_window:])
+
+            accelerator.log({"train_loss": train_loss}, step=train_state.global_step)
+            accelerator.log(
+                {"train_loss (100 steps)": running_loss},
+                step=train_state.global_step,
+            )
+
+            logs = {
+                "epoch": train_state.epoch,
+                "train_loss": train_loss,
+                f"running_loss ({loss_window})": running_loss,
+                "lr": lr_scheduler.get_last_lr()[0],
+            }
+            progress_bar.set_postfix(**logs)
+
+            train_loss = 0.0
 
     train_state.epoch += 1
 

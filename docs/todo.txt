@@ -15,7 +15,10 @@ Update Data and Conditioning
 - Add meta by default to DynamicDataset  [x]
 - Add random and center crop to training loop (dynamic dataset?) [x]
 - Replace "best" metric to be dynamic [x]
-- Test refactor
+- Test refactor [x]
+- Debug training [x]
+- Fix save path bug
+
 
 Start ControlNet
 - Add conditioning signals
