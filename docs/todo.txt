@@ -17,7 +17,7 @@ Update Data and Conditioning
 - Replace "best" metric to be dynamic [x]
 - Test refactor [x]
 - Debug training [x]
-- Fix save path bug
+- Fix save path bug [x]
 
 
 Start ControlNet

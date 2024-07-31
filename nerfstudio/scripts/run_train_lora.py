@@ -116,9 +116,9 @@ def make_dataset_loader(
 class TrainConfig(BaseSettings):
     # model_config = SettingsConfigDict(env_prefix="lora_train_")
 
-    output_dir: Path = Field(default=Path(""), validate_default=False)
-    cache_dir: Path = Field(default=Path(""), validate_default=False)
-    logging_dir: Path = Field(default=Path(""), validate_default=False)
+    output_dir: Path = Field(default=Path("outputs", "train-lora"))
+    cache_dir: Path = Field(default=Path(".cache", "train-lora"))
+    logging_dir: Path = Field(default=Path("logs", "train-lora"))
 
     job_id: str = Field(default="0", alias="slurm_job_id")
     project_name: str = "ImagineDriving"
