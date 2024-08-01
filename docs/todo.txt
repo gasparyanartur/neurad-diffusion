@@ -18,6 +18,7 @@ Update Data and Conditioning
 - Test refactor [x]
 - Debug training [x]
 - Fix save path bug [x]
+- Add command line args [x]
 
 
 Start ControlNet

@@ -114,7 +114,7 @@ def make_dataset_loader(
 
 
 class TrainConfig(BaseSettings):
-    # model_config = SettingsConfigDict(env_prefix="lora_train_")
+    model_config = SettingsConfigDict(env_prefix="lora_train_", cli_parse_args=True, yaml_file=os.getenv("LORA_TRAIN_CONFIG", None))
 
     output_dir: Path = Field(default=Path("outputs", "train-lora"))
     cache_dir: Path = Field(default=Path(".cache", "train-lora"))
