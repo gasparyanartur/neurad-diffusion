@@ -13,6 +13,7 @@ import typing
 from copy import deepcopy
 
 import numpy as np
+from pydantic import BaseModel
 import torch
 from torch import nn, Tensor
 
@@ -141,6 +142,11 @@ class DiffusionModelType:
     mock: str = "mock"
 
 
+class ConditioningSignalInfo(BaseModel):
+    signal_name: str
+    num_channels: int
+
+
 def prep_hf_pipe(
     pipe: Union[
         StableDiffusionControlNetImg2ImgPipeline, StableDiffusionImg2ImgPipeline
@@ -189,28 +195,19 @@ def _prepare_image(kwargs):
     return channel_first, batch_size
 
 
-"""
 def combine_conditioning_info(
-    sample: Dict[str, Tensor], conditioning_signal_infos: List["ConditioningSignalInfo"]
-) -> torch.Tensor:
+    sample: Dict[str, Any], conditioning_signal_names: Iterable[str]
+) -> Tensor:
     signals = []
 
-    for signal_info in conditioning_signal_infos:
-        signal = sample[signal_info.name]
-        signal: Tensor = batch_if_not_iterable(signal)
+    for signal_name in conditioning_signal_names:
+        signal = sample[signal_name]
+        assert isinstance(signal, Tensor) and signal.dim() in {3, 4}
 
-        if signal.size(1) != signal_info.num_channels:
-            if signal.size(-1) != signal_info.num_channels:
-                raise ValueError(
-                    f"Invalid shape for conditioning signal: {signal_info}, received tensor with shape {signal.shape}"
-                )
-
-            signal = signal.permute(0, 2, 3, 1)
-
+        signal = cast(Tensor, batch_if_not_iterable(signal))
         signals.append(signal)
 
     return torch.cat(signals, dim=1)
-"""
 
 
 """
@@ -419,15 +416,7 @@ class DiffusionModelConfig(InstantiateConfig):
 
     lora_model_prefix: str = "lora_"
 
-    conditioning_signals: Tuple[str, ...] = ()
-    """ The name of the conditioning signals used for the controlnet.
-
-        The signal should match the format `cn_{cn_type}_{num_channels}_{camera}`. 
-            Eg. cn_rgb_3_front, cn_ray_6_front_left.
-        During inference, the input must contain this signal as a key.
-
-        Does nothing unless the model is a controlnet.
-    """
+    conditioning_signals: Tuple[ConditioningSignalInfo, ...] = ()
 
     do_classifier_free_guidance: bool = True
     guidance_scale: float = 0

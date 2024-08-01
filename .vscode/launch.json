@@ -284,9 +284,21 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "args": "configs/local-configs/train-controlnet-pandaset-local-debug.yml"
-  },
-  {
-      "name": "Python: train diffusion pandaset local debug",
+    },
+    {
+        "name": "Python: train diffusion pandaset local debug",
+        "type": "debugpy",
+        "request": "launch",
+        "program": "nerfstudio/scripts/run_train_lora.py",
+        "env": {
+            "PYTHONPATH":"${workspaceFolder}",
+        },
+        "cwd": "${workspaceFolder}",
+        "console": "integratedTerminal",
+        "args": "configs/local-configs/train-diffusion-pandaset-local-debug.yml"
+    },
+    {
+      "name": "Python: train diffusion pandaset local scene",
       "type": "debugpy",
       "request": "launch",
       "program": "nerfstudio/scripts/run_train_lora.py",
@@ -295,19 +307,7 @@
       },
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "args": "configs/local-configs/train-diffusion-pandaset-local-debug.yml"
-  },
-  {
-    "name": "Python: train diffusion pandaset local scene",
-    "type": "debugpy",
-    "request": "launch",
-    "program": "nerfstudio/scripts/run_train_lora.py",
-    "env": {
-        "PYTHONPATH":"${workspaceFolder}",
+      "args": ["--loggers", ""]
     },
-    "cwd": "${workspaceFolder}",
-    "console": "integratedTerminal",
-    "args": "configs/full-training/sd-pandaset-scene.yml"
-},
   ]
 }

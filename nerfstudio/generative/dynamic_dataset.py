@@ -1,7 +1,7 @@
 import typing
 from typing_extensions import Annotated
 from pydantic import BaseModel, StringConstraints
-from typing import Any, Dict, List, Set, Type, Union, Optional, Tuple, cast
+from typing import Any, ClassVar, Dict, List, Set, Type, Union, Optional, Tuple, cast
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
 from collections.abc import Iterable, Generator, Callable
@@ -434,6 +434,7 @@ class SampleInfo:
 
 class DataSpec(BaseModel):
     name: str
+    data_suffix: ClassVar[str]
 
     @abstractmethod
     def get_getter_class(self) -> Type["DataGetter"]:
@@ -449,6 +450,8 @@ class CameraDataSpec(DataSpec):
     camera: str
     shift: str
 
+    data_suffix = ""
+
     def get_getter_class(self) -> Type["DataGetter"]:
         return CameraDataGetter
 
@@ -457,12 +460,16 @@ class CaptureDataSpec(DataSpec):
     camera: str = "front_camera"
     shift: str = "0m"
 
+    data_suffix = ""
+
     def get_getter_class(self) -> Type["DataGetter"]:
         return RGBDataGetter
 
 
 class LidarDataSpec(DataSpec):
     shift: str
+
+    data_suffix = ".pkl.gz"
 
     def get_getter_class(self) -> Type["DataGetter"]:
         return LidarDataGetter
@@ -476,6 +483,8 @@ class RgbDataSpec(CaptureDataSpec):
     dtype: str = "fp32"
     normalize: bool = True
 
+    data_suffix = ".jpg"
+
     def get_getter_class(self) -> Type["DataGetter"]:
         return RGBDataGetter
 
@@ -483,6 +492,8 @@ class RgbDataSpec(CaptureDataSpec):
 class NerfOutputSpec(RgbDataSpec):
     nerf_output_path: str = "data/nerf_outputs"
     data_name: str = "rgb"
+
+    data_suffix = ".jpg"
 
     def get_getter_class(self) -> Type["DataGetter"]:
         return NerfOutputDataGetter
@@ -495,26 +506,44 @@ class PromptDataSpec(DataSpec):
     subfolder: str = "tokenizer"
     revision: str = "main"
 
+    data_suffix = ""
+
     def get_getter_class(self) -> Type["DataGetter"]:
         return PromptDataGetter
 
 
 class PoseDataSpec(CaptureDataSpec):
+    name: str = "pose"
+
+    data_suffix = ".json"
+
     def get_getter_class(self) -> Type["DataGetter"]:
         return PoseDataGetter
 
 
 class IntrinsicsDataSpec(CaptureDataSpec):
+    name: str = "intrinsics"
+
+    data_suffix = ".json"
+
     def get_getter_class(self) -> Type["DataGetter"]:
         return IntrinsicsDataGetter
 
 
 class TimestampDataSpec(CaptureDataSpec):
+    name: str = "timestamp"
+
+    data_suffix = ".json"
+
     def get_getter_class(self) -> Type["DataGetter"]:
         return TimestampDataGetter
 
 
-class RayDataSpec(CameraDataSpec):
+class RayDataSpec(CaptureDataSpec):
+    name: str = "ray"
+
+    data_suffix = ""
+
     def get_getter_class(self) -> Type["DataGetter"]:
         return RayDataGetter
 
@@ -559,10 +588,6 @@ class InfoGetter(ABC):
 
     @abstractmethod
     def get_path(self, info: SampleInfo, spec: DataSpec):
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_suffix(self, spec: DataSpec) -> str:
         raise NotImplementedError
 
     def _parse_tree(self) -> None:
@@ -614,18 +639,6 @@ class PandasetInfoGetter(InfoGetter):
     def get_scenes(self, split: str) -> Set[str]:
         return set(path.stem for path in self.dataset_path.iterdir())
 
-    def get_suffix(self, spec: DataSpec) -> str:
-        if isinstance(spec, RgbDataSpec):
-            return ".jpg"
-        elif isinstance(spec, LidarDataSpec):
-            return ".pkl.gz"
-        elif isinstance(spec, NerfOutputSpec):
-            return ".jpg"
-        elif isinstance(spec, CameraDataSpec):
-            return ""
-        else:
-            raise NotImplementedError
-
     def get_samples(
         self,
         scene: str,
@@ -634,7 +647,6 @@ class PandasetInfoGetter(InfoGetter):
     ) -> List[str]:
         if isinstance(spec, LidarDataSpec):
             sample_dir = self.dataset_path / scene / "lidar"
-            suffix = self.get_suffix(spec)
 
         elif isinstance(spec, NerfOutputSpec):
             sample_dir = (
@@ -645,16 +657,14 @@ class PandasetInfoGetter(InfoGetter):
                 / split
                 / spec.data_name
             )
-            suffix = self.get_suffix(spec)
 
         elif isinstance(spec, CameraDataSpec):
             sample_dir = self.dataset_path / scene / "camera" / spec.camera
-            suffix = self.get_suffix(spec)
 
         else:
             sample_dir = self.dataset_path / scene / "camera" / "front_camera"
-            suffix = ""
 
+        suffix = spec.data_suffix if spec else ""
         return [path.stem for path in sample_dir.glob(f"*{suffix}")]
 
     def get_path(self, info: SampleInfo, spec: DataSpec) -> Path:
@@ -697,7 +707,7 @@ class PandasetInfoGetter(InfoGetter):
                 self.dataset_path / info.scene / "camera" / "front_camera" / info.sample
             )
 
-        sample_path = sample_path.with_suffix(self.get_suffix(spec))
+        sample_path = sample_path.with_suffix(spec.data_suffix)
         return sample_path
 
 

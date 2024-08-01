@@ -46,8 +46,10 @@ from accelerate.utils import (
 from peft import PeftModel
 
 from nerfstudio.generative.diffusion_model import (
+    ConditioningSignalInfo,
     Metrics,
     StableDiffusionModel,
+    combine_conditioning_info,
     encode_img,
     is_metric_improved,
 )
@@ -55,8 +57,10 @@ from nerfstudio.generative.dynamic_dataset import (
     DataSpec,
     DatasetConfig,
     DatasetTree,
+    LidarDataSpec,
     NerfOutputSpec,
     PromptDataSpec,
+    RayDataSpec,
     RgbDataSpec,
     SampleConfig,
     is_data_spec_type_rgb,
@@ -114,7 +118,11 @@ def make_dataset_loader(
 
 
 class TrainConfig(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="lora_train_", cli_parse_args=True, yaml_file=os.getenv("LORA_TRAIN_CONFIG", None))
+    model_config = SettingsConfigDict(
+        env_prefix="lora_train_",
+        cli_parse_args=True,
+        yaml_file=os.getenv("LORA_TRAIN_CONFIG", None),
+    )
 
     output_dir: Path = Field(default=Path("outputs", "train-lora"))
     cache_dir: Path = Field(default=Path(".cache", "train-lora"))
@@ -166,9 +174,9 @@ class TrainConfig(BaseSettings):
     # "linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"]'
     lr_scheduler: str = "constant"
     lr_warmup_steps: int = 1000
-    lr_scheduler_kwargs: Dict[str, Any] = Field(default_factory=dict)
+    lr_scheduler_kwargs: Dict[str, Any] = {}
 
-    loggers: List[str] = Field(default_factory=lambda: ["wandb"])
+    loggers: List[str] = ["wandb"]
     wandb_project: str = "ImagineDriving"
     wandb_entity: str = "arturruiqi"
     wandb_group: str = "finetune-lora"
@@ -186,10 +194,8 @@ class TrainConfig(BaseSettings):
     train_noise_num_steps: Optional[int] = None
     use_cached_tokens: bool = True
 
-    conditioning_signals: Tuple[str, ...] = ()
-
     diffusion_config: DiffusionModelConfig = DiffusionModelConfig(
-        type=DiffusionModelType.sd,
+        type=DiffusionModelType.cn,
         id=DiffusionModelId.sd_v2_1,
         dtype="fp32",
         noise_strength=0.1,
@@ -201,7 +207,9 @@ class TrainConfig(BaseSettings):
         lora_base_ranks={"unet": 4, "controlnet": 4, "text_encoder": 4},
         use_dora=True,
         lora_model_prefix="lora_",
-        conditioning_signals=conditioning_signals,
+        conditioning_signals=(
+            ConditioningSignalInfo(signal_name="ray", num_channels=6),
+        ),
         guidance_scale=0,
         metrics=("lpips", "ssim", "psnr", "mse"),
     )
@@ -211,6 +219,7 @@ class TrainConfig(BaseSettings):
             data_specs={
                 "rgb": RgbDataSpec(),
                 "input_ids": PromptDataSpec(),
+                "ray": RayDataSpec(),
             },
             sample_config=SampleConfig(
                 random_crop=False,
@@ -223,6 +232,7 @@ class TrainConfig(BaseSettings):
             data_specs={
                 "rgb": RgbDataSpec(),
                 "input_ids": PromptDataSpec(),
+                "ray": RayDataSpec(),
             },
             sample_config=SampleConfig(),
             data_tree=DatasetTree.single_split_single_scene(
@@ -233,6 +243,7 @@ class TrainConfig(BaseSettings):
             data_specs={
                 "rgb": RgbDataSpec(),
                 "input_ids": PromptDataSpec(),
+                "ray": RayDataSpec(),
             },
             sample_config=SampleConfig(),
             data_tree=DatasetTree.single_split_single_scene(
@@ -250,6 +261,7 @@ class TrainConfig(BaseSettings):
                 "rgb_gt": RgbDataSpec(
                     name="rgb", camera="front_left_camera", shift="0m"
                 ),
+                "ray": RayDataSpec(name="ray", camera="front_left_camera", shift="0m"),
                 "input_ids": PromptDataSpec(),
             },
             sample_config=SampleConfig(),
@@ -641,7 +653,9 @@ def get_diffusion_output_from_batch(
 
     if diffusion_model.using_controlnet:
         # TODO
-        ...
+        logging.warning(
+            f"Calling get_diffusion_output_from_batch with controlnet not implemented yet"
+        )
 
     diffusion_inputs["generator"] = [
         torch.Generator(device=diffusion_model.device).manual_seed(int(seed))
@@ -926,23 +940,27 @@ def train_epoch(
             unet_kwargs = {}
 
             if diffusion_model.using_controlnet:
-                raise NotImplementedError
+
                 conditioning = combine_conditioning_info(
-                    batch, train_config.conditioning_signal_infos
+                    batch, diffusion_model.config.conditioning_signals
                 ).to(noisy_model_input.device)
 
-                down_block_res_samples, mid_block_res_sample = models["controlnet"](
-                    noisy_model_input,
-                    timesteps,
-                    encoder_hidden_states=prompt_hidden_state,
-                    controlnet_cond=conditioning,
-                    return_dict=False,
+                down_block_res_samples, mid_block_res_sample = (
+                    diffusion_model.controlnet(
+                        noisy_model_input,
+                        timesteps,
+                        encoder_hidden_states=prompt_hidden_state,
+                        controlnet_cond=conditioning,
+                        return_dict=False,
+                    )
                 )
+
                 unet_kwargs["down_block_additional_residuals"] = [
-                    sample.to(dtype=weights_dtype) for sample in down_block_res_samples
+                    sample.to(dtype=diffusion_model.dtype)
+                    for sample in down_block_res_samples
                 ]
                 unet_kwargs["mid_block_additional_residual"] = mid_block_res_sample.to(
-                    dtype=weights_dtype
+                    dtype=diffusion_model.dtype
                 )
 
             model_pred = diffusion_model.unet(
@@ -1154,7 +1172,7 @@ def setup_accelerator(train_config: TrainConfig) -> Accelerator:
             if train_config.diffusion_config.dtype in LOWER_DTYPES
             else "no"
         ),
-        log_with=train_config.loggers,
+        log_with=list(filter(lambda s: s != "", train_config.loggers)),
         project_config=ProjectConfiguration(
             project_dir=str(train_config.output_dir),
             logging_dir=str(train_config.logging_dir),
