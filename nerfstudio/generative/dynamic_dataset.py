@@ -321,15 +321,17 @@ def create_cameras_for_sequence(
     return cameras
 
 
-def crop_to_ray_idxs(cam_idxs, crop_top_left, crop_size) -> Tensor:
+def crop_to_ray_idxs(
+    cam_idxs: Tensor, crop_top_left: Tensor, crop_size: Tensor
+) -> Tensor:
     is_batched = len(cam_idxs) > 1
     if is_batched:
         raise NotImplementedError
 
     device = crop_top_left.device
     C = cam_idxs.size(-1)
-    H = crop_size[..., -2]
-    W = crop_size[..., -1]
+    H = int(crop_size[..., -2])
+    W = int(crop_size[..., -1])
 
     idxs = torch.cartesian_prod(
         torch.arange(C, device=device),
@@ -697,6 +699,11 @@ class PandasetInfoGetter(InfoGetter):
                 self.dataset_path / info.scene / "camera" / spec.camera / "intrinsics"
             )
 
+        elif isinstance(spec, TimestampDataSpec):
+            sample_path = (
+                self.dataset_path / info.scene / "camera" / spec.camera / "timestamps"
+            )
+
         elif isinstance(spec, CaptureDataSpec):
             sample_path = (
                 self.dataset_path / info.scene / "camera" / spec.camera / info.sample
@@ -977,10 +984,16 @@ class RayDataGetter(CameraDataGetter):
         ray_generator = self.ray_generators[args.sample_info.scene]
 
         cam_idxs = torch.tensor(
-            [self.cam_to_idx[args.sample_info.scene][args.sample_info.sample]]
+            [self.cam_to_idx[args.sample_info.scene][args.sample_info.sample]],
+            dtype=torch.int32,
         )
+        device = cam_idxs.device
 
-        ray_idxs = crop_to_ray_idxs(cam_idxs, args.crop_top_left, args.crop_size)
+        ray_idxs = crop_to_ray_idxs(
+            cam_idxs,
+            torch.tensor(args.crop_top_left, device=device, dtype=torch.int32),
+            torch.tensor(args.crop_size, device=device, dtype=torch.int32),
+        )
         rays = ray_generator.forward(ray_idxs)
 
         ray = torch.concat([rays.origins, rays.directions], dim=-1)

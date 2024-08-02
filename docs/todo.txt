@@ -22,8 +22,9 @@ Update Data and Conditioning
 
 
 Start ControlNet
-- Add conditioning signals
-- Test new signals
-- Create controlnet model
-- Make conditioning signals work with controlnet
+- Add conditioning signals [x]
+- Test new signals [x]
+- Create controlnet model [x]
+- Make conditioning signals work with controlnet [x]
+- Add conditioning for evaluation
 - Train controlnet

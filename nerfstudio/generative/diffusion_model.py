@@ -196,12 +196,12 @@ def _prepare_image(kwargs):
 
 
 def combine_conditioning_info(
-    sample: Dict[str, Any], conditioning_signal_names: Iterable[str]
+    sample: Dict[str, Any], conditioning_signals: Iterable[ConditioningSignalInfo]
 ) -> Tensor:
     signals = []
 
-    for signal_name in conditioning_signal_names:
-        signal = sample[signal_name]
+    for signal_info in conditioning_signals:
+        signal = sample[signal_info.signal_name]
         assert isinstance(signal, Tensor) and signal.dim() in {3, 4}
 
         signal = cast(Tensor, batch_if_not_iterable(signal))
@@ -673,7 +673,10 @@ class StableDiffusionModel(DiffusionModel):
 
         if self.using_controlnet:
             if "controlnet" not in models:
-                models["controlnet"] = ControlNetModel.from_unet(unet=self.unet)
+                models["controlnet"] = ControlNetModel.from_unet(
+                    unet=self.unet,
+                    conditioning_channels=self.conditioning_channels,
+                )
 
             self.controlnet.requires_grad_(False)
             self.controlnet.to(device=device, dtype=dtype)
@@ -705,6 +708,10 @@ class StableDiffusionModel(DiffusionModel):
         if self.config.compile_models:
             for model in self.config.compile_models:
                 self.models[model] = torch.compile(self.models[model])
+
+    @property
+    def conditioning_channels(self) -> int:
+        return sum(signal.num_channels for signal in self.config.conditioning_signals)
 
     @property
     def using_controlnet(self) -> bool:
