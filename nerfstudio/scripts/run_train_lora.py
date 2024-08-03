@@ -253,7 +253,7 @@ class TrainConfig(BaseSettings):
         nerf_out_dataset=DatasetConfig(
             data_specs={
                 "rgb_nerf": NerfOutputSpec(
-                    name="rgb",
+                    name="nerf_out",
                     camera="front_left_camera",
                     nerf_output_path="data/nerf_outputs",
                     data_name="rgb",
@@ -635,48 +635,6 @@ def get_diffusion_loss(
     return loss
 
 
-def get_diffusion_output_from_batch(
-    step: int,
-    batch: Dict[str, Union[Tensor, List[Any]]],
-    diffusion_model: StableDiffusionModel,
-    rgb: Optional[Tensor] = None,
-    rgb_key: str = "rgb",
-    tokens_key: str = "input_ids",
-):
-    if rgb is None:
-        rgb = cast(Tensor, batch[rgb_key])
-        rgb = rgb.to(dtype=diffusion_model.dtype, device=diffusion_model.device)
-
-    diffusion_inputs: Dict[str, Any] = {"rgb": rgb}
-    batch_size = len(rgb)
-    random_seeds = np.arange(batch_size * step, batch_size * (step + 1))
-
-    if diffusion_model.using_controlnet:
-        # TODO
-        logging.warning(
-            f"Calling get_diffusion_output_from_batch with controlnet not implemented yet"
-        )
-
-    diffusion_inputs["generator"] = [
-        torch.Generator(device=diffusion_model.device).manual_seed(int(seed))
-        for seed in random_seeds
-    ]
-
-    if tokens_key in batch:
-        tokens = cast(Tensor, batch[tokens_key])
-        diffusion_inputs["prompt_embeds"] = encode_tokens(
-            diffusion_model.text_encoder,
-            tokens.to(device=diffusion_model.device),
-            use_cache=True,
-        )
-
-    return diffusion_model.get_diffusion_output(
-        diffusion_inputs,
-        strength=diffusion_model.config.noise_strength,
-        num_inference_steps=diffusion_model.config.num_inference_steps,
-    )
-
-
 @torch.no_grad()
 def get_validation_metrics(
     accelerator: Accelerator,
@@ -692,13 +650,10 @@ def get_validation_metrics(
     }
     running_count = 0
 
-    for step, batch in enumerate(dataloader):
+    for batch in dataloader:
         rgb = batch["rgb"].to(dtype=diffusion_model.dtype, device=accelerator.device)
 
-        diffusion_output = get_diffusion_output_from_batch(
-            step, batch, diffusion_model, rgb=rgb
-        )
-
+        diffusion_output = diffusion_model.get_diffusion_output(batch)
         rgb_out = diffusion_output["rgb"]
 
         # Benchmark
@@ -738,11 +693,9 @@ def get_validation_renders(
     vis_metas = []
     vis_outs = []
 
-    for step, batch in enumerate(dataloader):
+    for batch in dataloader:
         rgb_gt = batch["rgb"].to(dtype=diffusion_model.dtype, device=accelerator.device)
-        diffusion_output = get_diffusion_output_from_batch(
-            step, batch, diffusion_model, rgb=rgb_gt
-        )
+        diffusion_output = diffusion_model.get_diffusion_output(batch)
         rgb_out = diffusion_output["rgb"]
 
         # Renders
@@ -795,13 +748,11 @@ def get_reference_outputs(
     ref_gen_outs = []
     ref_metas = []
 
-    for step, batch in enumerate(dataloader):
+    for batch in dataloader:
         ref_rgb = batch["rgb_nerf"].to(dtype=sd_model.dtype, device=accelerator.device)
         ref_gt = batch["rgb_gt"].to(dtype=sd_model.dtype, device=accelerator.device)
 
-        diffusion_output = get_diffusion_output_from_batch(
-            step, batch, sd_model, rgb=ref_rgb
-        )
+        diffusion_output = sd_model.get_diffusion_output(batch, rgb_key="rgb_nerf")
         ref_gen_out = diffusion_output["rgb"]
 
         ref_running_count += len(ref_rgb)
@@ -936,6 +887,14 @@ def train_epoch(
                     use_cache=not diffusion_model.is_model_trained("text_encoder"),
                 )
 
+                if diffusion_model.config.do_classifier_free_guidance:
+                    noisy_model_input = torch.cat(
+                        (noisy_model_input, noisy_model_input)
+                    )
+                    prompt_hidden_state = torch.cat(
+                        (prompt_hidden_state, prompt_hidden_state)
+                    )
+
             unet_added_conditions = {}
             unet_kwargs = {}
 
@@ -944,6 +903,9 @@ def train_epoch(
                 conditioning = combine_conditioning_info(
                     batch, diffusion_model.config.conditioning_signals
                 ).to(noisy_model_input.device)
+
+                if diffusion_model.config.do_classifier_free_guidance:
+                    conditioning = torch.cat((conditioning, conditioning))
 
                 down_block_res_samples, mid_block_res_sample = (
                     diffusion_model.controlnet(
@@ -978,9 +940,8 @@ def train_epoch(
             if train_config.use_recreation_loss:
                 raise NotImplementedError
                 # TODO: Completely change this
-                pred_rgb = decode_img(
-                    models["image_processor"], models["vae"], noisy_model_input
-                )
+                # DENOISE LATENT
+                # DECODE IMAGE
                 rec_loss = (
                     torch.mean(
                         train_config.rec_loss_strength

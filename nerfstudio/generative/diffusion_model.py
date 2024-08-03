@@ -15,7 +15,7 @@ from copy import deepcopy
 import numpy as np
 from pydantic import BaseModel
 import torch
-from torch import nn, Tensor
+from torch import FloatTensor, nn, Tensor
 
 from diffusers import (
     StableDiffusionImg2ImgPipeline,
@@ -846,8 +846,6 @@ class StableDiffusionModel(DiffusionModel):
     def get_diffusion_output(
         self,
         sample: Dict[str, Any],
-        strength: float = 0.2,
-        num_inference_steps: int = 50,
         rgb_key: str = "rgb",
         **kwargs,
     ) -> Dict[str, Any]:
@@ -869,6 +867,9 @@ class StableDiffusionModel(DiffusionModel):
 
         image = sample[rgb_key]
         image = cast(Tensor, batch_if_not_iterable(image))
+
+        image = image.to(device=self.device, dtype=self.dtype)
+
         batch_size = len(image)
 
         if image.size(1) == 3:
@@ -892,38 +893,31 @@ class StableDiffusionModel(DiffusionModel):
                 seed=kwargs.get("seed"),
             )
 
-            timesteps, num_inference_steps = get_timesteps(
-                self.noise_scheduler, num_inference_steps, strength, self.device
+            timesteps, _ = get_timesteps(
+                self.noise_scheduler,
+                self.config.num_inference_steps,
+                self.config.noise_strength,
+                self.device,
             )
             noisy_latent = add_noise_to_latent(
                 latent, timesteps[0], self.noise_scheduler
             )
-            prompt_embeds = sample["prompt_embeds"]
+
+            prompt_embeds = encode_tokens(self.text_encoder, sample["input_ids"], True)
 
             if self.config.do_classifier_free_guidance:
                 prompt_embeds = torch.cat((prompt_embeds, prompt_embeds))
 
             if self.using_controlnet:
-                # TODO Add controlnet
-                raise NotImplementedError
-                # TODO: Port this code to the StableDiffusionModel
                 conditioning = combine_conditioning_info(
-                    batch, train_state.conditioning_signal_infos
-                ).to(noisy_model_input.device)
+                    sample, self.config.conditioning_signals
+                ).to(noisy_latent.device)
 
-                down_block_res_samples, mid_block_res_sample = models["controlnet"](
-                    noisy_model_input,
-                    timesteps,
-                    encoder_hidden_states=prompt_hidden_state,
-                    controlnet_cond=conditioning,
-                    return_dict=False,
-                )
-                unet_kwargs["down_block_additional_residuals"] = [
-                    sample.to(dtype=weights_dtype) for sample in down_block_res_samples
-                ]
-                unet_kwargs["mid_block_additional_residual"] = mid_block_res_sample.to(
-                    dtype=weights_dtype
-                )
+                if self.config.do_classifier_free_guidance:
+                    conditioning = torch.cat((conditioning, conditioning))
+
+            else:
+                conditioning = None
 
             denoised_latent = denoise_latent(
                 noisy_latent,
@@ -933,6 +927,8 @@ class StableDiffusionModel(DiffusionModel):
                 prompt_embeds,
                 do_classifier_free_guidance=self.config.do_classifier_free_guidance,
                 guidance_scale=self.config.guidance_scale,
+                controlnet=self.controlnet if self.using_controlnet else None,
+                controlnet_conditioning=conditioning,
             )
 
             image = decode_img(self.img_processor, self.vae, denoised_latent)
@@ -1087,6 +1083,8 @@ def denoise_latent(
     timesteps: Sequence[int],
     noise_scheduler: DDPMScheduler,
     encoder_hidden_states,
+    controlnet: Optional[ControlNetModel] = None,
+    controlnet_conditioning: Optional[Tensor] = None,
     timestep_cond=None,
     cross_attention_kwargs=None,
     added_cond_kwargs=None,
@@ -1104,7 +1102,26 @@ def denoise_latent(
         latent_model_input = (
             torch.cat([latent, latent]) if do_classifier_free_guidance else latent
         )
-        # latent_model_input = noise_scheduler.scale_model_input(latent_model_input, t)
+        latent_model_input = noise_scheduler.scale_model_input(
+            cast(FloatTensor, latent_model_input), t
+        )
+
+        unet_kwargs = {}
+        if controlnet is not None:
+            down_block_res_samples, mid_block_res_sample = controlnet(
+                latent_model_input,
+                timesteps,
+                encoder_hidden_states=encoder_hidden_states,
+                controlnet_cond=controlnet_conditioning,
+                return_dict=False,
+            )
+
+            unet_kwargs["down_block_additional_residuals"] = [
+                sample.to(dtype=controlnet.dtype) for sample in down_block_res_samples
+            ]
+            unet_kwargs["mid_block_additional_residual"] = mid_block_res_sample.to(
+                dtype=controlnet.dtype
+            )
 
         noise_pred = unet(
             latent_model_input,
@@ -1114,6 +1131,7 @@ def denoise_latent(
             cross_attention_kwargs=cross_attention_kwargs,
             added_cond_kwargs=added_cond_kwargs,
             return_dict=False,
+            **unet_kwargs,
         )[0]
 
         if do_classifier_free_guidance:

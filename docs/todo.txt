@@ -26,5 +26,8 @@ Start ControlNet
 - Test new signals [x]
 - Create controlnet model [x]
 - Make conditioning signals work with controlnet [x]
-- Add conditioning for evaluation
+- Add conditioning for evaluation [x]
+- Update inference with controlnet [x]
+- Update training with controlnet [x]
+- Test controlnets [x]
 - Train controlnet

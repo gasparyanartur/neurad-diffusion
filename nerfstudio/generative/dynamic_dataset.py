@@ -1,6 +1,6 @@
 import typing
 from typing_extensions import Annotated
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 from typing import Any, ClassVar, Dict, List, Set, Type, Union, Optional, Tuple, cast
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
@@ -492,6 +492,7 @@ class RgbDataSpec(CaptureDataSpec):
 
 
 class NerfOutputSpec(RgbDataSpec):
+    name: str = "nerf_output"
     nerf_output_path: str = "data/nerf_outputs"
     data_name: str = "rgb"
 
@@ -504,7 +505,7 @@ class NerfOutputSpec(RgbDataSpec):
 class PromptDataSpec(DataSpec):
     name: str = "input_ids"
     prompt: str = ""
-    model_id: str = "stabilityai/stable-diffusion-2-1"
+    id: str = "stabilityai/stable-diffusion-2-1"
     subfolder: str = "tokenizer"
     revision: str = "main"
 
@@ -755,7 +756,7 @@ class PromptDataGetter(DataGetter):
         super().__init__(info_getter, data_spec, sample_config)
         self.data_spec = data_spec
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.data_spec.model_id,
+            self.data_spec.id,
             revision=self.data_spec.revision,
             subfolder=self.data_spec.subfolder,
         )
@@ -1043,10 +1044,10 @@ class SampleConfig(BaseModel):
 class DatasetConfig(BaseModel):
     dataset_name: str = "pandaset"
     dataset_path: Path = Path("data/pandaset")
-    data_specs: Dict[str, DataSpec] = {
+    data_specs: Dict[str, DataSpec] = Field({
         "rgb": RgbDataSpec(name="rgb", camera="front_camera", shift="0m"),
         "input_ids": PromptDataSpec(name="input_ids", prompt=""),
-    }
+    }, discriminator="name")
     data_tree: DatasetTree
     sample_config: SampleConfig
 
