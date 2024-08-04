@@ -29,5 +29,7 @@ Start ControlNet
 - Add conditioning for evaluation [x]
 - Update inference with controlnet [x]
 - Update training with controlnet [x]
-- Test controlnets [x]
+- Make pydantic work with yaml files [x]
+- Fix dimension bugs []
+- Test controlnets 
 - Train controlnet

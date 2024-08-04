@@ -1,6 +1,6 @@
 # Adapted from https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image_lora.py
 
-from typing import Any, Dict, Tuple, List, Optional, Union, Sequence, cast
+from typing import Any, Dict, Tuple, List, Optional, Type, Union, Sequence, cast
 from collections.abc import Iterable
 from pathlib import Path
 import logging
@@ -10,7 +10,12 @@ import math
 import itertools as it
 
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+)
 import torch.utils
 import torch.utils.data
 import tqdm
@@ -253,15 +258,12 @@ class TrainConfig(BaseSettings):
         nerf_out_dataset=DatasetConfig(
             data_specs={
                 "rgb_nerf": NerfOutputSpec(
-                    name="nerf_out",
                     camera="front_left_camera",
                     nerf_output_path="data/nerf_outputs",
                     data_name="rgb",
                 ),
-                "rgb_gt": RgbDataSpec(
-                    name="rgb", camera="front_left_camera", shift="0m"
-                ),
-                "ray": RayDataSpec(name="ray", camera="front_left_camera", shift="0m"),
+                "rgb_gt": RgbDataSpec(camera="front_left_camera", shift="0m"),
+                "ray": RayDataSpec(camera="front_left_camera", shift="0m"),
                 "input_ids": PromptDataSpec(),
             },
             sample_config=SampleConfig(),
@@ -270,6 +272,17 @@ class TrainConfig(BaseSettings):
             ),
         ),
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        return (YamlConfigSettingsSource(settings_cls),)
 
 
 class TrainState(BaseModel):

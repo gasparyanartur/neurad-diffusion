@@ -298,16 +298,16 @@
         "args": "configs/local-configs/train-diffusion-pandaset-local-debug.yml"
     },
     {
-      "name": "Python: train diffusion pandaset local scene",
+      "name": "Python: train sd pandaset",
       "type": "debugpy",
       "request": "launch",
       "program": "nerfstudio/scripts/run_train_lora.py",
       "env": {
           "PYTHONPATH":"${workspaceFolder}",
+          "LORA_TRAIN_CONFIG": "configs/local-configs/train-sd-pandaset.yml"
       },
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "args": ["--loggers", ""]
     },
   ]
 }

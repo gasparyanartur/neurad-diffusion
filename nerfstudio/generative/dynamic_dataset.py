@@ -1,7 +1,19 @@
 import typing
 from typing_extensions import Annotated
 from pydantic import BaseModel, Field, StringConstraints
-from typing import Any, ClassVar, Dict, List, Set, Type, Union, Optional, Tuple, cast
+from typing import (
+    Any,
+    ClassVar,
+    Dict,
+    List,
+    Literal,
+    Set,
+    Type,
+    Union,
+    Optional,
+    Tuple,
+    cast,
+)
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
 from collections.abc import Iterable, Generator, Callable
@@ -226,10 +238,12 @@ class DatasetTreeScene(BaseModel, ABC):
 
 
 class DatasetTreeSceneList(DatasetTreeScene):
+    list_type: ClassVar[str] = "list"
     samples: List[DatasetTreeSample]
 
 
 class DatasetTreeSceneRange(DatasetTreeScene):
+    list_type: ClassVar[str] = "range"
     start_scene: Optional[SampleNameString]
     end_scene: Optional[SampleNameString]
     skip_scene: Optional[int]
@@ -237,7 +251,9 @@ class DatasetTreeSceneRange(DatasetTreeScene):
 
 class DatasetTreeSplit(BaseModel):
     split_name: SplitNameString
-    scenes: Dict[SceneNameString, DatasetTreeScene]
+    scenes: Dict[SceneNameString, Union[DatasetTreeSceneList, DatasetTreeSceneList]] = (
+        Field(discriminator="scene_list_type")
+    )
 
 
 class DatasetTree(BaseModel):
@@ -449,6 +465,7 @@ class DataSpec(BaseModel):
 
 
 class CameraDataSpec(DataSpec):
+    name: Literal["camera"] = "camera"
     camera: str
     shift: str
 
@@ -459,6 +476,7 @@ class CameraDataSpec(DataSpec):
 
 
 class CaptureDataSpec(DataSpec):
+    name: Literal["capture"] = "capture"
     camera: str = "front_camera"
     shift: str = "0m"
 
@@ -469,6 +487,7 @@ class CaptureDataSpec(DataSpec):
 
 
 class LidarDataSpec(DataSpec):
+    name: Literal["lidar"] = "lidar"
     shift: str
 
     data_suffix = ".pkl.gz"
@@ -478,7 +497,7 @@ class LidarDataSpec(DataSpec):
 
 
 class RgbDataSpec(CaptureDataSpec):
-    name: str = "rgb"
+    name: Literal["rgb"] = "rgb"
     num_channels: int = 3
     width: int = 1920
     height: int = 1080
@@ -492,7 +511,7 @@ class RgbDataSpec(CaptureDataSpec):
 
 
 class NerfOutputSpec(RgbDataSpec):
-    name: str = "nerf_output"
+    name: Literal["nerf_output"] = "nerf_output"
     nerf_output_path: str = "data/nerf_outputs"
     data_name: str = "rgb"
 
@@ -503,7 +522,7 @@ class NerfOutputSpec(RgbDataSpec):
 
 
 class PromptDataSpec(DataSpec):
-    name: str = "input_ids"
+    name: Literal["input_ids"] = "input_ids"
     prompt: str = ""
     id: str = "stabilityai/stable-diffusion-2-1"
     subfolder: str = "tokenizer"
@@ -516,7 +535,7 @@ class PromptDataSpec(DataSpec):
 
 
 class PoseDataSpec(CaptureDataSpec):
-    name: str = "pose"
+    name: Literal["pose"] = "pose"
 
     data_suffix = ".json"
 
@@ -525,7 +544,7 @@ class PoseDataSpec(CaptureDataSpec):
 
 
 class IntrinsicsDataSpec(CaptureDataSpec):
-    name: str = "intrinsics"
+    name: Literal["intrinsics"] = "intrinsics"
 
     data_suffix = ".json"
 
@@ -534,7 +553,7 @@ class IntrinsicsDataSpec(CaptureDataSpec):
 
 
 class TimestampDataSpec(CaptureDataSpec):
-    name: str = "timestamp"
+    name: Literal["timestamp"] = "timestamp"
 
     data_suffix = ".json"
 
@@ -543,13 +562,26 @@ class TimestampDataSpec(CaptureDataSpec):
 
 
 class RayDataSpec(CaptureDataSpec):
-    name: str = "ray"
+    name: Literal["ray"] = "ray"
 
     data_suffix = ""
 
     def get_getter_class(self) -> Type["DataGetter"]:
         return RayDataGetter
 
+
+UNION_DATA_SPEC_TYPES = Union[
+    CameraDataSpec,
+    CaptureDataSpec,
+    LidarDataSpec,
+    RgbDataSpec,
+    NerfOutputSpec,
+    PromptDataSpec,
+    PoseDataSpec,
+    IntrinsicsDataSpec,
+    TimestampDataSpec,
+    RayDataSpec,
+]
 
 _SPLIT_SCORE = {"train": 0, "validation": 1, "test": 2}
 
@@ -937,23 +969,17 @@ class CameraDataGetter(DataGetter):
             self.info_getter.sample_infos,
             PoseDataGetter(
                 info_getter,
-                PoseDataSpec(
-                    name="pose", camera=data_spec.camera, shift=data_spec.shift
-                ),
+                PoseDataSpec(camera=data_spec.camera, shift=data_spec.shift),
                 sample_config,
             ),
             TimestampDataGetter(
                 info_getter,
-                TimestampDataSpec(
-                    name="timestamp", camera=data_spec.camera, shift=data_spec.shift
-                ),
+                TimestampDataSpec(camera=data_spec.camera, shift=data_spec.shift),
                 sample_config,
             ),
             IntrinsicsDataGetter(
                 info_getter,
-                IntrinsicsDataSpec(
-                    name="pose", camera=data_spec.camera, shift=data_spec.shift
-                ),
+                IntrinsicsDataSpec(camera=data_spec.camera, shift=data_spec.shift),
                 sample_config,
             ),
             sample_config.img_width,
@@ -1004,7 +1030,7 @@ class RayDataGetter(CameraDataGetter):
 
 
 _INFO_GETTER_BUILDERS = cast(
-    Dict[str, Callable[[Path, Dict], InfoGetter]],
+    Dict[str, Callable[[Path, DatasetTree], InfoGetter]],
     {
         "pandaset": PandasetInfoGetter,
     },
@@ -1044,10 +1070,29 @@ class SampleConfig(BaseModel):
 class DatasetConfig(BaseModel):
     dataset_name: str = "pandaset"
     dataset_path: Path = Path("data/pandaset")
-    data_specs: Dict[str, DataSpec] = Field({
-        "rgb": RgbDataSpec(name="rgb", camera="front_camera", shift="0m"),
-        "input_ids": PromptDataSpec(name="input_ids", prompt=""),
-    }, discriminator="name")
+    data_specs: Dict[
+        str,
+        Annotated[
+            Union[
+                CameraDataSpec,
+                CaptureDataSpec,
+                LidarDataSpec,
+                RgbDataSpec,
+                NerfOutputSpec,
+                PromptDataSpec,
+                PoseDataSpec,
+                IntrinsicsDataSpec,
+                TimestampDataSpec,
+                RayDataSpec,
+            ],
+            Field(discriminator="name"),
+        ],
+    ] = Field(
+        {
+            "rgb": RgbDataSpec(name="rgb", camera="front_camera", shift="0m"),
+            "input_ids": PromptDataSpec(name="input_ids", prompt=""),
+        },
+    )
     data_tree: DatasetTree
     sample_config: SampleConfig
 

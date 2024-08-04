@@ -13,7 +13,7 @@ import typing
 from copy import deepcopy
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import torch
 from torch import FloatTensor, nn, Tensor
 
@@ -342,8 +342,8 @@ def generate_noise_pattern(
 
 @dataclass
 class DiffusionModelConfig(InstantiateConfig):
-    _target: "DiffusionModel" = field(
-        default_factory=lambda: DiffusionModel.from_config
+    _target: "DiffusionModel" = Field(
+        default_factory=lambda: DiffusionModel.from_config, validate_default=False
     )
 
     type: str = DiffusionModelType.sd
