@@ -23,8 +23,8 @@ lr_warmup_steps: 1000
 
 use_recreation_loss: False
 
-#loggers: ["wandb"]
-loggers: []
+loggers: ["wandb"]
+#loggers: []
 
 
 diffusion_config:
@@ -65,7 +65,7 @@ dataset_configs:
               list_type: list
               scene_name: "001"
               samples: 
-                - sample_name: "01"
+                - sample_name: "00"
 
   val_dataset:
     data_specs:
@@ -94,7 +94,7 @@ dataset_configs:
               list_type: list
               scene_name: "001"
               samples: 
-               - sample_name: "01"
+               - sample_name: "00"
   
   render_dataset:
     data_specs:
@@ -122,7 +122,7 @@ dataset_configs:
               list_type: list
               scene_name: "001"
               samples: 
-                - sample_name: "01"
+                - sample_name: "00"
 
   nerf_out_dataset:
     data_specs:
@@ -154,4 +154,4 @@ dataset_configs:
               list_type: list
               scene_name: "001"
               samples: 
-                - sample_name: "01"
+                - sample_name: "00"

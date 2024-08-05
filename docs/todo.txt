@@ -30,6 +30,6 @@ Start ControlNet
 - Update inference with controlnet [x]
 - Update training with controlnet [x]
 - Make pydantic work with yaml files [x]
-- Fix dimension bugs []
+- Fix dimension bugs [x]
 - Test controlnets 
 - Train controlnet

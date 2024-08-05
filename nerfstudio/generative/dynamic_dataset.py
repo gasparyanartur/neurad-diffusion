@@ -331,7 +331,7 @@ def create_cameras_for_sequence(
         width=img_width,
         camera_to_worlds=(poses[:, :3, :4]),
         camera_type=CameraType.PERSPECTIVE,
-        times=torch.tensor(timestamps),
+        times=timestamps,
         metadata={"sensor_idxs": scene_idxs},
     )
     return cameras

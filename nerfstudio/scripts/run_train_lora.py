@@ -607,6 +607,10 @@ def get_diffusion_loss(
     noise_scheduler = diffusion_model.noise_scheduler
     prediction_type = noise_scheduler.config.prediction_type  # type: ignore
 
+    if diffusion_model.config.do_classifier_free_guidance:
+        noise_pred_uncond, noise_pred_text = model_pred.chunk(2)
+        noise_pred = noise_pred_uncond + diffusion_model.config.guidance_scale * (noise_pred_text - noise_pred_uncond)
+
     # Get the target for loss depending on the prediction type
     if train_config.noise_scheduler_prediction_type is not None:
         # set prediction_type of scheduler if defined
@@ -623,7 +627,7 @@ def get_diffusion_loss(
 
     if train_config.snr_gamma is None:
         loss = nn.functional.mse_loss(
-            model_pred.float(), target.float(), reduction="mean"
+            noise_pred.float(), target.float(), reduction="mean"
         )
     else:
         # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
@@ -640,7 +644,7 @@ def get_diffusion_loss(
             mse_loss_weights = mse_loss_weights / (snr + 1)
 
         loss = nn.functional.mse_loss(
-            model_pred.float(), target.float(), reduction="none"
+            noise_pred.float(), target.float(), reduction="none"
         )
         loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
         loss = loss.mean()
