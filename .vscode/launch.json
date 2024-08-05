@@ -309,5 +309,17 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
     },
+    {
+      "name": "Python: train cn pandaset",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "nerfstudio/scripts/run_train_lora.py",
+      "env": {
+          "PYTHONPATH":"${workspaceFolder}",
+          "LORA_TRAIN_CONFIG": "configs/local-configs/train-cn-pandaset.yml"
+      },
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+    },
   ]
 }

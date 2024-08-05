@@ -212,9 +212,9 @@ class TrainConfig(BaseSettings):
         lora_base_ranks={"unet": 4, "controlnet": 4, "text_encoder": 4},
         use_dora=True,
         lora_model_prefix="lora_",
-        conditioning_signals=(
-            ConditioningSignalInfo(signal_name="ray", num_channels=6),
-        ),
+        conditioning_signals={
+            "ray": ConditioningSignalInfo(signal_name="ray", num_channels=6),
+        },
         guidance_scale=0,
         metrics=("lpips", "ssim", "psnr", "mse"),
     )
@@ -609,7 +609,9 @@ def get_diffusion_loss(
 
     if diffusion_model.config.do_classifier_free_guidance:
         noise_pred_uncond, noise_pred_text = model_pred.chunk(2)
-        noise_pred = noise_pred_uncond + diffusion_model.config.guidance_scale * (noise_pred_text - noise_pred_uncond)
+        noise_pred = noise_pred_uncond + diffusion_model.config.guidance_scale * (
+            noise_pred_text - noise_pred_uncond
+        )
 
     # Get the target for loss depending on the prediction type
     if train_config.noise_scheduler_prediction_type is not None:

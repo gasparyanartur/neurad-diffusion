@@ -196,13 +196,13 @@ def _prepare_image(kwargs):
 
 
 def combine_conditioning_info(
-    sample: Dict[str, Any], conditioning_signals: Iterable[ConditioningSignalInfo]
+    sample: Dict[str, Any], conditioning_signals: Dict[str, ConditioningSignalInfo]
 ) -> Tensor:
     signals = []
 
-    for signal_info in conditioning_signals:
-        signal = sample[signal_info.signal_name]
-        assert isinstance(signal, Tensor) and signal.dim() in {3, 4}
+    for signal_name in conditioning_signals.keys():
+        signal = sample[signal_name]
+        assert isinstance(signal, Tensor)
 
         signal = cast(Tensor, batch_if_not_iterable(signal))
         signals.append(signal)
@@ -270,7 +270,8 @@ def _prepare_prompt(
 def _prepare_generator(sample: Dict["str", Any], batch_size: int):
     if "generator" in sample:
         sample["generator"] = batch_if_not_iterable(sample["generator"])
-        if len(sample["generator"]) <= 1 and batch_size > 1:
+        bs = len(sample["generator"])  # type: ignore
+        if bs <= 1 and batch_size > 1:
             raise ValueError(f"Number of generators must match number of images")
 
 
@@ -381,11 +382,11 @@ class DiffusionModelConfig(InstantiateConfig):
 
     losses: Tuple[str, ...] = ("mse",)
 
-    lora_base_ranks: Dict[str, int] = field(
+    lora_base_ranks: Dict[str, int] = Field(
         default_factory=lambda: {"unet": 4, "controlnet": 4, "text_encoder": 4}
     )
 
-    lora_rank_mults: Dict[str, Any] = field(
+    lora_rank_mults: Dict[str, Any] = Field(
         default_factory=lambda: {
             "unet": {
                 "downblocks": {"attn": 1, "resnet": 0},
@@ -416,7 +417,9 @@ class DiffusionModelConfig(InstantiateConfig):
 
     lora_model_prefix: str = "lora_"
 
-    conditioning_signals: Tuple[ConditioningSignalInfo, ...] = ()
+    conditioning_signals: Dict[str, ConditioningSignalInfo] = Field(
+        default_factory=dict
+    )
 
     do_classifier_free_guidance: bool = True
     guidance_scale: float = 0
@@ -669,7 +672,7 @@ class StableDiffusionModel(DiffusionModel):
         self.unet.to(device=device, dtype=dtype)
 
         self.text_encoder.requires_grad_(False)
-        self.text_encoder.to(device=device, dtype=dtype)
+        self.text_encoder.to(device=device, dtype=dtype)  # type: ignore
 
         if self.using_controlnet:
             if "controlnet" not in models:
@@ -711,7 +714,9 @@ class StableDiffusionModel(DiffusionModel):
 
     @property
     def conditioning_channels(self) -> int:
-        return sum(signal.num_channels for signal in self.config.conditioning_signals)
+        return sum(
+            signal.num_channels for signal in self.config.conditioning_signals.values()
+        )
 
     @property
     def using_controlnet(self) -> bool:
@@ -1011,7 +1016,7 @@ def encode_img(
 
     latents = vae.encode(img.to(device), return_dict=True)  # type: ignore
     latents = retrieve_latents(
-        latents,
+        latents,  # type: ignore
         generator=(torch.manual_seed(seed) if seed is not None else None),
         sample_mode=sample_mode,
     )
