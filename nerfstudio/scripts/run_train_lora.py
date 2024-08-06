@@ -1,6 +1,17 @@
 # Adapted from https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image_lora.py
 
-from typing import Any, Dict, Tuple, List, Optional, Type, Union, Sequence, cast
+from typing import (
+    Any,
+    Dict,
+    Literal,
+    Tuple,
+    List,
+    Optional,
+    Type,
+    Union,
+    Sequence,
+    cast,
+)
 from collections.abc import Iterable
 from pathlib import Path
 import logging
@@ -93,21 +104,47 @@ logger = get_logger(__name__, log_level="INFO")
 
 
 class TrainingDatasetConfigs(BaseModel):
+    type: str
+
+
+class FullTrainingDatasetConfig(BaseModel):
+    type: Literal["full"] = "full"
+
     train_dataset: DatasetConfig
     val_dataset: DatasetConfig
     render_dataset: Optional[DatasetConfig] = None
     nerf_out_dataset: Optional[DatasetConfig] = None
 
+    def make_dataset_loader(
+        self,
+        dataset_type: str,
+        shuffle: bool,
+        batch_size: int,
+    ) -> DatasetConfig:
+        if dataset_type == "train":
+            return make_dataset_loader(self.train_dataset)
+
+        return make_dataset_loader()
+
+
+class SingleSceneTrainingDatasetConfig(BaseModel):
+    type: Literal["single_scene"] = "single_scene"
+
+    camera: str = "front_camera"
+    ref_camera: str = "front_left_camera"
+
+    random_crop: bool = False
+    conditioning: Tuple[str, ...] = ("ray",)
+
 
 def make_dataset_loader(
-    dataset_config: DatasetConfig,
+    dataset: DynamicDataset,
     shuffle: bool,
     batch_size: int,
     num_workers: int,
     pin_memory: bool,
 ) -> Tuple[DynamicDataset, DataLoader]:
 
-    dataset = DynamicDataset(dataset_config)
     dataloader = DataLoader(
         dataset,
         shuffle=shuffle,

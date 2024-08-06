@@ -7,7 +7,7 @@ dataloader_num_workers: 0
 
 n_epochs: 1000
 val_freq: 10
-checkpointing_steps: 500
+checkpointing_steps: 50
 
 train_noise_strength: 0.1
 train_noise_num_steps: null

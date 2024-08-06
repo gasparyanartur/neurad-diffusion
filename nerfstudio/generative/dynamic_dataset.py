@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import typing
 from typing_extensions import Annotated
 from pydantic import BaseModel, Field, StringConstraints
@@ -561,7 +563,7 @@ class TimestampDataSpec(CaptureDataSpec):
         return TimestampDataGetter
 
 
-class RayDataSpec(CaptureDataSpec):
+class RayDataSpec(CameraDataSpec):
     name: Literal["ray"] = "ray"
 
     data_suffix = ""
@@ -570,7 +572,8 @@ class RayDataSpec(CaptureDataSpec):
         return RayDataGetter
 
 
-UNION_DATA_SPEC_TYPES = Union[
+UnionDataSpecTypes = Union[
+    DataSpec,
     CameraDataSpec,
     CaptureDataSpec,
     LidarDataSpec,
@@ -581,6 +584,11 @@ UNION_DATA_SPEC_TYPES = Union[
     IntrinsicsDataSpec,
     TimestampDataSpec,
     RayDataSpec,
+]
+
+DataSpecT = Annotated[
+    UnionDataSpecTypes,
+    Field(discriminator="name"),
 ]
 
 _SPLIT_SCORE = {"train": 0, "validation": 1, "test": 2}
@@ -617,12 +625,12 @@ class InfoGetter(ABC):
         self,
         scene: str,
         split: str,
-        spec: Optional[DataSpec] = None,
+        spec: Optional[DataSpecT] = None,
     ) -> List[SampleInfo]:
         raise NotImplementedError
 
     @abstractmethod
-    def get_path(self, info: SampleInfo, spec: DataSpec):
+    def get_path(self, info: SampleInfo, spec: DataSpecT):
         raise NotImplementedError
 
     def _parse_tree(self) -> None:
@@ -678,7 +686,7 @@ class PandasetInfoGetter(InfoGetter):
         self,
         scene: str,
         split: str,
-        spec: Optional[DataSpec] = None,
+        spec: Optional[DataSpecT] = None,
     ) -> List[str]:
         if isinstance(spec, LidarDataSpec):
             sample_dir = self.dataset_path / scene / "lidar"
@@ -762,7 +770,7 @@ class DataGetter(ABC):
     def __init__(
         self,
         info_getter: InfoGetter,
-        data_spec: DataSpec,
+        data_spec: DataSpecT,
         sample_config: "SampleConfig",
     ) -> None:
         super().__init__()
@@ -1067,8 +1075,8 @@ class SampleConfig(BaseModel):
     img_width: int = 1920
 
 
-class DatasetConfig(BaseModel):
-    dataset_name: str = "pandaset"
+class DatasetConfig(BaseModel, ABC):
+    dataset_name: DatasetNameString = "pandaset"
     dataset_path: Path = Path("data/pandaset")
     data_specs: Dict[
         str,
