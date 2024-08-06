@@ -30,6 +30,15 @@ Start ControlNet
 - Update inference with controlnet [x]
 - Update training with controlnet [x]
 - Make pydantic work with yaml files [x]
-- Fix dimension bugs [ ]
-- Test controlnets 
-- Train controlnet
+- Fix dimension bugs [x]
+- Test controlnets [x]
+
+
+Merge with NeuRAD
+- Train small sd model [ ]
+- Update neurad configs
+- Add new pipeline to training
+- Test new pipeline
+- Train small cn model
+- Add controlnet support to neurad
+- Test controlnet

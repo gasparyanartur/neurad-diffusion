@@ -23,14 +23,20 @@ lr_warmup_steps: 1000
 
 use_recreation_loss: False
 
-#loggers: ["wandb"]
-loggers: []
+loggers: ["wandb"]
+#loggers: []
 
 
 diffusion_config:
   type: "cn"
   noise_strength: 0.1
   num_inference_steps: 50
+
+  metrics: 
+    - psnr
+    - ssim
+    - lpips
+    - mse
 
   models_to_train_lora:
     - unet

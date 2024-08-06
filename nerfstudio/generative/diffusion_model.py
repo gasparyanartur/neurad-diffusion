@@ -378,7 +378,7 @@ class DiffusionModelConfig(InstantiateConfig):
     enable_progress_bar: bool = False
     """Create a progress bar for the denoising timesteps during inference."""
 
-    metrics: Tuple[str, ...] = ("psnr", "mse")
+    metrics: Tuple[str, ...] = ("lpips", "ssim", "psnr", "mse")
 
     losses: Tuple[str, ...] = ("mse",)
 
@@ -1116,7 +1116,7 @@ def denoise_latent(
         if controlnet is not None:
             down_block_res_samples, mid_block_res_sample = controlnet(
                 latent_model_input,
-                timesteps,
+                t,
                 encoder_hidden_states=encoder_hidden_states,
                 controlnet_cond=controlnet_conditioning,
                 return_dict=False,

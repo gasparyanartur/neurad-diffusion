@@ -1075,7 +1075,6 @@ def validate_model(
     )
 
     for metric_name, metric in val_metrics.items():
-        # TODO: Replace with LPIPS, make configurable
         if (
             metric_name == train_config.checkpoint_metric
             and metric > train_state.best_metric
@@ -1473,7 +1472,7 @@ def main() -> None:
                 render_dataloader,
                 nerf_out_dataloader,
                 diffusion_model,
-                "test",
+                "val",
             )
         torch.cuda.empty_cache()
 

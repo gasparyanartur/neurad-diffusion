@@ -32,6 +32,12 @@ diffusion_config:
   noise_strength: 0.1
   num_inference_steps: 50
 
+  metrics: 
+    - psnr
+    - ssim
+    - lpips
+    - mse
+
   models_to_train_lora:
     - unet
 
