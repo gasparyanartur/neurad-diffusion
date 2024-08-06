@@ -423,6 +423,7 @@ class DiffusionModelConfig(InstantiateConfig):
 
     do_classifier_free_guidance: bool = True
     guidance_scale: float = 0
+    conditioning_scale: float = 0.8
 
 
 class DiffusionModel(ABC):
