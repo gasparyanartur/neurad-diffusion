@@ -35,6 +35,7 @@ Start ControlNet
 
 
 Merge with NeuRAD
+- Refactor dataset configs to factory type
 - Train small sd model [ ]
 - Update neurad configs
 - Add new pipeline to training

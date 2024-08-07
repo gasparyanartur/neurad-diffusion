@@ -1,5 +1,7 @@
 # Adapted from https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image_lora.py
 
+from __future__ import __annotations__
+
 from typing import (
     Any,
     Dict,
@@ -19,6 +21,7 @@ import os
 from dataclasses import asdict
 import math
 import itertools as it
+from typing_extensions import Annotated
 
 from pydantic import BaseModel, Field
 from pydantic_settings import (
@@ -70,9 +73,12 @@ from nerfstudio.generative.diffusion_model import (
     is_metric_improved,
 )
 from nerfstudio.generative.dynamic_dataset import (
+    DataGetter,
     DataSpec,
+    DataSpecT,
     DatasetConfig,
     DatasetTree,
+    InfoGetter,
     LidarDataSpec,
     NerfOutputSpec,
     PromptDataSpec,
@@ -80,6 +86,7 @@ from nerfstudio.generative.dynamic_dataset import (
     RgbDataSpec,
     SampleConfig,
     is_data_spec_type_rgb,
+    iter_numeric_names,
     read_yaml,
     save_yaml,
     setup_cache,
@@ -103,8 +110,23 @@ check_min_version("0.27.0")
 logger = get_logger(__name__, log_level="INFO")
 
 
+DATASET_TYPE_T = Union[
+    Literal["train"], Literal["val"], Literal["render"], Literal["nerf_out"]
+]
+
+
 class TrainingDatasetConfigs(BaseModel):
     type: str
+
+    def get_dataset_and_loader(
+        self,
+        dataset_type: DATASET_TYPE_T,
+        num_workers: int,
+        batch_size: int,
+        pin_memory: bool = True,
+        shuffle: Optional[bool] = None,
+    ) -> Union[Tuple[DynamicDataset, DataLoader], Tuple[None, None]]:
+        raise NotImplementedError
 
 
 class FullTrainingDatasetConfig(BaseModel):
@@ -117,14 +139,53 @@ class FullTrainingDatasetConfig(BaseModel):
 
     def make_dataset_loader(
         self,
-        dataset_type: str,
-        shuffle: bool,
+        dataset_type: DATASET_TYPE_T,
+        num_workers: int,
         batch_size: int,
-    ) -> DatasetConfig:
-        if dataset_type == "train":
-            return make_dataset_loader(self.train_dataset)
+        pin_memory: bool = True,
+        shuffle: Optional[bool] = None,
+        info_getter: Optional[InfoGetter] = None,
+        data_getters: Optional[Dict[str, DataGetter]] = None,
+    ) -> Union[Tuple[DynamicDataset, DataLoader], Tuple[None, None]]:
 
-        return make_dataset_loader()
+        if dataset_type == "train":
+            dataset_config = self.train_dataset
+
+        elif dataset_type == "val":
+            dataset_config = self.val_dataset
+
+        elif dataset_type == "render":
+            if not self.render_dataset:
+                return None, None
+
+            dataset_config = self.render_dataset
+
+        elif dataset_type == "nerf_out":
+            if not self.nerf_out_dataset:
+                return None, None
+
+            dataset_config = self.nerf_out_dataset
+
+        else:
+            raise ValueError(f"Unknown dataset type {dataset_type}")
+
+        if shuffle is None:
+            shuffle = dataset_type == "train"
+
+        dataset = DynamicDataset(dataset_config, info_getter, data_getters)
+
+        dataloader = DataLoader(
+            dataset,
+            shuffle=shuffle,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=functools.partial(
+                collate_fn, data_specs=dataset.dataset_config.data_specs
+            ),
+        )
+
+        return dataset, dataloader
 
 
 class SingleSceneTrainingDatasetConfig(BaseModel):
@@ -135,6 +196,95 @@ class SingleSceneTrainingDatasetConfig(BaseModel):
 
     random_crop: bool = False
     conditioning: Tuple[str, ...] = ("ray",)
+
+    dataset: str = "pandaset"
+    scene: str = "001"
+    sample_start: str = "00"
+    sample_end: str = "80"
+    sample_step: int = 1
+
+    use_render: bool = True
+    use_nerf_out: bool = True
+
+    def make_dataset_loader(
+        self,
+        dataset_type: DATASET_TYPE_T,
+        num_workers: int,
+        batch_size: int,
+        pin_memory: bool = True,
+        shuffle: Optional[bool] = None,
+        info_getter: Optional[InfoGetter] = None,
+        data_getters: Optional[Dict[str, DataGetter]] = None,
+    ) -> Union[Tuple[DynamicDataset, DataLoader], Tuple[None, None]]:
+
+        if dataset_type == "train":
+            split = "train"
+            if shuffle is None:
+                shuffle = True
+
+        elif dataset_type == "val":
+            split = "test"
+            shuffle = shuffle or False
+
+        elif dataset_type == "render":
+            if not self.use_render:
+                return None, None
+
+            split = "test"
+            shuffle = shuffle or False
+
+        elif dataset_type == "nerf_out":
+            if not self.use_nerf_out:
+                return None, None
+
+            split = "test"
+            shuffle = shuffle or False
+
+            camera = self.ref_camera
+
+        samples = list(
+            iter_numeric_names(self.sample_start, self.sample_end, self.sample_step)
+        )
+
+        signals = {}
+        if "ray" in self.conditioning:
+            signals["ray"] = RayDataSpec(camera=self.camera)
+
+        dataset_config = DatasetConfig(
+            data_specs=cast(
+                Dict[str, DataSpecT],
+                {
+                    "rgb": RgbDataSpec(camera=camera),
+                    "input_ids": PromptDataSpec(),
+                    **signals,
+                },
+            ),
+            sample_config=SampleConfig(random_crop=self.random_crop),
+            data_tree=DatasetTree.single_split_single_scene(
+                self.dataset, split, self.scene, samples
+            ),
+        )
+
+        dataset = DynamicDataset(dataset_config, info_getter, data_getters)
+
+        dataloader = DataLoader(
+            dataset,
+            shuffle=shuffle,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=functools.partial(
+                collate_fn, data_specs=dataset.dataset_config.data_specs
+            ),
+        )
+
+        return dataset, dataloader
+
+
+TrainingDatasetConfigT = Annotated[
+    Union[FullTrainingDatasetConfig, SingleSceneTrainingDatasetConfig],
+    Field(discriminator="type"),
+]
 
 
 def make_dataset_loader(
@@ -256,7 +406,8 @@ class TrainConfig(BaseSettings):
         metrics=("lpips", "ssim", "psnr", "mse"),
     )
 
-    dataset_configs: TrainingDatasetConfigs = TrainingDatasetConfigs(
+    dataset_configs: TrainingDatasetConfigT = FullTrainingDatasetConfig(
+        type="full",
         train_dataset=DatasetConfig(
             data_specs={
                 "rgb": RgbDataSpec(),
@@ -391,7 +542,7 @@ def generate_timestep_weights(args, num_timesteps):
 
 
 def collate_fn(
-    batch: List[Dict[str, Any]], data_specs: Dict[str, DataSpec]
+    batch: List[Dict[str, Any]], data_specs: Dict[str, DataSpecT]
 ) -> Dict[str, Iterable[Any]]:
     assert len(batch) > 0
 
@@ -1375,37 +1526,22 @@ def main() -> None:
         "num_workers": train_config.dataloader_num_workers,
         "pin_memory": train_config.pin_memory,
     }
-    train_dataset, train_dataloader = make_dataset_loader(
-        train_config.dataset_configs.train_dataset,
-        shuffle=True,
+    train_dataset, train_dataloader = train_config.dataset_configs.make_dataset_loader(
+        "train",
         **shared_dataloader_kwargs,
     )
-
-    val_dataset, val_dataloader = make_dataset_loader(
-        train_config.dataset_configs.val_dataset,
-        shuffle=False,
+    val_dataset, val_dataloader = train_config.dataset_configs.make_dataset_loader(
+        "val",
         **shared_dataloader_kwargs,
     )
-
-    _, render_dataloader = (
-        make_dataset_loader(
-            train_config.dataset_configs.render_dataset,
-            shuffle=False,
-            **shared_dataloader_kwargs,
-        )
-        if train_config.dataset_configs.render_dataset is not None
-        else (None, None)
+    _, render_dataloader = train_config.dataset_configs.make_dataset_loader(
+        "render", **shared_dataloader_kwargs
     )
-
-    _, nerf_out_dataloader = (
-        make_dataset_loader(
-            train_config.dataset_configs.nerf_out_dataset,
-            shuffle=False,
-            **shared_dataloader_kwargs,
-        )
-        if train_config.dataset_configs.nerf_out_dataset is not None
-        else (None, None)
+    _, nerf_out_dataloader = train_config.dataset_configs.make_dataset_loader(
+        "nerf_out", **shared_dataloader_kwargs
     )
+    assert train_dataset and train_dataloader
+    assert val_dataset and val_dataloader
 
     # ==========================
     # ===   Setup training   ===

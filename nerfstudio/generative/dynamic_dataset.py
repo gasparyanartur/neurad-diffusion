@@ -468,8 +468,8 @@ class DataSpec(BaseModel):
 
 class CameraDataSpec(DataSpec):
     name: Literal["camera"] = "camera"
-    camera: str
-    shift: str
+    camera: str = "front_camera"
+    shift: str = "0m"
 
     data_suffix = ""
 
@@ -1078,24 +1078,7 @@ class SampleConfig(BaseModel):
 class DatasetConfig(BaseModel, ABC):
     dataset_name: DatasetNameString = "pandaset"
     dataset_path: Path = Path("data/pandaset")
-    data_specs: Dict[
-        str,
-        Annotated[
-            Union[
-                CameraDataSpec,
-                CaptureDataSpec,
-                LidarDataSpec,
-                RgbDataSpec,
-                NerfOutputSpec,
-                PromptDataSpec,
-                PoseDataSpec,
-                IntrinsicsDataSpec,
-                TimestampDataSpec,
-                RayDataSpec,
-            ],
-            Field(discriminator="name"),
-        ],
-    ] = Field(
+    data_specs: Dict[str, DataSpecT] = Field(
         {
             "rgb": RgbDataSpec(name="rgb", camera="front_camera", shift="0m"),
             "input_ids": PromptDataSpec(name="input_ids", prompt=""),
