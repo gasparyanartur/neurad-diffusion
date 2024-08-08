@@ -7,7 +7,6 @@ dataloader_num_workers: 0
 
 n_epochs: 1000
 val_freq: 10
-checkpointing_steps: 500
 
 train_noise_strength: 0.1
 train_noise_num_steps: null
@@ -46,125 +45,13 @@ diffusion_config:
     unet: 4
     controlnet: 4
 
-  conditioning_signals:
-    ray:
-      signal_name: "ray"
-      num_channels: "6"
-
 dataset_configs:
-  train_dataset:
-    data_specs:
-      rgb:
-        name: "rgb"
-        camera: "front_camera"
+  type: single_scene
+  camera: front_camera
+  ref_camera: front_left_camera
+  dataset_name: pandaset
+  sample_start: '00'
+  sample_end: '00'
 
-      ray:
-        name: "ray"
-        camera: "front_camera"
-
-      input_ids: 
-        name: "input_ids"
-
-    sample_config:
-      random_crop: False
-
-    data_tree:
-      dataset_name: "pandaset"
-      splits:
-        train: 
-          split_name: "train"
-          scenes:
-            "001":
-              list_type: list
-              scene_name: "001"
-              samples: 
-                - sample_name: "00"
-
-  val_dataset:
-    data_specs:
-      rgb:
-        name: "rgb"
-        camera: "front_camera"
-
-      ray:
-        name: "ray"
-        camera: "front_camera"
-
-      input_ids: 
-        name: "input_ids"
-
-
-    sample_config:
-      random_crop: False
-
-    data_tree:
-      dataset_name: "pandaset"
-      splits:
-        train: 
-          split_name: "test"
-          scenes:
-            "001":
-              list_type: list
-              scene_name: "001"
-              samples: 
-               - sample_name: "00"
-  
-  render_dataset:
-    data_specs:
-      rgb:
-        name: "rgb"
-        camera: "front_camera"
-
-      ray:
-        name: "ray"
-        camera: "front_camera"
-
-      input_ids: 
-        name: "input_ids"
-
-    sample_config:
-      random_crop: False
-
-    data_tree:
-      dataset_name: "pandaset"
-      splits:
-        train: 
-          split_name: "train"
-          scenes:
-            "001":
-              list_type: list
-              scene_name: "001"
-              samples: 
-                - sample_name: "00"
-
-  nerf_out_dataset:
-    data_specs:
-      rgb_nerf:
-        name: "nerf_output"
-        camera: "front_left_camera"
-
-      rgb_gt:
-        name: "rgb"
-        camera: "front_left_camera"
-
-      ray:
-        name: "ray"
-        camera: "front_left_camera"
-
-      input_ids: 
-        name: "input_ids"
-
-    sample_config:
-      random_crop: False
-
-    data_tree:
-      dataset_name: "pandaset"
-      splits:
-        train: 
-          split_name: "train"
-          scenes:
-            "001":
-              list_type: list
-              scene_name: "001"
-              samples: 
-                - sample_name: "00"
+  conditioning:
+    - ray

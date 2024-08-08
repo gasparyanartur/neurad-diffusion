@@ -1,6 +1,6 @@
 # Adapted from https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image_lora.py
 
-from __future__ import __annotations__
+from __future__ import annotations
 
 from typing import (
     Any,
@@ -217,47 +217,37 @@ class SingleSceneTrainingDatasetConfig(BaseModel):
         data_getters: Optional[Dict[str, DataGetter]] = None,
     ) -> Union[Tuple[DynamicDataset, DataLoader], Tuple[None, None]]:
 
-        if dataset_type == "train":
-            split = "train"
-            if shuffle is None:
-                shuffle = True
+        shuffle = shuffle if (shuffle is not None) else (dataset_type == "train")
+        split = "train" if dataset_type == "train" else "test"
+        camera = self.camera if dataset_type != "nerf_out" else self.ref_camera
 
-        elif dataset_type == "val":
-            split = "test"
-            shuffle = shuffle or False
+        if (dataset_type == "render" and not self.use_render) or (
+            dataset_type == "nerf_out" and not self.use_nerf_out
+        ):
+            return None, None
 
-        elif dataset_type == "render":
-            if not self.use_render:
-                return None, None
+        data_specs = {
+            "rgb": RgbDataSpec(camera=camera),
+            "input_ids": PromptDataSpec(),
+        }
 
-            split = "test"
-            shuffle = shuffle or False
+        if dataset_type == "nerf_out":
+            data_specs["rgb_gt"] = RgbDataSpec(camera=camera)
+            data_specs["rgb_nerf"] = NerfOutputSpec(camera=camera)
+        else:
+            data_specs["rgb"] = RgbDataSpec(camera=camera)
 
-        elif dataset_type == "nerf_out":
-            if not self.use_nerf_out:
-                return None, None
-
-            split = "test"
-            shuffle = shuffle or False
-
-            camera = self.ref_camera
+        if "ray" in self.conditioning:
+            data_specs["ray"] = RayDataSpec(camera=camera)
 
         samples = list(
             iter_numeric_names(self.sample_start, self.sample_end, self.sample_step)
         )
 
-        signals = {}
-        if "ray" in self.conditioning:
-            signals["ray"] = RayDataSpec(camera=self.camera)
-
         dataset_config = DatasetConfig(
             data_specs=cast(
                 Dict[str, DataSpecT],
-                {
-                    "rgb": RgbDataSpec(camera=camera),
-                    "input_ids": PromptDataSpec(),
-                    **signals,
-                },
+                data_specs,
             ),
             sample_config=SampleConfig(random_crop=self.random_crop),
             data_tree=DatasetTree.single_split_single_scene(
@@ -406,59 +396,16 @@ class TrainConfig(BaseSettings):
         metrics=("lpips", "ssim", "psnr", "mse"),
     )
 
-    dataset_configs: TrainingDatasetConfigT = FullTrainingDatasetConfig(
-        type="full",
-        train_dataset=DatasetConfig(
-            data_specs={
-                "rgb": RgbDataSpec(),
-                "input_ids": PromptDataSpec(),
-                "ray": RayDataSpec(),
-            },
-            sample_config=SampleConfig(
-                random_crop=False,
-            ),
-            data_tree=DatasetTree.single_split_single_scene(
-                "pandaset", "train", "001", ["01"]
-            ),
-        ),
-        val_dataset=DatasetConfig(
-            data_specs={
-                "rgb": RgbDataSpec(),
-                "input_ids": PromptDataSpec(),
-                "ray": RayDataSpec(),
-            },
-            sample_config=SampleConfig(),
-            data_tree=DatasetTree.single_split_single_scene(
-                "pandaset", "test", "001", ["01"]
-            ),
-        ),
-        render_dataset=DatasetConfig(
-            data_specs={
-                "rgb": RgbDataSpec(),
-                "input_ids": PromptDataSpec(),
-                "ray": RayDataSpec(),
-            },
-            sample_config=SampleConfig(),
-            data_tree=DatasetTree.single_split_single_scene(
-                "pandaset", "test", "001", ["01"]
-            ),
-        ),
-        nerf_out_dataset=DatasetConfig(
-            data_specs={
-                "rgb_nerf": NerfOutputSpec(
-                    camera="front_left_camera",
-                    nerf_output_path="data/nerf_outputs",
-                    data_name="rgb",
-                ),
-                "rgb_gt": RgbDataSpec(camera="front_left_camera", shift="0m"),
-                "ray": RayDataSpec(camera="front_left_camera", shift="0m"),
-                "input_ids": PromptDataSpec(),
-            },
-            sample_config=SampleConfig(),
-            data_tree=DatasetTree.single_split_single_scene(
-                "pandaset", "test", "001", ["01"]
-            ),
-        ),
+    dataset_configs: TrainingDatasetConfigT = SingleSceneTrainingDatasetConfig(
+        camera="front_camera",
+        ref_camera="front_left_camera",
+        conditioning=("ray",),
+        random_crop=False,
+        dataset="pandaset",
+        scene="001",
+        sample_start="00",
+        sample_end="00",
+        sample_step=1,
     )
 
     @classmethod
@@ -716,7 +663,7 @@ def save_checkpoint(
         if len(cp_paths) >= train_config.max_num_checkpoints:
             # Remove one more to make space for the new one
             num_to_remove = len(cp_paths) - train_config.max_num_checkpoints + 1
-            cps_to_remove = cp_paths[num_to_remove:]
+            cps_to_remove = cp_paths[:num_to_remove]
 
             logger.info(
                 f"{len(cp_paths)} checkpoints already exist, removing {len(cps_to_remove)} checkpoints"

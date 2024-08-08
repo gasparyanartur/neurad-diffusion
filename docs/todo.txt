@@ -35,9 +35,10 @@ Start ControlNet
 
 
 Merge with NeuRAD
-- Refactor dataset configs to factory type
+- Refactor dataset configs to factory type [x]
+- Bugfix new dataset configs [x]
 - Train small sd model [ ]
-- Update neurad configs
+- Update neurad configs 
 - Add new pipeline to training
 - Test new pipeline
 - Train small cn model

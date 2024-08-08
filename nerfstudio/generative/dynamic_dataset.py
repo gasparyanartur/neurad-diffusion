@@ -207,12 +207,16 @@ def load_img_if_path(img: Union[str, Path, Tensor]) -> Tensor:
 
 
 def iter_numeric_names(
-    start_name: Union[str, int], end_name: Union[str, int], fixed_len: int = 2
+    start_name: Union[str, int],
+    end_name: Union[str, int],
+    skip: int = 1,
+    fixed_len: int = 2,
+    inclusive_end: bool = True,
 ):
     start_name = int(start_name)
     end_name = int(end_name)
 
-    for i in range(start_name, end_name + 1):
+    for i in range(start_name, end_name + int(inclusive_end), skip):
         num = str(i)
         if fixed_len:
             num = num.rjust(fixed_len, "0")
@@ -408,8 +412,7 @@ def load_cameras(
     return cameras
 
 
-@dataclass
-class SampleInfo:
+class SampleInfo(BaseModel):
     dataset: str
     scene: str
     sample: str
@@ -573,7 +576,6 @@ class RayDataSpec(CameraDataSpec):
 
 
 UnionDataSpecTypes = Union[
-    DataSpec,
     CameraDataSpec,
     CaptureDataSpec,
     LidarDataSpec,
@@ -661,10 +663,10 @@ class InfoGetter(ABC):
                 elif isinstance(sample_tree, DatasetTreeSceneList):
                     sample_infos = [
                         SampleInfo(
-                            self.data_tree.dataset_name,
-                            scene_name,
-                            sample.sample_name,
-                            split_name,
+                            dataset=self.data_tree.dataset_name,
+                            scene=scene_name,
+                            sample=sample.sample_name,
+                            split=split_name,
                         )
                         for sample in sample_tree.samples
                     ]
@@ -950,6 +952,29 @@ class NerfOutputDataGetter(DataGetter):
 
         self.transform = tvtf.Compose(tf_layers)
 
+    def get_data_path(self, info: SampleInfo) -> Path:
+        # Override split for specific samples, Note, this is very specific to NeuRAD on Pandaset
+
+        split = info.split
+
+        # For NeuRAD, the split is based on the sample number, even samples are train, odd samples are test
+        if info.dataset == "pandaset":
+            sample_idx = int(info.sample)
+
+            # For some reason, the split of samples 78 and 79 are swapped
+            if sample_idx == 79:
+                split = "train"
+
+            elif sample_idx == 78:
+                split = "test"
+
+            else:
+                split = "train" if sample_idx % 2 == 0 else "test"
+
+        new_info = info.model_copy(update={"split": split})
+
+        return super().get_data_path(new_info)
+
     def get_data(self, args: SampleArgument) -> Tensor:
         path = self.get_data_path(args.sample_info)
         data = read_image(path, self.transform)
@@ -1075,13 +1100,13 @@ class SampleConfig(BaseModel):
     img_width: int = 1920
 
 
-class DatasetConfig(BaseModel, ABC):
+class DatasetConfig(BaseModel):
     dataset_name: DatasetNameString = "pandaset"
     dataset_path: Path = Path("data/pandaset")
     data_specs: Dict[str, DataSpecT] = Field(
         {
-            "rgb": RgbDataSpec(name="rgb", camera="front_camera", shift="0m"),
-            "input_ids": PromptDataSpec(name="input_ids", prompt=""),
+            "rgb": RgbDataSpec(),
+            "input_ids": PromptDataSpec(),
         },
     )
     data_tree: DatasetTree
