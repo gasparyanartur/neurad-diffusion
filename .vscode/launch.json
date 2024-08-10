@@ -308,6 +308,9 @@
       },
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
+      "args": [
+        "--diffusion_config.lora_base_ranks", "{\"controlnet\": 8, \"unet\": 8}"
+      ]
     },
     {
       "name": "Python: train cn pandaset",

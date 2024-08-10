@@ -20,7 +20,7 @@ if [ -z ${wandb_api_key} ]; then
 fi
 
 image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-24_05_24.sif"}
-config_path=${CONFIG_PATH:-"configs/hal-configs/train_model.yml"}
+lora_train_config=${LORA_TRAIN_CONFIG:-"configs/hal-configs/train_model.yml"}
 
 #singularity exec --env PYTHONPATH=$workdir --env WANDB_API_KEY=$wandb_api_key --bind /staging:/staging -H $workdir --nv $image_path accelerate launch --num_processes=$num_processes --num_machines=$num_machines --dynamo_backend=$dynamo_backend --mixed_precision=$mixed_precision --main_process_port=$main_process_port scripts/run_train_lora.py $config_path
 singularity exec --nv \
@@ -30,6 +30,7 @@ singularity exec --nv \
     --bind /datasets:/datasets \
     --env PYTHONPATH=/nerfstudio \
     --env WANDB_API_KEY=$wandb_api_key \
+    --env LORA_TRAIN_CONFIG=$lora_train_config \
     --home /nerfstudio \
     $image_path \
     accelerate launch \
@@ -39,5 +40,4 @@ singularity exec --nv \
         --mixed_precision=$mixed_precision \
         --main_process_port=$main_process_port \
     nerfstudio/scripts/run_train_lora.py \
-        $config_path \
         ${@:1} 

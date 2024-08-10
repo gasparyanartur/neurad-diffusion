@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
 from enum import Enum
@@ -341,12 +343,7 @@ def generate_noise_pattern(
     return pattern.to(device=original_device)
 
 
-@dataclass
-class DiffusionModelConfig(InstantiateConfig):
-    _target: "DiffusionModel" = Field(
-        default_factory=lambda: DiffusionModel.from_config, validate_default=False
-    )
-
+class DiffusionModelConfig(BaseModel):
     type: str = DiffusionModelType.sd
     id: str = DiffusionModelId.sd_v2_1
     variant: Optional[str] = None
@@ -383,11 +380,11 @@ class DiffusionModelConfig(InstantiateConfig):
     losses: Tuple[str, ...] = ("mse",)
 
     lora_base_ranks: Dict[str, int] = Field(
-        default_factory=lambda: {"unet": 4, "controlnet": 4, "text_encoder": 4}
+        default={"unet": 4, "controlnet": 4, "text_encoder": 4}
     )
 
     lora_rank_mults: Dict[str, Any] = Field(
-        default_factory=lambda: {
+        default={
             "unet": {
                 "downblocks": {"attn": 1, "resnet": 0},
                 "midblocks": {"attn": 1, "resnet": 0},
@@ -402,8 +399,8 @@ class DiffusionModelConfig(InstantiateConfig):
         }
     )
 
-    lora_modules_to_save: Dict[str, List[str]] = field(
-        default_factory=lambda: {
+    lora_modules_to_save: Dict[str, List[str]] = Field(
+        default={
             "unet": [],
             "controlnet": [
                 "controlnet_cond_embedding",
@@ -418,12 +415,15 @@ class DiffusionModelConfig(InstantiateConfig):
     lora_model_prefix: str = "lora_"
 
     conditioning_signals: Dict[str, ConditioningSignalInfo] = Field(
-        default_factory=dict
+        default={"ray": ConditioningSignalInfo(signal_name="ray", num_channels=6)}
     )
 
     do_classifier_free_guidance: bool = True
     guidance_scale: float = 0
     conditioning_scale: float = 0.8
+
+    def setup(self, **kwargs) -> DiffusionModel:
+        return DiffusionModel.from_config(self, **kwargs)
 
 
 class DiffusionModel(ABC):
