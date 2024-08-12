@@ -311,7 +311,7 @@ class TrainConfig(BaseSettings):
     logging_dir: Path = Field(default=Path("logs", "train-lora"))
 
     job_id: str = Field(default="0", alias="slurm_job_id")
-    project_name: str = "ImagineDriving"
+    project_name: str = "nerf-diffusion"
 
     checkpoint_path: Optional[str] = None
 
@@ -359,7 +359,7 @@ class TrainConfig(BaseSettings):
     lr_scheduler_kwargs: Dict[str, Any] = {}
 
     loggers: List[str] = ["wandb"]
-    wandb_project: str = "ImagineDriving"
+    wandb_project: str = "nerf-diffusion"
     wandb_entity: str = "arturruiqi"
     wandb_group: str = "finetune-lora"
 

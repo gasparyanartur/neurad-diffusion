@@ -49,9 +49,7 @@ from nerfstudio.utils import profiler
 from nerfstudio.generative.diffusion_model import (
     DiffusionModel,
     DiffusionModelConfig,
-    HFStableDiffusionModel,
 )
-from nerfstudio.generative.dynamic_dataset import ConditioningSignalInfo, read_yaml
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.model_components.losses import (
@@ -60,10 +58,10 @@ from nerfstudio.model_components.losses import (
 
 
 @dataclass
-class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
+class DiffusionNerfConfig(VanillaPipelineConfig):
     """Configuration for pipeline instantiation"""
 
-    _target: Type = field(default_factory=lambda: ImagineDrivingPipeline)
+    _target: Type = field(default_factory=lambda: DiffusionNerfPipeline)
     """target class to instantiate"""
     datamanager: ADDataManagerConfig = field(default_factory=ADDataManagerConfig)
     """specifies the datamanager config"""
@@ -128,10 +126,10 @@ class ImagineDrivingPipelineConfig(VanillaPipelineConfig):
         self.datamanager.image_divisible_by = self.model.rgb_upsample_factor
 
 
-class ImagineDrivingPipeline(VanillaPipeline):
+class DiffusionNerfPipeline(VanillaPipeline):
     """Pipeline for training AD models."""
 
-    def __init__(self, config: ImagineDrivingPipelineConfig, **kwargs):
+    def __init__(self, config: DiffusionNerfConfig, **kwargs):
         pixel_sampler = config.datamanager.pixel_sampler
         pixel_sampler.patch_size = config.ray_patch_size[0]
         pixel_sampler.patch_scale = config.model.rgb_upsample_factor
@@ -140,7 +138,7 @@ class ImagineDrivingPipeline(VanillaPipeline):
         # Fix type hints
         self.datamanager: ADDataManager = self.datamanager
         self.model: ADModel = self.model
-        self.config: ImagineDrivingPipelineConfig = self.config
+        self.config: DiffusionNerfConfig = self.config
         self.diffusion_model: DiffusionModel = self.config.diffusion_model.setup(
             device=self.device,
         )

@@ -58,7 +58,7 @@ from nerfstudio.models.neurad import NeuRADModelConfig
 from nerfstudio.models.splatfacto import SplatfactoModelConfig
 from nerfstudio.pipelines.ad_pipeline import ADPipelineConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
-from nerfstudio.pipelines.imaginedriving_pipeline import ImagineDrivingPipelineConfig
+from nerfstudio.pipelines.diffusion_nerf_pipeline import DiffusionNerfConfig
 from nerfstudio.plugins.registry import discover_methods
 
 method_configs: Dict[str, Union[TrainerConfig, ExternalMethodDummyTrainerConfig]] = {}
@@ -418,7 +418,7 @@ method_configs["neurad"] = TrainerConfig(
 )
 
 
-# ImagineDriving, NeuRAD + Stable Diffusion
+# Diffusion Nerf, NeuRAD + Stable Diffusion
 method_configs["imaginedriving"] = TrainerConfig(
     method_name="imaginedriving",
     steps_per_eval_batch=500,
@@ -426,7 +426,7 @@ method_configs["imaginedriving"] = TrainerConfig(
     steps_per_save=2000,
     max_num_iterations=20001,
     mixed_precision=True,
-    pipeline=ImagineDrivingPipelineConfig(
+    pipeline=DiffusionNerfConfig(
         max_steps=20001,
         calc_fid_steps=tuple(range(0, 20001, 5000)),
         ray_patch_size=(128, 128),
