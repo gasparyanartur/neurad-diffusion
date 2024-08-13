@@ -37,6 +37,9 @@ Start ControlNet
 Merge with NeuRAD
 - Refactor dataset configs to factory type [x]
 - Bugfix new dataset configs [x]
+- Make new argparser for neurad training []
+- Update NeuRAD code with new pipeline 
+- Build new Singularity image
 - Update launch scripts for diffusion training [ ]
 - Train small sd model on one scene
 - Update neurad configs 

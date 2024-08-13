@@ -39,18 +39,28 @@ from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.configs.experiment_config import ExperimentConfig
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
-from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
+from nerfstudio.engine.callbacks import (
+    TrainingCallback,
+    TrainingCallbackAttributes,
+    TrainingCallbackLocation,
+)
 from nerfstudio.engine.optimizers import Optimizers
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline
 from nerfstudio.utils import profiler, writer
-from nerfstudio.utils.decorators import check_eval_enabled, check_main_thread, check_viewer_enabled
+from nerfstudio.utils.decorators import (
+    check_eval_enabled,
+    check_main_thread,
+    check_viewer_enabled,
+)
 from nerfstudio.utils.misc import step_check
 from nerfstudio.utils.rich_utils import CONSOLE
 from nerfstudio.utils.writer import EventName, TimeWriter
 from nerfstudio.viewer.viewer import Viewer as ViewerState
 from nerfstudio.viewer_legacy.server.viewer_state import ViewerLegacyState
 
-TRAIN_INTERATION_OUTPUT = Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]
+TRAIN_INTERATION_OUTPUT = Tuple[
+    torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]
+]
 TORCH_DEVICE = str
 
 
@@ -79,14 +89,23 @@ class MetricTracker:
         if (self.latest is None) or (self.best is None):
             return fallback  # we can't tell
         # apply margin to the best value (to be robust to noise in the metric)
-        best = self.best * (1 + (-self.config.margin if self.config.higher_is_better else self.config.margin))
+        best = self.best * (
+            1
+            + (
+                -self.config.margin
+                if self.config.higher_is_better
+                else self.config.margin
+            )
+        )
         return not self._is_new_better(best, self.latest)
 
     def reset_latest(self) -> None:
         self.latest = None
 
     def update(self, metrics: Dict[str, float]) -> None:
-        self.latest = metrics.get(self.config.metric, None) if self.config.metric else None
+        self.latest = (
+            metrics.get(self.config.metric, None) if self.config.metric else None
+        )
         if isinstance(self.latest, torch.Tensor):
             self.latest = self.latest.item()
         if self.latest is None:
@@ -123,9 +142,13 @@ class TrainerConfig(ExperimentConfig):
     """Use gradient scaler even if the automatic mixed precision is disabled."""
     save_only_latest_checkpoint: bool = True
     """Whether to only save the latest checkpoint or all checkpoints."""
-    checkpoint_saving_tracker: MetricTrackerConfig = field(default_factory=lambda: MetricTrackerConfig(margin=0.05))
+    checkpoint_saving_tracker: MetricTrackerConfig = field(
+        default_factory=lambda: MetricTrackerConfig(margin=0.05)
+    )
     """Configuration for the metric tracker."""
-    early_stopping_tracker: MetricTrackerConfig = field(default_factory=lambda: MetricTrackerConfig(margin=0.1))
+    early_stopping_tracker: MetricTrackerConfig = field(
+        default_factory=lambda: MetricTrackerConfig(margin=0.1)
+    )
     """Configuration for the metric tracker."""
     # optional parameters if we want to resume training
     load_dir: Optional[Path] = None
@@ -167,7 +190,9 @@ class Trainer:
     optimizers: Optimizers
     callbacks: List[TrainingCallback]
 
-    def __init__(self, config: TrainerConfig, local_rank: int = 0, world_size: int = 1) -> None:
+    def __init__(
+        self, config: TrainerConfig, local_rank: int = 0, world_size: int = 1
+    ) -> None:
         self.train_lock = Lock()
         self.config = config
         self.local_rank = local_rank
@@ -252,7 +277,10 @@ class Trainer:
 
         self.callbacks = self.pipeline.get_training_callbacks(
             TrainingCallbackAttributes(
-                optimizers=self.optimizers, grad_scaler=self.grad_scaler, pipeline=self.pipeline, trainer=self
+                optimizers=self.optimizers,
+                grad_scaler=self.grad_scaler,
+                pipeline=self.pipeline,
+                trainer=self,
             )
         )
 
@@ -267,9 +295,13 @@ class Trainer:
             project_name=self.config.project_name,
         )
         writer.setup_local_writer(
-            self.config.logging, max_iter=self.config.max_num_iterations, banner_messages=banner_messages
+            self.config.logging,
+            max_iter=self.config.max_num_iterations,
+            banner_messages=banner_messages,
         )
-        writer.put_config(name="config", config_dict=dataclasses.asdict(self.config), step=0)
+        writer.put_config(
+            name="config", config_dict=dataclasses.asdict(self.config), step=0
+        )
         profiler.setup_profiler(self.config.logging, writer_log_path)
 
     def setup_optimizers(self) -> Optimizers:
@@ -284,10 +316,14 @@ class Trainer:
 
     def train(self) -> None:
         """Train the model."""
-        assert self.pipeline.datamanager.train_dataset is not None, "Missing DatsetInputs"
+        assert (
+            self.pipeline.datamanager.train_dataset is not None
+        ), "Missing DatsetInputs"
 
         # don't want to call save_dataparser_transform if pipeline's datamanager does not have a dataparser
-        if isinstance(self.pipeline.datamanager, (VanillaDataManager, ParallelDataManager)):
+        if isinstance(
+            self.pipeline.datamanager, (VanillaDataManager, ParallelDataManager)
+        ):
             self.pipeline.datamanager.train_dataparser_outputs.save_dataparser_transform(
                 self.base_dir / "dataparser_transforms.json"
             )
@@ -300,13 +336,16 @@ class Trainer:
                 while self.training_state == "paused":
                     time.sleep(0.01)
                 with self.train_lock:
-                    with TimeWriter(writer, EventName.ITER_TRAIN_TIME, step=step) as train_t:
+                    with TimeWriter(
+                        writer, EventName.ITER_TRAIN_TIME, step=step
+                    ) as train_t:
                         self.pipeline.train()
 
                         # training callbacks before the training iteration
                         for callback in self.callbacks:
                             callback.run_callback_at_location(
-                                step, location=TrainingCallbackLocation.BEFORE_TRAIN_ITERATION
+                                step,
+                                location=TrainingCallbackLocation.BEFORE_TRAIN_ITERATION,
                             )
 
                         # time the forward pass
@@ -315,7 +354,8 @@ class Trainer:
                         # training callbacks after the training iteration
                         for callback in self.callbacks:
                             callback.run_callback_at_location(
-                                step, location=TrainingCallbackLocation.AFTER_TRAIN_ITERATION
+                                step,
+                                location=TrainingCallbackLocation.AFTER_TRAIN_ITERATION,
                             )
 
                 # Skip the first two steps to avoid skewed timings that break the viewer rendering speed estimate.
@@ -332,17 +372,25 @@ class Trainer:
                 self._update_viewer_state(step)
 
                 # a batch of train rays
-                if step_check(step, self.config.logging.steps_per_log, run_at_zero=True):
+                if step_check(
+                    step, self.config.logging.steps_per_log, run_at_zero=True
+                ):
                     writer.put_scalar(name="Train Loss", scalar=loss, step=step)
-                    writer.put_dict(name="Train Loss Dict", scalar_dict=loss_dict, step=step)
-                    writer.put_dict(name="Train Metrics Dict", scalar_dict=metrics_dict, step=step)
+                    writer.put_dict(
+                        name="Train Loss Dict", scalar_dict=loss_dict, step=step
+                    )
+                    writer.put_dict(
+                        name="Train Metrics Dict", scalar_dict=metrics_dict, step=step
+                    )
                     # The actual memory allocated by Pytorch. This is likely less than the amount
                     # shown in nvidia-smi since some unused memory can be held by the caching
                     # allocator and some context needs to be created on GPU. See Memory management
                     # (https://pytorch.org/docs/stable/notes/cuda.html#cuda-memory-management)
                     # for more details about GPU memory management.
                     writer.put_scalar(
-                        name="GPU Memory (MB)", scalar=torch.cuda.max_memory_allocated() / (1024**2), step=step
+                        name="GPU Memory (MB)",
+                        scalar=torch.cuda.max_memory_allocated() / (1024**2),
+                        step=step,
                     )
 
                 # Do not perform evaluation if there are no validation images
@@ -373,11 +421,19 @@ class Trainer:
         )
         table.add_row("Config File", str(self.config.get_base_dir() / "config.yml"))
         table.add_row("Checkpoint Directory", str(self.checkpoint_dir))
-        CONSOLE.print(Panel(table, title="[bold][green]:tada: Training Finished :tada:[/bold]", expand=False))
+        CONSOLE.print(
+            Panel(
+                table,
+                title="[bold][green]:tada: Training Finished :tada:[/bold]",
+                expand=False,
+            )
+        )
 
         # after train end callbacks
         for callback in self.callbacks:
-            callback.run_callback_at_location(step=step, location=TrainingCallbackLocation.AFTER_TRAIN)
+            callback.run_callback_at_location(
+                step=step, location=TrainingCallbackLocation.AFTER_TRAIN
+            )
 
         if not self.config.viewer.quit_on_train_completion:
             self._train_complete_viewer()
@@ -438,7 +494,9 @@ class Trainer:
             time.sleep(0.01)
 
     @check_viewer_enabled
-    def _update_viewer_rays_per_sec(self, train_t: TimeWriter, vis_t: TimeWriter, step: int) -> None:
+    def _update_viewer_rays_per_sec(
+        self, train_t: TimeWriter, vis_t: TimeWriter, step: int
+    ) -> None:
         """Performs update on rays/sec calculation for training
 
         Args:
@@ -446,10 +504,14 @@ class Trainer:
             vis_t: timer object carrying time to execute visualization step
             step: current step
         """
-        train_num_rays_per_batch: int = self.pipeline.datamanager.get_train_rays_per_batch()
+        train_num_rays_per_batch: int = (
+            self.pipeline.datamanager.get_train_rays_per_batch()
+        )
         writer.put_time(
             name=EventName.TRAIN_RAYS_PER_SEC,
-            duration=self.world_size * train_num_rays_per_batch / (train_t.duration - vis_t.duration),
+            duration=self.world_size
+            * train_num_rays_per_batch
+            / (train_t.duration - vis_t.duration),
             step=step,
             avg_over_steps=True,
         )
@@ -463,12 +525,16 @@ class Trainer:
             if load_step is None:
                 print("Loading latest Nerfstudio checkpoint from load_dir...")
                 # NOTE: this is specific to the checkpoint name format
-                load_step = sorted(int(x[x.find("-") + 1 : x.find(".")]) for x in os.listdir(load_dir))[-1]
+                load_step = sorted(
+                    int(x[x.find("-") + 1 : x.find(".")]) for x in os.listdir(load_dir)
+                )[-1]
             load_path: Path = load_dir / f"step-{load_step:09d}.ckpt"
             assert load_path.exists(), f"Checkpoint {load_path} does not exist"
             loaded_state = torch.load(load_path, map_location="cpu")
             loaded_state["step"] = (
-                self.config.training_start_step if self.config.training_start_step is not None else loaded_state["step"]
+                self.config.training_start_step
+                if self.config.training_start_step is not None
+                else loaded_state["step"]
             )
             self._start_step = loaded_state["step"] + 1
             # load the checkpoints for pipeline, optimizers, and gradient scalar
@@ -480,10 +546,14 @@ class Trainer:
             self.grad_scaler.load_state_dict(loaded_state["scalers"])
             CONSOLE.print(f"Done loading Nerfstudio checkpoint from {load_path}")
         elif load_checkpoint is not None:
-            assert load_checkpoint.exists(), f"Checkpoint {load_checkpoint} does not exist"
+            assert (
+                load_checkpoint.exists()
+            ), f"Checkpoint {load_checkpoint} does not exist"
             loaded_state = torch.load(load_checkpoint, map_location="cpu")
             loaded_state["step"] = (
-                self.config.training_start_step if self.config.training_start_step is not None else loaded_state["step"]
+                self.config.training_start_step
+                if self.config.training_start_step is not None
+                else loaded_state["step"]
             )
             self._start_step = loaded_state["step"] + 1
             # load the checkpoints for pipeline, optimizers, and gradient scalar
@@ -520,8 +590,12 @@ class Trainer:
                     if hasattr(self.pipeline, "module")
                     else self.pipeline.state_dict()
                 ),
-                "optimizers": {k: v.state_dict() for (k, v) in self.optimizers.optimizers.items()},
-                "schedulers": {k: v.state_dict() for (k, v) in self.optimizers.schedulers.items()},
+                "optimizers": {
+                    k: v.state_dict() for (k, v) in self.optimizers.optimizers.items()
+                },
+                "schedulers": {
+                    k: v.state_dict() for (k, v) in self.optimizers.schedulers.items()
+                },
                 "scalers": self.grad_scaler.state_dict(),
             },
             ckpt_path,
@@ -542,7 +616,9 @@ class Trainer:
         """
 
         needs_zero = [
-            group for group in self.optimizers.parameters.keys() if step % self.gradient_accumulation_steps[group] == 0
+            group
+            for group in self.optimizers.parameters.keys()
+            if step % self.gradient_accumulation_steps[group] == 0
         ]
         self.optimizers.zero_grad_some(needs_zero)
         cpu_or_cuda_str: str = self.device.split(":")[0]
@@ -555,7 +631,8 @@ class Trainer:
         needs_step = [
             group
             for group in self.optimizers.parameters.keys()
-            if step % self.gradient_accumulation_steps[group] == self.gradient_accumulation_steps[group] - 1
+            if step % self.gradient_accumulation_steps[group]
+            == self.gradient_accumulation_steps[group] - 1
         ]
         self.optimizers.optimizer_scaler_step_some(self.grad_scaler, needs_step)
 
@@ -590,25 +667,37 @@ class Trainer:
         """
         # a batch of eval rays
         if step_check(step, self.config.steps_per_eval_batch):
-            _, eval_loss_dict, eval_metrics_dict = self.pipeline.get_eval_loss_dict(step=step)
+            _, eval_loss_dict, eval_metrics_dict = self.pipeline.get_eval_loss_dict(
+                step=step
+            )
             eval_loss_dict = detach_items_if_tensor(eval_loss_dict)
             eval_metrics_dict = detach_items_if_tensor(eval_metrics_dict)
             eval_loss = functools.reduce(torch.add, eval_loss_dict.values())
             writer.put_scalar(name="Eval Loss", scalar=eval_loss, step=step)
-            writer.put_dict(name="Eval Loss Dict", scalar_dict=eval_loss_dict, step=step)
-            writer.put_dict(name="Eval Metrics Dict", scalar_dict=eval_metrics_dict, step=step)
+            writer.put_dict(
+                name="Eval Loss Dict", scalar_dict=eval_loss_dict, step=step
+            )
+            writer.put_dict(
+                name="Eval Metrics Dict", scalar_dict=eval_metrics_dict, step=step
+            )
 
         # one eval image
         if step_check(step, self.config.steps_per_eval_image):
             with TimeWriter(writer, EventName.TEST_RAYS_PER_SEC, write=False) as test_t:
-                metrics_dict, images_dict = self.pipeline.get_eval_image_metrics_and_images(step=step)
+                metrics_dict, images_dict = (
+                    self.pipeline.get_eval_image_metrics_and_images(step=step)
+                )
             writer.put_time(
                 name=EventName.TEST_RAYS_PER_SEC,
                 duration=metrics_dict["num_rays"] / test_t.duration,
                 step=step,
                 avg_over_steps=True,
             )
-            writer.put_dict(name="Eval Images Metrics", scalar_dict=detach_items_if_tensor(metrics_dict), step=step)
+            writer.put_dict(
+                name="Eval Images Metrics",
+                scalar_dict=detach_items_if_tensor(metrics_dict),
+                step=step,
+            )
             group = "Eval Images"
             for image_name, image in images_dict.items():
                 writer.put_image(name=group + "/" + image_name, image=image, step=step)
@@ -627,4 +716,6 @@ class Trainer:
 
 def detach_items_if_tensor(dict):
     """Detach items in dictionary if they are tensors"""
-    return {k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in dict.items()}
+    return {
+        k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in dict.items()
+    }

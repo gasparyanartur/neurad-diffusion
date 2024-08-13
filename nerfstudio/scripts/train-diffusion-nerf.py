@@ -46,6 +46,9 @@ subcommand:
 
 from __future__ import annotations
 
+
+import os
+from pathlib import Path
 import random
 import socket
 import traceback
@@ -53,6 +56,20 @@ from datetime import timedelta
 from typing import Any, Callable, Literal, Optional
 
 import torch.multiprocessing as mp
+
+from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
+from nerfstudio.configs.base_config import LoggingConfig, ViewerConfig
+from nerfstudio.data.datamanagers.ad_datamanager import ADDataManagerConfig
+from nerfstudio.data.dataparsers.pandaset_dataparser import PandaSetDataParserConfig
+from nerfstudio.engine.optimizers import AdamOptimizerConfig, AdamWOptimizerConfig
+from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
+from nerfstudio.generative.diffusion_model import (
+    DiffusionModelConfig,
+    DiffusionModelId,
+    DiffusionModelType,
+)
+from nerfstudio.models.neurad import NeuRADModelConfig
+from nerfstudio.pipelines.diffusion_nerf_pipeline import DiffusionNerfConfig
 
 try:
     mp.set_start_method("spawn")
@@ -69,7 +86,7 @@ from nerfstudio.configs.config_utils import convert_markup_to_ansi
 from nerfstudio.configs.method_configs import (
     AnnotatedBaseConfigUnion,
 )
-from nerfstudio.engine.trainer import TrainerConfig
+from nerfstudio.engine.trainer import Trainer, TrainerConfig
 from nerfstudio.utils import comms, profiler
 from nerfstudio.utils.rich_utils import CONSOLE
 
@@ -287,13 +304,106 @@ def main(config: TrainerConfig) -> None:
 def entrypoint():
     """Entrypoint for use with pyproject scripts."""
     # Choose a base configuration and override values.
-    tyro.extras.set_accent_color("bright_yellow")
-    main(
-        tyro.cli(
-            AnnotatedBaseConfigUnion,
-            description=convert_markup_to_ansi(__doc__),
-        )
+
+    # For some reason, Tyro doesn't work, so we'll just use custom ArgumentParser
+    from argparse import ArgumentParser
+
+    parser = ArgumentParser()
+    parser.add_argument(
+        "--vis",
+        type=str,
+        choices=["wandb", "tensorboard", "viewer", "none"],
+        default="tensorboard",
     )
+    parser.add_argument("--num_patches_per_batch", type=int, default=1)
+    parser.add_argument("--patch_size", type=int, default=128)
+    parser.add_argument("--max_steps", type=int, default=20001)
+    parser.add_argument("--rgb_upsample_factor", type=int, default=4)
+    parser.add_argument("--fid_calc_interval", type=int, default=5000)
+
+    args = parser.parse_args()
+
+    vis = args.vis
+    patch_size = args.patch_size
+    num_rays_per_batch = args.num_patches_per_batch * patch_size**2
+    max_steps = args.max_steps
+    fid_calc_interval = args.fid_calc_interval
+
+    # TODO: Add more arguments to the parser to customize the training process
+    config = TrainerConfig(
+        _target=Trainer,
+        method_name="diffusion-nerf",
+        steps_per_eval_batch=500,
+        steps_per_eval_all_images=5000,
+        steps_per_save=2000,
+        max_num_iterations=20001,
+        mixed_precision=True,
+        pipeline=DiffusionNerfConfig(
+            max_steps=max_steps,
+            calc_fid_steps=tuple(range(0, max_steps, fid_calc_interval)),
+            ray_patch_size=(patch_size, patch_size),
+            datamanager=ADDataManagerConfig(
+                dataparser=PandaSetDataParserConfig(add_missing_points=True),
+                train_num_rays_per_batch=num_rays_per_batch,
+                eval_num_rays_per_batch=num_rays_per_batch,
+            ),
+            model=NeuRADModelConfig(
+                eval_num_rays_per_chunk=1 << 15,
+                camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
+                rgb_upsample_factor=4,
+            ),
+            diffusion_model=DiffusionModelConfig(
+                type=DiffusionModelType.sd,
+                id=DiffusionModelId.sd_v2_1,
+                lora_weights=None,
+                noise_strength=0.1,
+                num_inference_steps=50,
+            ),
+            augment_phase_step=1000,
+            augment_strategy="partial_linear",
+        ),
+        optimizers={
+            "trajectory_opt": {
+                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
+                "scheduler": ExponentialDecaySchedulerConfig(
+                    lr_final=1e-4, max_steps=20001, warmup_steps=2500
+                ),
+            },
+            "cnn": {
+                "optimizer": AdamWOptimizerConfig(
+                    lr=1e-3, eps=1e-15, weight_decay=1e-6
+                ),
+                "scheduler": ExponentialDecaySchedulerConfig(
+                    lr_final=1e-4, max_steps=20001, warmup_steps=2500
+                ),
+            },
+            "fields": {
+                "optimizer": AdamWOptimizerConfig(
+                    lr=1e-2, eps=1e-15, weight_decay=1e-7
+                ),
+                "scheduler": ExponentialDecaySchedulerConfig(
+                    lr_final=1e-3, max_steps=20001, warmup_steps=500
+                ),
+            },
+            "hashgrids": {
+                "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
+                "scheduler": ExponentialDecaySchedulerConfig(
+                    lr_final=1e-3, max_steps=20001, warmup_steps=500
+                ),
+            },
+            "camera_opt": {
+                "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
+                "scheduler": ExponentialDecaySchedulerConfig(
+                    lr_final=1e-5, max_steps=20001, warmup_steps=2500
+                ),
+            },
+        },
+        viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+        vis=vis,
+        logging=LoggingConfig(steps_per_log=100),
+    )
+
+    main(config)
 
 
 if __name__ == "__main__":

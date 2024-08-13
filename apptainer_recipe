@@ -61,8 +61,8 @@ cd /nerfstudio && python3.10 -m pip install --no-cache-dir -e .[dev,gen,docs]
 mkdir -p /workspace
 cd /workspace
 
-# Install nerfstudio cli auto completion
-ns-install-cli --mode install
+## Install nerfstudio cli auto completion
+#ns-install-cli --mode install
 
 # Bash as default entrypoint.
 %environment

@@ -105,14 +105,14 @@
       ]
     },
     {
-      "name": "Python: ImagineDriving",
+      "name": "Python: diffusion-nerf",
       "type": "python",
       "request": "launch",
-      "program": "nerfstudio/scripts/train.py",
+      "program": "nerfstudio/scripts/train-diffusion-nerf.py",
       "console": "integratedTerminal",
-      "justMyCode": true,
+      "justMyCode": false,
       "args": [
-        "imaginedriving",
+        "diffusion-nerf",
         "--vis=tensorboard",
         "--pipeline.diffusion-config-path=configs/diffusion_model_configs.yml",
         "--pipeline.model.eval_num_rays_per_chunk=2048",
@@ -129,14 +129,14 @@
       ]
     },
     {
-      "name": "Python: ImagineDriving tiny",
+      "name": "Python: diffusion-nerf tiny",
       "type": "python",
       "request": "launch",
-      "program": "nerfstudio/scripts/train.py",
+      "program": "nerfstudio/scripts/train-diffusion-nerf.py",
       "console": "integratedTerminal",
-      "justMyCode": true,
+      "justMyCode": false,
       "args": [
-        "imaginedriving",
+        "diffusion-nerf",
         "--vis=tensorboard",
         "--pipeline.diffusion_model.low_mem_mode", "False",
         "--pipeline.diffusion_model.compile_model", "False",
@@ -160,14 +160,25 @@
       ]
     },
     {
-      "name": "Python: ImagineDriving local-checkpoint",
+    "name": "Python: diffusion-nerf arg",
+    "type": "python",
+    "request": "launch",
+    "program": "nerfstudio/scripts/train-diffusion-nerf.py",
+    "console": "integratedTerminal",
+    "justMyCode": false,
+    "args": [
+      "--method", "diffusion-nerf",
+    ]
+  },
+    {
+      "name": "Python: diffusion-nerf local-checkpoint",
       "type": "python",
       "request": "launch",
-      "program": "nerfstudio/scripts/train.py",
+      "program": "nerfstudio/scripts/train-diffusion-nerf.py",
       "console": "integratedTerminal",
-      "justMyCode": true,
+      "justMyCode": false,
       "args": [
-        "imaginedriving",
+        "diffusion-nerf",
         "--vis=tensorboard",
         "--pipeline.diffusion_model.low_mem_mode", "True",
         "--pipeline.diffusion_model.compile_model", "False",
@@ -188,12 +199,12 @@
       ]
     },
     {
-      "name": "Python: ImagineDriving train help",
+      "name": "Python: diffusion-nerf train help",
       "type": "python",
       "request": "launch",
-      "program": "nerfstudio/scripts/train.py",
+      "program": "nerfstudio/scripts/train-diffusion-nerf.py",
       "console": "integratedTerminal",
-      "justMyCode": true,
+      "justMyCode": false,
       "args": [
         "imaginedriving",
         "--help"
