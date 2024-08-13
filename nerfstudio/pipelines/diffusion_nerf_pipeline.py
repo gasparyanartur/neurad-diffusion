@@ -17,7 +17,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import time
-from typing import Dict, List, Optional, Tuple, Type, Any, Union
+from typing import Dict, List, Literal, Optional, Tuple, Type, Any, Union, cast
 import random
 from copy import deepcopy
 import typing
@@ -42,19 +42,15 @@ from nerfstudio.data.datamanagers.ad_datamanager import (
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
 from nerfstudio.data.dataparsers.ad_dataparser import OPENCV_TO_NERFSTUDIO
-from nerfstudio.generative.utils import DTYPE_CONVERSION
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.utils import profiler
 from nerfstudio.generative.diffusion_model import (
-    DiffusionModel,
+    StableDiffusionModel,
     DiffusionModelConfig,
 )
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.cameras.cameras import Cameras
-from nerfstudio.model_components.losses import (
-    MSELoss,
-)
 
 
 @dataclass
@@ -92,7 +88,9 @@ class DiffusionNerfConfig(VanillaPipelineConfig):
     noise_end_phase_step: int = 20001
 
     augment_loss_mult: float = 1.0
-    augment_strategy: str = "partial_const"
+    augment_strategy: Literal["none", "partial_const", "partial_linear"] = (
+        "partial_const"
+    )
     """ Which diffusion augmentation strategy to use.
         Can choose between `none`, `partial_const`, `partial_linear`.
     """
@@ -129,6 +127,8 @@ class DiffusionNerfConfig(VanillaPipelineConfig):
 class DiffusionNerfPipeline(VanillaPipeline):
     """Pipeline for training AD models."""
 
+    config: DiffusionNerfConfig
+
     def __init__(self, config: DiffusionNerfConfig, **kwargs):
         pixel_sampler = config.datamanager.pixel_sampler
         pixel_sampler.patch_size = config.ray_patch_size[0]
@@ -139,7 +139,7 @@ class DiffusionNerfPipeline(VanillaPipeline):
         self.datamanager: ADDataManager = self.datamanager
         self.model: ADModel = self.model
         self.config: DiffusionNerfConfig = self.config
-        self.diffusion_model: DiffusionModel = self.config.diffusion_model.setup(
+        self.diffusion_model: StableDiffusionModel = self.config.diffusion_model.setup(
             device=self.device,
         )
 
@@ -179,21 +179,16 @@ class DiffusionNerfPipeline(VanillaPipeline):
         ray_bundle, batch = self.datamanager.next_train(step)
         cameras = self.datamanager.train_dataset.cameras
 
-        match self.config.augment_strategy:
-            case "none":
-                return self._strategy_augment_none(
-                    ray_bundle, batch, use_actor_shift=True
-                )
-
-            case "partial_const" | "partial_linear":
-                return self._strategy_augment_partial_const(
-                    ray_bundle, batch, step, cameras, use_actor_shift=True
-                )
-
-            case _:
-                raise ValueError(
-                    "Unrecognized augment strategy", self.config.augment_strategy
-                )
+        if self.config.augment_strategy == "none":
+            return self._strategy_augment_none(ray_bundle, batch, use_actor_shift=True)
+        elif self.config.augment_strategy in ["partial_const", "partial_linear"]:
+            return self._strategy_augment_partial_const(
+                ray_bundle, batch, step, cameras, use_actor_shift=True
+            )
+        else:
+            raise ValueError(
+                "Unrecognized augment strategy", self.config.augment_strategy
+            )
 
     def _strategy_augment_none(self, ray_bundle, batch, use_actor_shift=True):
         model_outputs = self._model(
@@ -233,45 +228,45 @@ class DiffusionNerfPipeline(VanillaPipeline):
         if not self._is_augment_phase(step):
             return model_outputs, loss_dict, metrics_dict
 
-        aug_strength = self._get_augment_strength(step)
-        aug_ray_bundle = augment_ray_bundle(ray_bundle, aug_strength, cameras)
+        pose_aug = self._get_pose_augmentation(step)
+        aug_ray_bundle = transform_ray_bundle(ray_bundle, pose_aug, cameras)
         aug_outputs = self.model(aug_ray_bundle, patch_size=self.config.ray_patch_size)
 
         aug_input = {
             **model_outputs,
         }
-        for signal_name in self.diffusion_model.config.conditioning_signals:
-            signal = ConditioningSignalInfo.from_signal_name(signal_name)
-            if not signal:
-                continue
 
-            if signal.cn_type == "ray":
-                ray = torch.concat(
-                    [aug_ray_bundle.origins, aug_ray_bundle.directions], dim=-1
+        true_ray_patch_size = (
+            int(self.config.ray_patch_size[0] * self.model.config.rgb_upsample_factor),
+            int(self.config.ray_patch_size[1] * self.model.config.rgb_upsample_factor),
+        )
+
+        for (
+            signal_name,
+            signal,
+        ) in self.diffusion_model.config.conditioning_signals.items():
+            if signal_name == "ray":
+                aug_input[signal_name] = (
+                    torch.concat(
+                        [aug_ray_bundle.origins, aug_ray_bundle.directions], dim=-1
+                    )
+                    .reshape(
+                        *true_ray_patch_size,
+                        6,
+                    )
+                    .permute(2, 0, 1)
                 )
-                ray = ray.reshape(
-                    int(
-                        self.config.ray_patch_size[0]
-                        * self.model.config.rgb_upsample_factor
-                    ),
-                    int(
-                        self.config.ray_patch_size[1]
-                        * self.model.config.rgb_upsample_factor
-                    ),
-                    6,
-                ).permute(2, 0, 1)
-                aug_input[signal.name] = ray
 
             else:
                 raise NotImplementedError
 
-        aug_batch = self.diffusion_model.get_diffusion_output(
+        diffusion_model = cast(StableDiffusionModel, self.diffusion_model)
+
+        aug_batch = diffusion_model.get_diffusion_output(
             aug_input, pipeline_kwargs={"strength": self._get_diffusion_strength(step)}
         )
-        aug_metrics_dict = self.diffusion_model.get_diffusion_metrics(
-            aug_outputs, aug_batch
-        )
-        aug_loss_dict = self.diffusion_model.get_diffusion_losses(
+        aug_metrics_dict = diffusion_model.get_diffusion_metrics(aug_outputs, aug_batch)
+        aug_loss_dict = diffusion_model.get_diffusion_losses(
             aug_outputs, aug_batch, aug_metrics_dict
         )
         aug_loss_dict = {
@@ -284,7 +279,7 @@ class DiffusionNerfPipeline(VanillaPipeline):
 
         return model_outputs, loss_dict, metrics_dict
 
-    def _get_augment_strength(self, step, event: Optional[Tensor] = None) -> Tensor:
+    def _get_pose_augmentation(self, step, event: Optional[Tensor] = None) -> Tensor:
         if event is None:
             event = torch.ones(6, dtype=torch.bool)
 
@@ -379,6 +374,9 @@ class DiffusionNerfPipeline(VanillaPipeline):
         Returns:
             metrics_dict: dictionary of metrics
         """
+
+        # Taken and modified from the original AD pipeline
+
         self.eval()
         metrics_dict_list = []
         assert isinstance(self.datamanager, (VanillaDataManager, ParallelDataManager))
@@ -429,9 +427,7 @@ class DiffusionNerfPipeline(VanillaPipeline):
                 # time this the following line
                 inner_start = time()
                 # Generate images from the original rays
-                camera_ray_bundle = camera.generate_rays(
-                    camera_indices=0, keep_shape=True
-                )
+                camera_ray_bundle = camera.generate_rays(0, keep_shape=True)
                 outputs = self.model.get_outputs_for_camera_ray_bundle(
                     camera_ray_bundle
                 )
@@ -728,8 +724,8 @@ def rotate_around(theta, dim: int, device=None) -> torch.Tensor:
     return torch.tensor(r, device=device, dtype=torch.float32)
 
 
-def augment_ray_bundle(
-    ray_bundle: RayBundle, augment_strength: Tensor, cameras: Cameras
+def transform_ray_bundle(
+    ray_bundle: RayBundle, pose_offset: Tensor, cameras: Cameras
 ) -> RayBundle:
     new_ray_bundle = deepcopy(
         ray_bundle
@@ -737,8 +733,8 @@ def augment_ray_bundle(
     device = new_ray_bundle.origins.device
 
     # TODO: Considering using a different one for each camera.
-    aug_translation = augment_strength[..., :3].to(device=device)  # 3
-    aug_rotation = augment_strength[..., 3:].to(device=device)  # 3
+    aug_translation = pose_offset[..., :3].to(device=device)  # 3
+    aug_rotation = pose_offset[..., 3:].to(device=device)  # 3
 
     is_cam = ~ray_bundle.metadata["is_lidar"].flatten()  # B, 1
 

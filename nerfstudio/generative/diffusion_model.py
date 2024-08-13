@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
 from enum import Enum
-from typing import Union, Optional, Tuple, Dict, Iterable, Any, List, cast
+from typing import Type, Union, Optional, Tuple, Dict, Iterable, Any, List, cast
 from functools import lru_cache
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -40,7 +40,6 @@ from peft import LoraConfig, get_peft_model, PeftModel
 
 import torchvision
 
-from nerfstudio.configs.base_config import InstantiateConfig
 
 torchvision.disable_beta_transforms_warning()
 from torchmetrics.image import StructuralSimilarityIndexMeasure, PeakSignalNoiseRatio
@@ -144,7 +143,8 @@ class DiffusionModelType:
     mock: str = "mock"
 
 
-class ConditioningSignalInfo(BaseModel):
+@dataclass
+class ConditioningSignalInfo:
     signal_name: str
     num_channels: int
 
@@ -366,7 +366,7 @@ class DiffusionModelConfig(BaseModel):
 
     models_to_train_lora: Tuple[str, ...] = ()
 
-    noise_strength: float = 0.2
+    noise_strength: float = 0.1
     """How much noise to apply during inference. 1.0 means complete gaussian."""
 
     num_inference_steps: int = 50
@@ -379,170 +379,45 @@ class DiffusionModelConfig(BaseModel):
 
     losses: Tuple[str, ...] = ("mse",)
 
-    lora_base_ranks: Dict[str, int] = Field(
-        default={"unet": 4, "controlnet": 4, "text_encoder": 4}
-    )
+    lora_base_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4, "text_encoder": 4}
 
-    lora_rank_mults: Dict[str, Any] = Field(
-        default={
-            "unet": {
-                "downblocks": {"attn": 1, "resnet": 0},
-                "midblocks": {"attn": 1, "resnet": 0},
-                "upblocks": {"attn": 1, "resnet": 0},
-            },
-            "controlnet": {
-                "downblocks": {"attn": 1, "resnet": 1},
-                "midblocks": {"attn": 1, "resnet": 1},
-                "upblocks": {"attn": 1, "resnet": 1},
-            },
-            "text_encoder": {},
-        }
-    )
+    lora_rank_mults: Dict[str, Any] = {
+        "unet": {
+            "downblocks": {"attn": 1, "resnet": 0},
+            "midblocks": {"attn": 1, "resnet": 0},
+            "upblocks": {"attn": 1, "resnet": 0},
+        },
+        "controlnet": {
+            "downblocks": {"attn": 1, "resnet": 1},
+            "midblocks": {"attn": 1, "resnet": 1},
+            "upblocks": {"attn": 1, "resnet": 1},
+        },
+        "text_encoder": {},
+    }
 
-    lora_modules_to_save: Dict[str, List[str]] = Field(
-        default={
-            "unet": [],
-            "controlnet": [
-                "controlnet_cond_embedding",
-                *[f"controlnet_down_blocks.{i}" for i in range(12)],
-                "controlnet_mid_block",
-            ],
-        }
-    )
+    lora_modules_to_save: Dict[str, List[str]] = {
+        "unet": [],
+        "controlnet": [
+            "controlnet_cond_embedding",
+            *[f"controlnet_down_blocks.{i}" for i in range(12)],
+            "controlnet_mid_block",
+        ],
+    }
 
     use_dora: bool = True
 
     lora_model_prefix: str = "lora_"
 
-    conditioning_signals: Dict[str, ConditioningSignalInfo] = Field(
-        default={"ray": ConditioningSignalInfo(signal_name="ray", num_channels=6)}
-    )
+    conditioning_signals: Dict[str, ConditioningSignalInfo] = {
+        "ray": ConditioningSignalInfo(signal_name="ray", num_channels=6)
+    }
 
     do_classifier_free_guidance: bool = True
     guidance_scale: float = 0
     conditioning_scale: float = 0.8
 
-    def setup(self, **kwargs) -> DiffusionModel:
-        return DiffusionModel.from_config(self, **kwargs)
-
-
-class DiffusionModel(ABC):
-    config: DiffusionModelConfig
-
-    @abstractmethod
-    def get_diffusion_output(
-        self,
-        sample: Dict[str, Any],
-        pipeline_kwargs: Optional[Dict[str, Any]] = None,
-        *args,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_diffusion_metrics(
-        self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_diffusion_losses(
-        self,
-        batch_pred: Dict[str, Any],
-        batch_gt: Dict[str, Any],
-        metrics_dict: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        raise NotImplementedError
-
-    @classmethod
-    def from_config(
-        cls,
-        config: DiffusionModelConfig,
-        pipe_models: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> "DiffusionModel":
-        pipe_models = pipe_models or {}
-        model_type_to_constructor = {
-            DiffusionModelType.sd: StableDiffusionModel,
-            DiffusionModelType.cn: ControlNetDiffusionModel,
-            DiffusionModelType.mock: MockDiffusionModel,
-        }
-        model = model_type_to_constructor[config.type]
-
-        if config.compile_models and config.lora_weights:
-            logging.warning(
-                "Compiling the model currently leads to a bug when a LoRA is loaded, proceed with caution"
-            )
-
-        return model(config=config, pipe_models=pipe_models, **kwargs)
-
-
-class MockDiffusionModel(DiffusionModel):
-    def __init__(
-        self,
-        config: DiffusionModelConfig,
-        pipe_models: Dict[str, Any] = None,  # type: ignore
-        device=get_device(),
-        *args,
-        **kwargs,
-    ) -> None:
-        super().__init__()
-        self.mse = nn.MSELoss()
-        self.config = config
-
-        self.diffusion_metrics = {
-            metric_name: _make_metric(metric_name, device)
-            for metric_name in config.metrics
-        }
-        self.diffusion_losses = {
-            loss_name: _make_metric(loss_name, device) for loss_name in config.losses
-        }
-
-    def get_diffusion_output(
-        self,
-        sample: Dict[str, Any],
-        pipeline_kwargs: Optional[Dict[str, Any]] = None,
-        *args,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        image = sample["rgb"]
-
-        if len(image.shape) == 3:
-            image = image[None, ...]
-
-        return {"rgb": image}
-
-    def get_diffusion_metrics(
-        self, batch_pred: Dict[str, Any], batch_gt: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        # Currently only handles RGB case, assumes all metrics take in an RGB image.
-        rgb_pred = batch_pred["rgb"]
-        rgb_gt = batch_gt["rgb"]
-
-        return {
-            metric_name: metric(rgb_pred, rgb_gt)
-            for metric_name, metric in self.diffusion_metrics.items()
-        }
-
-    def get_diffusion_losses(
-        self,
-        batch_pred: Dict[str, Any],
-        batch_gt: Dict[str, Any],
-        metrics_dict: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        # Currently only handles RGB case, assumes all metrics take in an RGB image.
-        rgb_pred = batch_pred["rgb"]
-        rgb_gt = batch_gt["rgb"]
-
-        loss_dict = {}
-        for loss_name, loss in self.diffusion_losses.items():
-            if loss_name in metrics_dict:
-                loss_dict[loss_name] = metrics_dict[loss_name]
-                continue
-
-            loss_dict[loss_name] = loss(rgb_pred, rgb_gt)
-
-        return loss_dict
+    def setup(self, **kwargs) -> StableDiffusionModel:
+        return StableDiffusionModel(self, **kwargs)
 
 
 def import_encoder_class_from_model_name_or_path(
@@ -594,15 +469,13 @@ def import_encoder(model_id, revision, subfolder, variant, **kwargs):
     )
 
 
-class StableDiffusionModel(DiffusionModel):
+class StableDiffusionModel:
     def __init__(
         self,
         config: DiffusionModelConfig,
         device: torch.device = get_device(),
         models: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__()
-
         models = models or {}
 
         self.config = config
@@ -981,9 +854,6 @@ class StableDiffusionModel(DiffusionModel):
             loss_dict[loss_name] = loss(rgb_pred, rgb_gt)
 
         return loss_dict
-
-
-class ControlNetDiffusionModel(DiffusionModel): ...
 
 
 def retrieve_latents(

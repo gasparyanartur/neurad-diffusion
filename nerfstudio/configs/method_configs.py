@@ -419,8 +419,9 @@ method_configs["neurad"] = TrainerConfig(
 
 
 # Diffusion Nerf, NeuRAD + Stable Diffusion
-method_configs["imaginedriving"] = TrainerConfig(
-    method_name="imaginedriving",
+
+method_configs["diffusion-nerf"] = TrainerConfig(
+    method_name="diffusion-nerf",
     steps_per_eval_batch=500,
     steps_per_eval_all_images=5000,
     steps_per_save=2000,
@@ -443,7 +444,6 @@ method_configs["imaginedriving"] = TrainerConfig(
         diffusion_model=DiffusionModelConfig(
             type=DiffusionModelType.sd,
             id=DiffusionModelId.sd_v2_1,
-            low_mem_mode=False,
             lora_weights=None,
             noise_strength=0.1,
             num_inference_steps=50,
@@ -484,7 +484,7 @@ method_configs["imaginedriving"] = TrainerConfig(
         },
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
-    vis="viewer",
+    vis="wandb",
     logging=LoggingConfig(steps_per_log=100),
 )
 
@@ -629,6 +629,7 @@ all_methods, all_descriptions = merge_methods(
     overwrite=False,
 )
 
+
 AnnotatedBaseConfigUnion = (
     tyro.conf.SuppressFixed[  # Don't show unparseable (fixed) arguments in helptext.
         tyro.conf.FlagConversionOff[
@@ -638,6 +639,7 @@ AnnotatedBaseConfigUnion = (
         ]
     ]
 )
+
 """Union[] type over config types, annotated with default instances for use with
 tyro.cli(). Allows the user to pick between one of several base configurations, and
 then override values in it."""
