@@ -3,7 +3,13 @@ From: nvidia/cuda:11.8.0-devel-ubuntu22.04
 Stage: spython-base
 
 %files
-. /nerfstudio
+#. /nerfstudio
+./nerfstudio /nerfstudio/nerfstudio
+./tests /nerfstudio/tests
+./pyproject.toml /nerfstudio/pyproject.toml
+
+
+
 %labels
 org.opencontainers.image.version = "0.1.18"
 org.opencontainers.image.source = "https://github.com/nerfstudio-project/nerfstudio"

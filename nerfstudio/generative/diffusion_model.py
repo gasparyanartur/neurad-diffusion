@@ -344,6 +344,7 @@ def generate_noise_pattern(
 
 
 class DiffusionModelConfig(BaseModel):
+
     type: str = DiffusionModelType.sd
     id: str = DiffusionModelId.sd_v2_1
     variant: Optional[str] = None
@@ -367,6 +368,7 @@ class DiffusionModelConfig(BaseModel):
     models_to_train_lora: Tuple[str, ...] = ()
 
     noise_strength: float = 0.1
+
     """How much noise to apply during inference. 1.0 means complete gaussian."""
 
     num_inference_steps: int = 50
@@ -379,44 +381,52 @@ class DiffusionModelConfig(BaseModel):
 
     losses: Tuple[str, ...] = ("mse",)
 
-    lora_base_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4, "text_encoder": 4}
+    lora_base_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4}
 
-    lora_rank_mults: Dict[str, Any] = {
-        "unet": {
-            "downblocks": {"attn": 1, "resnet": 0},
-            "midblocks": {"attn": 1, "resnet": 0},
-            "upblocks": {"attn": 1, "resnet": 0},
-        },
-        "controlnet": {
-            "downblocks": {"attn": 1, "resnet": 1},
-            "midblocks": {"attn": 1, "resnet": 1},
-            "upblocks": {"attn": 1, "resnet": 1},
-        },
-        "text_encoder": {},
-    }
+    #    lora_rank_mults: Dict[str, Dict[str, Dict[str, int]]] = field(
+    #        default_factory=lambda: {
+    #            "unet": {
+    #                "downblocks": {"attn": 1, "resnet": 0},
+    #                "midblocks": {"attn": 1, "resnet": 0},
+    #                "upblocks": {"attn": 1, "resnet": 0},
+    #            },
+    #            "controlnet": {
+    #                "downblocks": {"attn": 1, "resnet": 1},
+    #                "midblocks": {"attn": 1, "resnet": 1},
+    #                "upblocks": {"attn": 1, "resnet": 1},
+    #            },
+    #        }
+    #    )
 
-    lora_modules_to_save: Dict[str, List[str]] = {
-        "unet": [],
-        "controlnet": [
-            "controlnet_cond_embedding",
-            *[f"controlnet_down_blocks.{i}" for i in range(12)],
-            "controlnet_mid_block",
-        ],
-    }
+    #
+    lora_modules_to_save: Dict[str, Tuple[str, ...]] = field(
+        default_factory=lambda: {
+            "unet": (),
+            "controlnet": tuple(
+                [
+                    "controlnet_cond_embedding",
+                    *[f"controlnet_down_blocks.{i}" for i in range(12)],
+                    "controlnet_mid_block",
+                ]
+            ),
+        }
+    )
 
     use_dora: bool = True
 
     lora_model_prefix: str = "lora_"
 
-    conditioning_signals: Dict[str, ConditioningSignalInfo] = {
-        "ray": ConditioningSignalInfo(signal_name="ray", num_channels=6)
-    }
+    conditioning_signals: Dict[str, ConditioningSignalInfo] = field(
+        default_factory=lambda: {
+            "ray": ConditioningSignalInfo(signal_name="ray", num_channels=6)
+        }
+    )
 
     do_classifier_free_guidance: bool = True
     guidance_scale: float = 0
     conditioning_scale: float = 0.8
 
-    def setup(self, **kwargs) -> StableDiffusionModel:
+    def setup(self, **kwargs):
         return StableDiffusionModel(self, **kwargs)
 
 

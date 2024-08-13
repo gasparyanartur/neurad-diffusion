@@ -63,6 +63,12 @@ from nerfstudio.data.datamanagers.ad_datamanager import ADDataManagerConfig
 from nerfstudio.data.dataparsers.pandaset_dataparser import PandaSetDataParserConfig
 from nerfstudio.engine.optimizers import AdamOptimizerConfig, AdamWOptimizerConfig
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
+from nerfstudio.field_components.neurad_encoding import (
+    ActorSettings,
+    NeuRADHashEncodingConfig,
+    StaticSettings,
+)
+from nerfstudio.fields.neurad_field import NeuRADFieldConfig
 from nerfstudio.generative.diffusion_model import (
     DiffusionModelConfig,
     DiffusionModelId,
@@ -309,6 +315,7 @@ def entrypoint():
     from argparse import ArgumentParser
 
     parser = ArgumentParser()
+
     parser.add_argument(
         "--vis",
         type=str,
@@ -321,46 +328,146 @@ def entrypoint():
     parser.add_argument("--rgb_upsample_factor", type=int, default=4)
     parser.add_argument("--fid_calc_interval", type=int, default=5000)
 
+    parser.add_argument("--train-num_lidar_rays_per_batch", type=int, default=1280)
+    parser.add_argument("--eval-num_lidar_rays_per_batch", type=int, default=128)
+    parser.add_argument("--eval-num_rays_per_chunk", type=int, default=1 << 15)
+    parser.add_argument("--num_processes", type=int, default=0)
+
+    parser.add_argument("--field_grid_static_hashgrid_dim", type=int, default=4)
+    parser.add_argument("--field_grid_actor_hashgrid_dim", type=int, default=4)
+    parser.add_argument("--field_grid_static_log2_hashmap_size", type=int, default=22)
+    parser.add_argument("--field_grid_actor_log2_hashmap_size", type=int, default=17)
+    parser.add_argument("--field_grid_static_num_levels", type=int, default=8)
+    parser.add_argument("--field_grid_actor_num_levels", type=int, default=4)
+
+    parser.add_argument("--steps_per_eval_batch", type=int, default=500)
+    parser.add_argument("--steps_per_eval_all_images", type=int, default=5000)
+    parser.add_argument("--steps_per_save", type=int, default=2000)
+
+    parser.add_argument(
+        "--cameras",
+        type=str,
+        default="front",
+        nargs="+",
+        choices=["front", "all"],
+    )
+    parser.add_argument("--data", type=Path, default="./data/pandaset")
+    parser.add_argument("--sequence", type=str, default="001")
+    parser.add_argument(
+        "--diffusion_type",
+        type=str,
+        default=DiffusionModelType.sd,
+        choices=[DiffusionModelType.sd, DiffusionModelType.cn],
+    )
+    parser.add_argument("--noise_strength", type=float, default=0.1)
+    parser.add_argument("--num_inference_steps", type=int, default=50)
+    parser.add_argument("--lora_weights", type=Path, default=None)
+    parser.add_argument("--models_to_load_lora", type=str, nargs="*")
+    parser.add_argument("--conditioning_signals", type=str, nargs="*")
+    parser.add_argument("--conditioning_scale", type=float, default=0.8)
+
+    parser.add_argument("--augment_phase_step", type=int, default=1000)
+    parser.add_argument("--augment_strategy", type=str, default="partial_linear")
+
     args = parser.parse_args()
 
     vis = args.vis
-    patch_size = args.patch_size
-    num_rays_per_batch = args.num_patches_per_batch * patch_size**2
-    max_steps = args.max_steps
+    num_processes = args.num_processes
     fid_calc_interval = args.fid_calc_interval
+
+    patch_size = args.patch_size
+    max_steps = args.max_steps
+    rgb_upsample_factor = args.rgb_upsample_factor
+
+    num_rays_per_batch = args.num_patches_per_batch * patch_size**2
+    train_num_lidar_rays_per_batch = args.train_num_lidar_rays_per_batch
+    eval_num_lidar_rays_per_batch = args.eval_num_lidar_rays_per_batch
+    eval_num_rays_per_chunk = args.eval_num_rays_per_chunk
+
+    field_grid_static_hashgrid_dim = args.field_grid_static_hashgrid_dim
+    field_grid_static_log2_hashmap_size = args.field_grid_static_log2_hashmap_size
+    field_grid_static_num_levels = args.field_grid_static_num_levels
+
+    field_grid_actor_hashgrid_dim = args.field_grid_actor_hashgrid_dim
+    field_grid_actor_log2_hashmap_size = args.field_grid_actor_log2_hashmap_size
+    field_grid_actor_num_levels = args.field_grid_actor_num_levels
+
+    steps_per_eval_batch = args.steps_per_eval_batch
+    steps_per_eval_all_images = args.steps_per_eval_all_images
+    steps_per_save = args.steps_per_save
+
+    data = args.data
+    sequence = args.sequence
+    cameras = args.cameras
+
+    diffusion_type = args.diffusion_type
+    lora_weights = args.lora_weights
+    noise_strength = args.noise_strength
+    num_inference_steps = args.num_inference_steps
+    models_to_load_lora = args.models_to_load_lora
+    conditioning_signals = args.conditioning_signals
+    conditioning_scale = args.conditioning_scale
+
+    augment_phase_step = args.augment_phase_step
+    augment_strategy = args.augment_strategy
 
     # TODO: Add more arguments to the parser to customize the training process
     config = TrainerConfig(
         _target=Trainer,
         method_name="diffusion-nerf",
-        steps_per_eval_batch=500,
-        steps_per_eval_all_images=5000,
-        steps_per_save=2000,
-        max_num_iterations=20001,
+        steps_per_eval_batch=steps_per_eval_batch,
+        steps_per_eval_all_images=steps_per_eval_all_images,
+        steps_per_save=steps_per_save,
+        max_num_iterations=max_steps,
         mixed_precision=True,
         pipeline=DiffusionNerfConfig(
             max_steps=max_steps,
             calc_fid_steps=tuple(range(0, max_steps, fid_calc_interval)),
             ray_patch_size=(patch_size, patch_size),
             datamanager=ADDataManagerConfig(
-                dataparser=PandaSetDataParserConfig(add_missing_points=True),
+                dataparser=PandaSetDataParserConfig(
+                    add_missing_points=True,
+                    data=data,
+                    sequence=sequence,
+                    cameras=cameras,
+                ),
                 train_num_rays_per_batch=num_rays_per_batch,
                 eval_num_rays_per_batch=num_rays_per_batch,
+                train_num_lidar_rays_per_batch=train_num_lidar_rays_per_batch,
+                eval_num_lidar_rays_per_batch=eval_num_lidar_rays_per_batch,
+                num_processes=num_processes,
             ),
             model=NeuRADModelConfig(
-                eval_num_rays_per_chunk=1 << 15,
-                camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
-                rgb_upsample_factor=4,
+                eval_num_rays_per_chunk=eval_num_rays_per_chunk,
+                camera_optimizer=CameraOptimizerConfig(mode="off"),
+                rgb_upsample_factor=rgb_upsample_factor,
+                field=NeuRADFieldConfig(
+                    grid=NeuRADHashEncodingConfig(
+                        static=StaticSettings(
+                            hashgrid_dim=field_grid_static_hashgrid_dim,
+                            log2_hashmap_size=field_grid_static_log2_hashmap_size,
+                            num_levels=field_grid_static_num_levels,
+                        ),
+                        actor=ActorSettings(
+                            hashgrid_dim=field_grid_actor_hashgrid_dim,
+                            log2_hashmap_size=field_grid_actor_log2_hashmap_size,
+                            num_levels=field_grid_actor_num_levels,
+                        ),
+                    )
+                ),
             ),
             diffusion_model=DiffusionModelConfig(
-                type=DiffusionModelType.sd,
+                type=diffusion_type,
                 id=DiffusionModelId.sd_v2_1,
-                lora_weights=None,
-                noise_strength=0.1,
-                num_inference_steps=50,
+                lora_weights=lora_weights,
+                noise_strength=noise_strength,
+                num_inference_steps=num_inference_steps,
+                models_to_load_lora=models_to_load_lora,
+                conditioning_signals=conditioning_signals,
+                conditioning_scale=conditioning_scale,
             ),
-            augment_phase_step=1000,
-            augment_strategy="partial_linear",
+            augment_phase_step=augment_phase_step,
+            augment_strategy=augment_strategy,
         ),
         optimizers={
             "trajectory_opt": {

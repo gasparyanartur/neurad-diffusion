@@ -127,8 +127,6 @@ class DiffusionNerfConfig(VanillaPipelineConfig):
 class DiffusionNerfPipeline(VanillaPipeline):
     """Pipeline for training AD models."""
 
-    config: DiffusionNerfConfig
-
     def __init__(self, config: DiffusionNerfConfig, **kwargs):
         pixel_sampler = config.datamanager.pixel_sampler
         pixel_sampler.patch_size = config.ray_patch_size[0]
@@ -139,7 +137,7 @@ class DiffusionNerfPipeline(VanillaPipeline):
         self.datamanager: ADDataManager = self.datamanager
         self.model: ADModel = self.model
         self.config: DiffusionNerfConfig = self.config
-        self.diffusion_model: StableDiffusionModel = self.config.diffusion_model.setup(
+        self.diffusion_model = self.config.diffusion_model.setup(
             device=self.device,
         )
 
