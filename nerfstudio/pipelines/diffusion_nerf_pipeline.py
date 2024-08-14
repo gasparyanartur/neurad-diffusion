@@ -257,11 +257,12 @@ class DiffusionNerfPipeline(VanillaPipeline):
             diffusion_input,
             pipeline_kwargs={"strength": self._get_diffusion_strength(step)},
         )
+
         aug_metrics_dict = diffusion_model.get_diffusion_metrics(
-            aug_outputs, diffusion_output
+            diffusion_input, diffusion_output
         )
         aug_loss_dict = diffusion_model.get_diffusion_losses(
-            aug_outputs, diffusion_output, aug_metrics_dict
+            diffusion_input, diffusion_output, aug_metrics_dict
         )
         aug_loss_dict = {
             k: v * self.config.augment_loss_mult for k, v in aug_loss_dict.items()
