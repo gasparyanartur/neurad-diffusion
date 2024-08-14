@@ -22,8 +22,8 @@ lr_warmup_steps: 1000
 
 use_recreation_loss: False
 
-loggers: ["wandb"]
-#loggers: []
+#loggers: ["wandb"]
+loggers: []
 
 
 diffusion_config:

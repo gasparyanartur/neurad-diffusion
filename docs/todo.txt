@@ -32,6 +32,7 @@ Start ControlNet
 - Make pydantic work with yaml files [x]
 - Fix dimension bugs [x]
 - Test controlnets [x]
+- Train small sd model on one image [x]
 
 
 Merge with NeuRAD
@@ -39,12 +40,15 @@ Merge with NeuRAD
 - Bugfix new dataset configs [x]
 - Update NeuRAD code with new pipeline [x]
 - Make new argparser for neurad training [#]
-- Build new Singularity image []
+- Build new Singularity image [x]
 - Change code to be compatible with Tyro [x]
 - Fix broken changes to lora configs across code [x]
-- Update launch scripts for diffusion training []
-- Train small sd model on one scene
-- Update neurad configs 
+- Update neurad configs [x]
+- Update vscode launch scripts for diffusion training [x]
+- bugfix: Interpolate ray conditioning between rays (128,128)->(512,512) [x]
+- bugfix: Fix bugs in NeuRAD [x]
+- rsync image to other PC
+- Update SLURM training scripts
 - Add new pipeline to training
 - Test new pipeline
 - Train small cn model

@@ -48,6 +48,7 @@ from nerfstudio.engine.optimizers import (
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.generative.diffusion_model import (
+    ConditioningSignalInfo,
     DiffusionModelConfig,
     DiffusionModelId,
     DiffusionModelType,
@@ -433,8 +434,8 @@ method_configs["diffusion-nerf"] = TrainerConfig(
         ray_patch_size=(128, 128),
         datamanager=ADDataManagerConfig(
             dataparser=PandaSetDataParserConfig(add_missing_points=True),
-            train_num_lidar_rays_per_batch=16384,
-            eval_num_lidar_rays_per_batch=16384,
+            train_num_rays_per_batch=16384,
+            eval_num_rays_per_batch=16384,
         ),
         model=NeuRADModelConfig(
             eval_num_rays_per_chunk=1 << 15,
@@ -447,6 +448,8 @@ method_configs["diffusion-nerf"] = TrainerConfig(
             lora_weights=None,
             noise_strength=0.1,
             num_inference_steps=50,
+            conditioning_scale=0.8,
+            conditioning_signals=("ray",),
         ),
         augment_phase_step=1000,
         augment_strategy="partial_linear",

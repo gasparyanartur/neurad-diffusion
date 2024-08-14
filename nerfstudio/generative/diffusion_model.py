@@ -149,6 +149,15 @@ class ConditioningSignalInfo:
     num_channels: int
 
 
+CONDITIONING_SIGNAL_INFO = {
+    "ray": ConditioningSignalInfo(signal_name="ray", num_channels=6)
+}
+
+
+def get_signal_info(signal_name: str) -> ConditioningSignalInfo:
+    return CONDITIONING_SIGNAL_INFO[signal_name]
+
+
 def prep_hf_pipe(
     pipe: Union[
         StableDiffusionControlNetImg2ImgPipeline, StableDiffusionImg2ImgPipeline
@@ -229,6 +238,7 @@ def _prepare_prompt(
     tokenizer: CLIPTokenizer,
     text_encoder: CLIPTextModel,
     batch_size: int,
+    prompt_key: str = "prompt",
 ) -> None:
     # Convert any existing prompts to prompt embeddings, utilizing memoization.
     # Ensure there is at least one prompt embedding passed to the pipeline.
@@ -403,11 +413,13 @@ class DiffusionModelConfig(BaseModel):
 
     lora_model_prefix: str = "lora_"
 
-    conditioning_signals: Dict[str, ConditioningSignalInfo] = field(
-        default_factory=lambda: {
-            "ray": ConditioningSignalInfo(signal_name="ray", num_channels=6)
-        }
-    )
+    # conditioning_signals: Dict[str, ConditioningSignalInfo] = field(
+    #    default_factory=lambda: {
+    #        "ray": ConditioningSignalInfo(signal_name="ray", num_channels=6)
+    #    }
+    # )
+
+    conditioning_signals: Tuple[str, ...] = ("ray",)
 
     do_classifier_free_guidance: bool = True
     guidance_scale: float = 0
@@ -584,10 +596,15 @@ class StableDiffusionModel:
                 self.models[model] = torch.compile(self.models[model])
 
     @property
+    def conditioning_signals(self) -> Dict[str, ConditioningSignalInfo]:
+        return {
+            signal_name: get_signal_info(signal_name)
+            for signal_name in self.config.conditioning_signals
+        }
+
+    @property
     def conditioning_channels(self) -> int:
-        return sum(
-            signal.num_channels for signal in self.config.conditioning_signals.values()
-        )
+        return sum(signal.num_channels for signal in self.conditioning_signals.values())
 
     @property
     def using_controlnet(self) -> bool:
@@ -759,7 +776,13 @@ class StableDiffusionModel:
 
         image = image.to(device=self.device, dtype=self.dtype)
 
-        batch_size = len(image)
+        input_ids = (
+            sample["input_ids"]
+            if "input_ids" in sample
+            else tokenize_prompt(self.tokenizer, "")
+        )
+
+        strength = kwargs.get("strength", self.config.noise_strength)
 
         if image.size(1) == 3:
             channel_first = True
@@ -772,8 +795,6 @@ class StableDiffusionModel:
             image = image.permute(0, 3, 1, 2)  # Diffusion model is channel first
 
         with torch.no_grad():
-            _prepare_prompt(sample, self.tokenizer, self.text_encoder, batch_size)
-
             latent = encode_img(
                 self.img_processor,
                 self.vae,
@@ -785,21 +806,21 @@ class StableDiffusionModel:
             timesteps, _ = get_timesteps(
                 self.noise_scheduler,
                 self.config.num_inference_steps,
-                self.config.noise_strength,
+                strength,
                 self.device,
             )
             noisy_latent = add_noise_to_latent(
                 latent, timesteps[0], self.noise_scheduler
             )
 
-            prompt_embeds = encode_tokens(self.text_encoder, sample["input_ids"], True)
+            prompt_embeds = encode_tokens(self.text_encoder, input_ids, True)
 
             if self.config.do_classifier_free_guidance:
                 prompt_embeds = torch.cat((prompt_embeds, prompt_embeds))
 
             if self.using_controlnet:
                 conditioning = combine_conditioning_info(
-                    sample, self.config.conditioning_signals
+                    sample, self.conditioning_signals
                 ).to(noisy_latent.device)
 
                 if self.config.do_classifier_free_guidance:

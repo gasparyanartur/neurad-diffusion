@@ -389,9 +389,7 @@ class TrainConfig(BaseSettings):
         lora_base_ranks={"unet": 4, "controlnet": 4, "text_encoder": 4},
         use_dora=True,
         lora_model_prefix="lora_",
-        conditioning_signals={
-            "ray": ConditioningSignalInfo(signal_name="ray", num_channels=6),
-        },
+        conditioning_signals=("ray",),
         guidance_scale=0,
         metrics=("lpips", "ssim", "psnr", "mse"),
     )
@@ -1055,7 +1053,7 @@ def train_epoch(
             if diffusion_model.using_controlnet:
 
                 conditioning = combine_conditioning_info(
-                    batch, diffusion_model.config.conditioning_signals
+                    batch, diffusion_model.conditioning_signals
                 ).to(noisy_model_input.device)
 
                 if diffusion_model.config.do_classifier_free_guidance:

@@ -181,7 +181,12 @@ class DiffusionNerfPipeline(VanillaPipeline):
             return self._strategy_augment_none(ray_bundle, batch, use_actor_shift=True)
         elif self.config.augment_strategy in ["partial_const", "partial_linear"]:
             return self._strategy_augment_partial_const(
-                ray_bundle, batch, step, cameras, use_actor_shift=True
+                ray_bundle,
+                batch,
+                step,
+                cameras,
+                use_actor_shift=True,
+                num_rays=self.config.datamanager.train_num_rays_per_batch,
             )
         else:
             raise ValueError(
@@ -217,7 +222,8 @@ class DiffusionNerfPipeline(VanillaPipeline):
         ray_bundle: RayBundle,
         batch,
         step: int,
-        cameras,
+        cameras: Cameras,
+        num_rays: int,
         use_actor_shift: bool = False,
     ):
         model_outputs, loss_dict, metrics_dict = self._strategy_augment_none(
@@ -230,29 +236,16 @@ class DiffusionNerfPipeline(VanillaPipeline):
         aug_ray_bundle = transform_ray_bundle(ray_bundle, pose_aug, cameras)
         aug_outputs = self.model(aug_ray_bundle, patch_size=self.config.ray_patch_size)
 
-        aug_input = {
-            **model_outputs,
-        }
+        assert len(aug_outputs["rgb"].shape) == 4
+        diffusion_input = {"rgb": aug_outputs["rgb"].permute(0, 3, 1, 2)}
 
-        true_ray_patch_size = (
-            int(self.config.ray_patch_size[0] * self.model.config.rgb_upsample_factor),
-            int(self.config.ray_patch_size[1] * self.model.config.rgb_upsample_factor),
-        )
-
-        for (
-            signal_name,
-            signal,
-        ) in self.diffusion_model.config.conditioning_signals.items():
+        for signal_name in self.diffusion_model.config.conditioning_signals:
             if signal_name == "ray":
-                aug_input[signal_name] = (
-                    torch.concat(
-                        [aug_ray_bundle.origins, aug_ray_bundle.directions], dim=-1
-                    )
-                    .reshape(
-                        *true_ray_patch_size,
-                        6,
-                    )
-                    .permute(2, 0, 1)
+                diffusion_input[signal_name] = make_ray_signal(
+                    aug_ray_bundle.origins[:num_rays],
+                    aug_ray_bundle.directions[:num_rays],
+                    self.config.ray_patch_size,
+                    upsample_factor=self.model.config.rgb_upsample_factor,
                 )
 
             else:
@@ -260,12 +253,15 @@ class DiffusionNerfPipeline(VanillaPipeline):
 
         diffusion_model = cast(StableDiffusionModel, self.diffusion_model)
 
-        aug_batch = diffusion_model.get_diffusion_output(
-            aug_input, pipeline_kwargs={"strength": self._get_diffusion_strength(step)}
+        diffusion_output = diffusion_model.get_diffusion_output(
+            diffusion_input,
+            pipeline_kwargs={"strength": self._get_diffusion_strength(step)},
         )
-        aug_metrics_dict = diffusion_model.get_diffusion_metrics(aug_outputs, aug_batch)
+        aug_metrics_dict = diffusion_model.get_diffusion_metrics(
+            aug_outputs, diffusion_output
+        )
         aug_loss_dict = diffusion_model.get_diffusion_losses(
-            aug_outputs, aug_batch, aug_metrics_dict
+            aug_outputs, diffusion_output, aug_metrics_dict
         )
         aug_loss_dict = {
             k: v * self.config.augment_loss_mult for k, v in aug_loss_dict.items()
@@ -758,3 +754,34 @@ def transform_ray_bundle(
     )
 
     return new_ray_bundle
+
+
+def make_ray_signal(
+    origins: Tensor,
+    directions: Tensor,
+    patch_size: Tuple[int, int],
+    upsample_factor: int = 4,
+) -> Tensor:
+    assert origins.shape == directions.shape
+    assert origins.shape[0] == patch_size[0] * patch_size[1]
+
+    ray = (
+        torch.concat([origins, directions], dim=-1)
+        .reshape(
+            *patch_size,
+            -1,
+        )
+        .permute(2, 0, 1)
+    )
+
+    ray = torch.nn.functional.interpolate(
+        ray.unsqueeze(0),
+        scale_factor=upsample_factor,
+        mode="bilinear",
+        align_corners=False,
+    ).squeeze(0)
+
+    assert ray.shape[0] == (origins.shape[-1] + directions.shape[-1])
+    assert ray.shape[1] * ray.shape[2] == origins.shape[0] * upsample_factor**2
+
+    return ray
