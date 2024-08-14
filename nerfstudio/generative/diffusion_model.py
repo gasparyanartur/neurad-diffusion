@@ -383,22 +383,9 @@ class DiffusionModelConfig(BaseModel):
 
     lora_base_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4}
 
-    #    lora_rank_mults: Dict[str, Dict[str, Dict[str, int]]] = field(
-    #        default_factory=lambda: {
-    #            "unet": {
-    #                "downblocks": {"attn": 1, "resnet": 0},
-    #                "midblocks": {"attn": 1, "resnet": 0},
-    #                "upblocks": {"attn": 1, "resnet": 0},
-    #            },
-    #            "controlnet": {
-    #                "downblocks": {"attn": 1, "resnet": 1},
-    #                "midblocks": {"attn": 1, "resnet": 1},
-    #                "upblocks": {"attn": 1, "resnet": 1},
-    #            },
-    #        }
-    #    )
+    train_attn_blocks: bool = True
+    train_resnet_blocks: bool = True
 
-    #
     lora_modules_to_save: Dict[str, Tuple[str, ...]] = field(
         default_factory=lambda: {
             "unet": (),
@@ -698,7 +685,6 @@ class StableDiffusionModel:
         adapter_config: Optional[LoraConfig] = None,
         copy_model: bool = True,
     ) -> None:
-        # TODO: Test this
 
         if not model_name in self.config.models_to_train_lora:
             raise ValueError(
@@ -707,7 +693,21 @@ class StableDiffusionModel:
 
         model = self.models[model_name]
         if adapter_config is None:
-            model_target_ranks = self.config.lora_rank_mults[model_name]
+            model_target_ranks = {
+                "downblocks": {
+                    "attn": int(self.config.train_attn_blocks),
+                    "resnet": int(self.config.train_resnet_blocks),
+                },
+                "midblocks": {
+                    "attn": int(self.config.train_attn_blocks),
+                    "resnet": int(self.config.train_resnet_blocks),
+                },
+                "upblocks": {
+                    "attn": int(self.config.train_attn_blocks),
+                    "resnet": int(self.config.train_resnet_blocks),
+                },
+            }
+
             model_ranks = parse_target_ranks(model_target_ranks)
 
             base_rank = self.config.lora_base_ranks[model_name]
@@ -721,7 +721,7 @@ class StableDiffusionModel:
                 use_dora=self.config.use_dora,
                 rank_pattern=target_ranks,
                 target_modules="|".join(target_ranks.keys()),
-                modules_to_save=modules_to_save,
+                modules_to_save=list(modules_to_save),
             )
 
         if copy_model:
