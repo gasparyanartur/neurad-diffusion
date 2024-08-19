@@ -1,5 +1,5 @@
-logging_dir: logs/finetune/cn
-output_dir: outputs/finetune/cn
+logging_dir: logs/train_lora
+output_dir: outputs/train_lora
 project_name: train-lora
 
 train_batch_size: 1
@@ -27,7 +27,7 @@ loggers: []
 
 
 diffusion_config:
-  type: "cn"
+  type: "sd"
   noise_strength: 0.1
   num_inference_steps: 50
 
@@ -39,7 +39,6 @@ diffusion_config:
 
   models_to_train_lora:
     - unet
-    - controlnet
 
   lora_base_ranks:
     unet: 4

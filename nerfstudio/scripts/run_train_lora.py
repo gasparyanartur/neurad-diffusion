@@ -194,6 +194,9 @@ class SingleSceneTrainingDatasetConfig(BaseModel):
     camera: str = "front_camera"
     ref_camera: str = "front_left_camera"
 
+    dataset_path: Path = Path("data", "pandaset")
+    nerf_output_dir: Path = Path("data", "nerf_outputs")
+
     random_crop: bool = False
     conditioning: Tuple[str, ...] = ("ray",)
 
@@ -244,7 +247,12 @@ class SingleSceneTrainingDatasetConfig(BaseModel):
             iter_numeric_names(self.sample_start, self.sample_end, self.sample_step)
         )
 
+        dataset_path = (
+            self.dataset_path if dataset_type != "nerf_out" else self.nerf_output_dir
+        )
+
         dataset_config = DatasetConfig(
+            dataset_path=dataset_path,
             data_specs=cast(
                 Dict[str, DataSpecT],
                 data_specs,
@@ -876,7 +884,7 @@ def get_validation_renders(
     }
 
 
-@torch.no_grad
+@torch.no_grad()
 def get_reference_outputs(
     accelerator: Accelerator,
     train_config: TrainConfig,
@@ -1327,9 +1335,10 @@ def setup_accelerator(train_config: TrainConfig) -> Accelerator:
         )
 
     if accelerator.is_main_process:
-        train_config.output_dir.mkdir(exist_ok=True, parents=True)
-        (train_config.output_dir / train_config.job_id).mkdir(exist_ok=True)
-        train_config.logging_dir.mkdir(exist_ok=True)
+        if not train_config.output_dir.exists():
+            train_config.output_dir.mkdir(exist_ok=True, parents=True)
+            (train_config.output_dir / train_config.job_id).mkdir(exist_ok=True)
+            train_config.logging_dir.mkdir(exist_ok=True)
 
         if train_config.push_to_hub:
             raise NotImplementedError
