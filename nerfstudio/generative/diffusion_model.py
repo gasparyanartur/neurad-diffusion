@@ -391,7 +391,7 @@ class DiffusionModelConfig(BaseModel):
 
     losses: Tuple[str, ...] = ("mse",)
 
-    lora_base_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4}
+    lora_base_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4, "text_encoder": 4}
 
     train_attn_blocks: bool = True
     train_resnet_blocks: bool = True

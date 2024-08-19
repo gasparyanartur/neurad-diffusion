@@ -386,7 +386,6 @@ class TrainConfig(BaseSettings):
         lora_weights=None,
         models_to_train_lora=("unet",),
         models_to_load_lora=(),
-        lora_base_ranks={"unet": 4, "controlnet": 4, "text_encoder": 4},
         use_dora=True,
         lora_model_prefix="lora_",
         conditioning_signals=("ray",),

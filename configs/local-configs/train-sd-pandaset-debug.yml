@@ -22,8 +22,8 @@ lr_warmup_steps: 1000
 
 use_recreation_loss: False
 
-loggers: ["wandb"]
-#loggers: []
+#loggers: ["wandb"]
+loggers: []
 
 
 diffusion_config:
@@ -42,6 +42,7 @@ diffusion_config:
 
   lora_base_ranks:
     unet: 4
+    controlnet: 4
 
 dataset_configs:
   type: single_scene

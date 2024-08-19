@@ -1,5 +1,0 @@
-model:
-  model_config_params:
-    model_name: mock
-
-  model_forward_params: {}
