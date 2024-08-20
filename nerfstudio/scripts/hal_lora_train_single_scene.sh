@@ -14,7 +14,7 @@ fi
 
 
 lora_train_config=${LORA_TRAIN_CONFIG:-"configs/hal-configs/train_model.yml"}
-image_path=${IMAGE_PATH:-"/staging/agp/masterthesis/nerf-thesis-shared/containers/neuraddiffusion-24_05_24.sif"}
+image_path=${IMAGE_PATH:-"containers/neuraddiffusion-24_05_24.sif"}
 
 main_process_port=${MAIN_PROCESS_PORT:-29500}
 num_processes=${NUM_PROCESSES:-1}
@@ -26,12 +26,12 @@ logging_dir=${LOGGING_DIR:-"logs/finetune/slurm"}
 output_dir=${OUTPUT_DIR:-"outputs/finetune"}
 
 dataset_dir=${DATASET_DIR:-"data/pandaset"}
-nerf_output_dir=${NERF_OUTPUT_DIR:-"data/nerf_out"}
+nerf_output_dir=${NERF_OUTPUT_DIR:-"data/nerf_outputs"}
 
 train_batch_size=${TRAIN_BATCH_SIZE:-"1"}
 dataloader_num_workers=${DATALOADER_NUM_WORKERS:-"4"}
 
-diffusion_type=${DIFFUSION_TYPE:-"cn"}
+diffusion_type=${DIFFUSION_TYPE:-"sd"}
 
 #singularity exec --env PYTHONPATH=$workdir --env WANDB_API_KEY=$wandb_api_key --bind /staging:/staging -H $workdir --nv $image_path accelerate launch --num_processes=$num_processes --num_machines=$num_machines --dynamo_backend=$dynamo_backend --mixed_precision=$mixed_precision --main_process_port=$main_process_port scripts/run_train_lora.py $config_path
 singularity exec --nv \

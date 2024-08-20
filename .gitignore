@@ -197,8 +197,9 @@ camera_paths/
 masks/
 *.sif
 
-# Imaginedriving-related
+# diffusion nerf related
 neurad-env/*
 venv
 logs
 outputs
+containers
