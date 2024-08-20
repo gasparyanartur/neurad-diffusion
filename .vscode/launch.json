@@ -318,10 +318,13 @@
       "program": "nerfstudio/scripts/run_train_lora.py",
       "env": {
           "PYTHONPATH":"${workspaceFolder}",
-          "LORA_TRAIN_CONFIG": "configs/local-configs/train-sd-pandaset-debug.yml"
+          "LORA_TRAIN_CONFIG": "configs/local-configs/train_lora.yml"
       },
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
+      "args": [
+        "--diffusion_config.type", "sd"
+      ]
     },
     {
       "name": "Python: train cn pandaset",
@@ -334,6 +337,9 @@
       },
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
+      "args": [
+        "--diffusion_config.type", "cn"
+      ]
     },
   ]
 }

@@ -47,8 +47,11 @@ Merge with NeuRAD
 - Update vscode launch scripts for diffusion training [x]
 - bugfix: Interpolate ray conditioning between rays (128,128)->(512,512) [x]
 - bugfix: Fix bugs in NeuRAD [x]
-- rsync image to other PC [ ]
-- Update SLURM training scripts
+- rsync image to other PC [x]
+- Create SLURM single LoRA []
+- Setup HAL directories
+- Train SLURM single LoRA on HAL
+- Create SLURM 
 - Add new pipeline to training
 - Test new pipeline
 - Train small cn model

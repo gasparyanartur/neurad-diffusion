@@ -236,7 +236,9 @@ class SingleSceneTrainingDatasetConfig(BaseModel):
 
         if dataset_type == "nerf_out":
             data_specs["rgb_gt"] = RgbDataSpec(camera=camera)
-            data_specs["rgb_nerf"] = NerfOutputSpec(camera=camera)
+            data_specs["rgb_nerf"] = NerfOutputSpec(
+                camera=camera, nerf_output_path=str(self.nerf_output_dir)
+            )
         else:
             data_specs["rgb"] = RgbDataSpec(camera=camera)
 
@@ -247,12 +249,8 @@ class SingleSceneTrainingDatasetConfig(BaseModel):
             iter_numeric_names(self.sample_start, self.sample_end, self.sample_step)
         )
 
-        dataset_path = (
-            self.dataset_path if dataset_type != "nerf_out" else self.nerf_output_dir
-        )
-
         dataset_config = DatasetConfig(
-            dataset_path=dataset_path,
+            dataset_path=self.dataset_path,
             data_specs=cast(
                 Dict[str, DataSpecT],
                 data_specs,

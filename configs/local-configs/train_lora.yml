@@ -52,5 +52,8 @@ dataset_configs:
   sample_start: '00'
   sample_end: '00'
 
+  dataset_dir: data/pandaset
+  nerf_output_dir: data/nerf_outputs
+
   conditioning:
     - ray
