@@ -1004,8 +1004,8 @@ def pack_images_for_wandb(labels, all_imgs, metas):
 
 def make_wandb_name(train_config: TrainConfig) -> str:
     parts = [
-        f"{datetime.datetime.now().strftime('%S:%M:%H_%d-%m-%Y')}"
         f"{train_config.job_id:06}",
+        f"{datetime.datetime.now().strftime('%y%m%d_%H%M%S')}"
         f"S{int(train_config.train_noise_strength*100)}",
         f"UN{train_config.diffusion_config.lora_ranks.unet}",    
     ]
