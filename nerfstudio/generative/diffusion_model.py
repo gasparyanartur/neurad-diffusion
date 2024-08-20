@@ -403,7 +403,7 @@ class DiffusionModelConfig(BaseModel):
 
     losses: Tuple[str, ...] = ("mse",)
 
-    lora_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4, "text_encoder": 4}
+    lora_ranks: LoraRanks = LoraRanks()
 
     train_attn_blocks: bool = True
     train_resnet_blocks: bool = True
