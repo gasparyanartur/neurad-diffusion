@@ -40,7 +40,7 @@ diffusion_config:
   models_to_train_lora:
     - unet
 
-  lora_base_ranks:
+  lora_ranks:
     unet: 4
     controlnet: 4
 

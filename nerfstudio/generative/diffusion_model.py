@@ -403,7 +403,7 @@ class DiffusionModelConfig(BaseModel):
 
     losses: Tuple[str, ...] = ("mse",)
 
-    lora_base_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4, "text_encoder": 4}
+    lora_ranks: Dict[str, int] = {"unet": 4, "controlnet": 4, "text_encoder": 4}
 
     train_attn_blocks: bool = True
     train_resnet_blocks: bool = True
@@ -739,7 +739,7 @@ class StableDiffusionModel:
 
             model_ranks = parse_target_ranks(model_target_ranks)
 
-            base_rank = self.config.lora_base_ranks[model_name]
+            base_rank = self.config.lora_ranks[model_name]
             target_ranks = {k: v * base_rank for k, v in model_ranks.items()}
 
             modules_to_save = self.config.lora_modules_to_save[model_name]

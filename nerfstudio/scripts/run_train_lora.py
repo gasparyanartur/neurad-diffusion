@@ -994,11 +994,11 @@ def make_wandb_name(train_config: TrainConfig) -> str:
         f"{datetime.datetime.now().strftime('%S:%M:%H_%d-%m-%Y')}"
         f"{train_config.job_id:06}",
         f"S{int(train_config.train_noise_strength*100)}",
-        f"UN{train_config.diffusion_config.lora_base_ranks['unet']}",
+        f"UN{train_config.diffusion_config.lora_ranks['unet']}",
     ]
 
     if train_config.diffusion_config.type == DiffusionModelType.cn:
-        parts.append(f"CN{train_config.diffusion_config.lora_base_ranks['controlnet']}")
+        parts.append(f"CN{train_config.diffusion_config.lora_ranks['controlnet']}")
 
     return "_".join(parts)
 
@@ -1163,8 +1163,13 @@ def train_epoch(
             loss_window = 100
             running_loss = np.mean(train_state.loss_history[-loss_window:])
 
-            if (train_state.global_step > 0) and (train_state.global_step % train_config.train_log_freq == 0):
-                accelerator.log({"train_loss": train_loss, "train_loss (100 steps)": running_loss}, step=train_state.global_step)
+            if (train_state.global_step > 0) and (
+                train_state.global_step % train_config.train_log_freq == 0
+            ):
+                accelerator.log(
+                    {"train_loss": train_loss, "train_loss (100 steps)": running_loss},
+                    step=train_state.global_step,
+                )
 
             logs = {
                 "epoch": train_state.epoch,
