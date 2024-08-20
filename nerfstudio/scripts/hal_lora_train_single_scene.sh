@@ -21,7 +21,7 @@ num_machines=${NUM_MACHINES:-1}
 dynamo_backend=${DYNAMO_BACKEND:-"no"}
 mixed_precision=${MIXED_PRECISION:-"no"}
 
-job_id=${SLURM_ARRAY_JOB_ID:-"000000"}
+job_id=${SLURM_JOB_ID:-"000000"}
 
 singularity exec --nv \
     --bind $PWD:/nerfstudio \

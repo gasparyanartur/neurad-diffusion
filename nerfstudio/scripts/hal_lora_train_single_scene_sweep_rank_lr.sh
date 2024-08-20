@@ -5,17 +5,15 @@ lora_train_config=${LORA_TRAIN_CONFIG:-"configs/hal-configs/train_lora.yml"}
 image_path=${IMAGE_PATH:-"containers/neurad_140824.sif"}
 
 main_process_port=${MAIN_PROCESS_PORT:-29500}
-num_processes=${NUM_PROCESSES:-8}
+num_processes=${NUM_PROCESSES:-1}
 num_machines=${NUM_MACHINES:-1}
 dynamo_backend=${DYNAMO_BACKEND:-"no"}
 mixed_precision=${MIXED_PRECISION:-"no"}
 
 
 # parameters
-#lora_ranks=("4" "8" "16" "32" "64" "128")
-#learning_rates=("0.0001" "0.0002" "0.0003")
-lora_ranks=("4" "8")
-learning_rates=("0.0001" "0.0002")
+lora_ranks=("4" "8" "16" "32" "64" "128")
+learning_rates=("0.0001" "0.0002" "0.0003")
 
 
 # fixed parameters
