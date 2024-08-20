@@ -48,10 +48,12 @@ Merge with NeuRAD
 - bugfix: Interpolate ray conditioning between rays (128,128)->(512,512) [x]
 - bugfix: Fix bugs in NeuRAD [x]
 - rsync image to other PC [x]
-- Create SLURM single LoRA []
-- Setup HAL directories
-- Train SLURM single LoRA on HAL
-- Create SLURM 
+- Create SLURM single LoRA [x]
+- Setup HAL directories [x]
+- Train SLURM single LoRA on HAL [x]
+- Create SLURM neurad []
+- Create SLURM lora batch []
+- Create slurm neurad batch []
 - Add new pipeline to training
 - Test new pipeline
 - Train small cn model
