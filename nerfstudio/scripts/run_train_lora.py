@@ -205,7 +205,10 @@ class SingleSceneTrainingDatasetConfig(BaseModel):
     scene: str = "001"
     sample_start: str = "00"
     sample_end: str = "80"
-    sample_step: int = 1
+    sample_step_train: int = 1
+    sample_step_val: int = 4
+    sample_step_render: int = 10
+    sample_step_ref: int = 10
 
     use_render: bool = True
     use_nerf_out: bool = True
@@ -246,8 +249,17 @@ class SingleSceneTrainingDatasetConfig(BaseModel):
         if "ray" in self.conditioning:
             data_specs["ray"] = RayDataSpec(camera=camera)
 
+        if dataset_type == "nerf_out":
+            sample_step = self.sample_step_ref
+        elif dataset_type == "render":
+            sample_step = self.sample_step_render
+        elif dataset_type == "val":
+            sample_step = self.sample_step_val
+        elif dataset_type == "train":
+            sample_step = self.sample_step_train
+
         samples = list(
-            iter_numeric_names(self.sample_start, self.sample_end, self.sample_step)
+            iter_numeric_names(self.sample_start, self.sample_end, sample_step)
         )
 
         dataset_config = DatasetConfig(
@@ -410,7 +422,7 @@ class TrainConfig(BaseSettings):
         scene="001",
         sample_start="00",
         sample_end="00",
-        sample_step=1,
+        sample_step_train=1,
     )
 
     @classmethod
@@ -1253,49 +1265,45 @@ def validate_model(
             step=train_state.global_step,
         )
 
-    imgs_to_log = {}
-    if val_renders:
-        imgs_to_log.update(
-            pack_images_for_wandb(
-                [
-                    f"{run_prefix}_ground_truth",
-                    f"{run_prefix}_diffusion_output",
-                    f"noisy_{run_prefix}_ground_truth",
-                ],
-                [
-                    val_renders["rgb_gt"],
-                    val_renders["rgb_out"],
-                    val_renders["rgb_noisy"],
-                ],
-                val_renders["meta"],
-            )
-        )
-    if ref_renders:
-        imgs_to_log.update(
-            pack_images_for_wandb(
-                [
-                    f"{run_prefix}_reference_ground_truth",
-                    f"{run_prefix}_reference_nvs_output",
-                    f"{run_prefix}_reference_diffusion_output",
-                ],
-                [
-                    ref_renders["ref_gt"],
-                    ref_renders["ref_nvs_out"],
-                    ref_renders["ref_gen_out"],
-                ],
-                ref_renders["ref_meta"],
-            )
-        )
-
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
             raise NotImplementedError
 
         elif tracker.name == "wandb":
-            tracker.log_images(
-                imgs_to_log,
-                step=train_state.global_step,
-            )
+            if val_renders:
+                tracker.log_images(
+                    pack_images_for_wandb(
+                        [
+                            f"{run_prefix}_ground_truth",
+                            f"{run_prefix}_diffusion_output",
+                            f"noisy_{run_prefix}_ground_truth",
+                        ],
+                        [
+                            val_renders["rgb_gt"],
+                            val_renders["rgb_out"],
+                            val_renders["rgb_noisy"],
+                        ],
+                        val_renders["meta"],
+                    ),
+                    step=train_state.global_step,
+                )
+            if ref_renders:
+                tracker.log_images(
+                    pack_images_for_wandb(
+                        [
+                            f"{run_prefix}_reference_ground_truth",
+                            f"{run_prefix}_reference_nvs_output",
+                            f"{run_prefix}_reference_diffusion_output",
+                        ],
+                        [
+                            ref_renders["ref_gt"],
+                            ref_renders["ref_nvs_out"],
+                            ref_renders["ref_gen_out"],
+                        ],
+                        ref_renders["ref_meta"],
+                    ),
+                    step=train_state.global_step,
+                )
 
 
 def setup_accelerator(train_config: TrainConfig) -> Accelerator:
