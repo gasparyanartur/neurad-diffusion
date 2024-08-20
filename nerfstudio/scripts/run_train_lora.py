@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 from typing import (
     Any,
     Dict,
@@ -317,7 +318,7 @@ class TrainConfig(BaseSettings):
     logging_dir: Path = Field(default=Path("logs", "train-lora"))
 
     job_id: str = Field(default="0", alias="slurm_job_id")
-    project_name: str = "diffusion-nerf"
+    project_name: str = "lora_train"
 
     checkpoint_path: Optional[str] = None
 
@@ -987,6 +988,20 @@ def pack_images_for_wandb(labels, all_imgs, metas):
     return packed_imgs
 
 
+def make_wandb_name(train_config: TrainConfig) -> str:
+    parts = [
+        f"{datetime.datetime.now().strftime('%S:%M:%H_%d-%m-%Y')}"
+        f"{train_config.job_id:06}",
+        f"S{int(train_config.train_noise_strength*100)}",
+        f"UN{train_config.diffusion_config.lora_base_ranks['unet']}",
+    ]
+
+    if train_config.diffusion_config.type == DiffusionModelType.cn:
+        parts.append(f"CN{train_config.diffusion_config.lora_base_ranks['controlnet']}")
+
+    return "_".join(parts)
+
+
 def train_epoch(
     accelerator: Accelerator,
     optimizer: torch.optim.Optimizer,
@@ -1364,6 +1379,7 @@ def setup_accelerator(train_config: TrainConfig) -> Accelerator:
                 dir=train_config.logging_dir / "wandb",
                 group=train_config.wandb_group or os.getenv("WANDB_GROUP"),
                 reinit=True,
+                name=make_wandb_name(train_config),
                 config=train_config.model_dump(),
             )
 

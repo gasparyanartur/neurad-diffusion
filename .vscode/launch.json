@@ -323,7 +323,8 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "args": [
-        "--diffusion_config.type", "sd"
+        "--diffusion_config.type", "sd",
+        "--loggers", "wandb",
       ]
     },
     {

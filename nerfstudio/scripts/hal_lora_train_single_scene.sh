@@ -39,4 +39,5 @@ singularity exec --nv \
         --mixed_precision=$mixed_precision \
         --main_process_port=$main_process_port \
     nerfstudio/scripts/run_train_lora.py \
+        --job_id=${SLURM_ARRAY_JOB_ID:-"000000"} \
         ${@:1} 
