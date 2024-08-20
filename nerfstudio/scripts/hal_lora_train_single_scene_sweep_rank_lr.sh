@@ -37,6 +37,5 @@ for lora_rank in ${lora_ranks[@]}; do
             --diffusion_config.lora_ranks.controlnet $lora_rank \
             --learning_rate $learning_rate
 
-        main_process_port=$((main_process_port + 1))
     done
 done
