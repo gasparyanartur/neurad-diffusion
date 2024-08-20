@@ -22,18 +22,36 @@ num_machines=${NUM_MACHINES:-1}
 dynamo_backend=${DYNAMO_BACKEND:-"no"}
 mixed_precision=${MIXED_PRECISION:-"no"}
 
-job_id=${SLURM_ARRAY_JOB_ID:-"000000"}
-task_id=${SLURM_ARRAY_TASK_ID:-"1"}
+# SLURM_JOB_ID is unque for each job
+# SLURM_ARRAY_JOB_ID is the same for each job, with different SLURM_ARRAY_TASK_ID
+# We want to use the unique job id in the actual python script, but use params corresponding to task id
+
+job_id=${SLURM_JOB_ID:-"000000"}
+task_id=${SLURM_ARRAY_TASK_ID:-"0"}
 
 array_param_path=${ARRAY_PARAM_PATH:-nerfstudio/scripts/train_lora-array_param-rank_lr.json}
 
-array_params_count=$(python3.10 nerfstudio/scripts/slurm_array_var_parser.py $array_param_path -s)
+array_params_count=$(
+    singularity exec \
+        --bind $PWD:/nerfstudio \
+        --env PYTHONPATH=/nerfstudio \
+        --home /nerfstudio \
+        $image_path \
+        python3.10 nerfstudio/scripts/slurm_array_var_parser.py $array_param_path -s
+)
 if [[ $array_param_count -gt $SLURM_ARRAY_TASK_MAX ]]; then
     echo "Array parameter count $array_param_count is greater than SLURM_ARRAY_TASK_MAX $SLURM_ARRAY_TASK_MAX - exiting"
     exit 1
 fi
 
-array_params=$(python3.10 nerfstudio/scripts/slurm_array_var_parser.py $array_param_path -i $task_id)
+array_params=$(
+    singularity exec \
+        --bind $PWD:/nerfstudio \
+        --env PYTHONPATH=/nerfstudio \
+        --home /nerfstudio \
+        $image_path \
+        python3.10 nerfstudio/scripts/slurm_array_var_parser.py $array_param_path -i $task_id
+)
 if [[ -z ${array_params} ]]; then 
     echo "No array parameters found for task $task_id - exiting"
     exit 1

@@ -672,6 +672,7 @@ def save_checkpoint(
 ) -> None:
     # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
     output_dir = train_config.output_dir / train_config.job_id
+    output_dir.mkdir(exist_ok=True)
 
     if train_config.max_num_checkpoints is not None:
         cp_paths = find_checkpoint_paths(output_dir)
