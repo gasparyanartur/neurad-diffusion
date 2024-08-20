@@ -5,8 +5,8 @@ project_name: train-lora
 train_batch_size: 1
 dataloader_num_workers: 8
 
-n_epochs: 1000
-val_freq: 10
+n_epochs: 100
+val_freq: 1
 
 train_noise_strength: 0.1
 train_noise_num_steps: null
@@ -22,8 +22,8 @@ lr_warmup_steps: 1000
 
 use_recreation_loss: False
 
-#loggers: ["wandb"]
-loggers: []
+loggers: ["wandb"]
+#loggers: []
 
 
 diffusion_config:
