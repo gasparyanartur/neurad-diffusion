@@ -21,7 +21,8 @@ num_machines=${NUM_MACHINES:-1}
 dynamo_backend=${DYNAMO_BACKEND:-"no"}
 mixed_precision=${MIXED_PRECISION:-"no"}
 
-#singularity exec --env PYTHONPATH=$workdir --env WANDB_API_KEY=$wandb_api_key --bind /staging:/staging -H $workdir --nv $image_path accelerate launch --num_processes=$num_processes --num_machines=$num_machines --dynamo_backend=$dynamo_backend --mixed_precision=$mixed_precision --main_process_port=$main_process_port scripts/run_train_lora.py $config_path
+job_id=${SLURM_ARRAY_JOB_ID:-"000000"}
+
 singularity exec --nv \
     --bind $PWD:/nerfstudio \
     --bind /staging:/staging  \
@@ -38,6 +39,6 @@ singularity exec --nv \
         --dynamo_backend=$dynamo_backend \
         --mixed_precision=$mixed_precision \
         --main_process_port=$main_process_port \
-    nerfstudio/scripts/run_train_lora.py \
-        --job_id=${SLURM_ARRAY_JOB_ID:-"000000"} \
+    nerfstudio/scripts/train_lora.py \
+        --job_id $job_id \
         ${@:1} 
