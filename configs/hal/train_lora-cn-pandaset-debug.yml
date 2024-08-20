@@ -1,0 +1,57 @@
+logging_dir: logs/train_lora
+output_dir: outputs/train_lora
+project_name: train-lora
+
+train_batch_size: 1
+dataloader_num_workers: 8
+
+n_epochs: 1000
+val_freq: 10
+
+train_noise_strength: 0.1
+train_noise_num_steps: null
+
+
+lr_scheduler: "constant"
+lr_warmup_steps: 1000
+
+#lr_scheduler: "cosine_with_restarts"
+#lr_warmup_steps: 1000
+#lr_scheduler_kwargs:
+#  num_cycles: 2
+
+use_recreation_loss: False
+
+#loggers: ["wandb"]
+loggers: []
+
+
+diffusion_config:
+  type: "cn"
+  noise_strength: 0.1
+  num_inference_steps: 50
+
+  metrics: 
+    - psnr
+    - ssim
+    - lpips
+    - mse
+
+  models_to_train_lora:
+    - unet
+    - controlnet
+
+  lora_base_ranks:
+    unet: 4
+    controlnet: 4
+
+dataset_configs:
+  type: single_scene
+  camera: front_camera
+  ref_camera: front_left_camera
+  dataset_name: pandaset
+  sample_start: '00'
+  sample_end: '79'
+
+  conditioning:
+    - ray
