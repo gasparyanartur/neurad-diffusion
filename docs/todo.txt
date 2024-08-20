@@ -52,8 +52,8 @@ Merge with NeuRAD
 - Setup HAL directories [x]
 - Train SLURM single LoRA on HAL [x]
 - Create SLURM lora batch [x]
+- Change batch to use array instead [x]
 - Create SLURM neurad []
-- Create slurm neurad batch []
 - Add new pipeline to training
 - Test new pipeline
 - Train small cn model
