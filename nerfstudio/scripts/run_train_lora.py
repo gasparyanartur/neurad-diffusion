@@ -205,7 +205,10 @@ class SingleSceneTrainingDatasetConfig(BaseModel):
     scene: str = "001"
     sample_start: str = "00"
     sample_end: str = "80"
-    sample_step: int = 1
+    sample_step_train: int = 1
+    sample_step_val: int = 4
+    sample_step_render: int = 10
+    sample_step_ref: int = 10
 
     use_render: bool = True
     use_nerf_out: bool = True
@@ -246,8 +249,17 @@ class SingleSceneTrainingDatasetConfig(BaseModel):
         if "ray" in self.conditioning:
             data_specs["ray"] = RayDataSpec(camera=camera)
 
+        if dataset_type == "nerf_out":
+            sample_step = self.sample_step_ref
+        elif dataset_type == "render":
+            sample_step = self.sample_step_render
+        elif dataset_type == "val":
+            sample_step = self.sample_step_val
+        elif dataset_type == "train":
+            sample_step = self.sample_step_train
+
         samples = list(
-            iter_numeric_names(self.sample_start, self.sample_end, self.sample_step)
+            iter_numeric_names(self.sample_start, self.sample_end, sample_step)
         )
 
         dataset_config = DatasetConfig(
@@ -410,7 +422,7 @@ class TrainConfig(BaseSettings):
         scene="001",
         sample_start="00",
         sample_end="00",
-        sample_step=1,
+        sample_step_train=1,
     )
 
     @classmethod
