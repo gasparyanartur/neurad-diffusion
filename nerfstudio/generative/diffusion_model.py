@@ -85,6 +85,18 @@ metric_improvement_direction = {
 }
 
 
+class LoraRanks(BaseModel):
+    unet: int = 4
+    controlnet: int = 4
+    text_encoder: int = 4
+
+    def __getitem__(self, model_name: str) -> int:
+        if not hasattr(self, model_name):
+            raise ValueError(f"Model name {model_name} not found in LoraRanks.")
+
+        return getattr(self, model_name)
+
+
 def is_metric_improved(
     metric_name: str,
     original_value: Union[float, Tensor],
