@@ -1284,6 +1284,7 @@ def validate_model(
 
 def setup_accelerator(train_config: TrainConfig) -> Accelerator:
 
+    (train_config.logging_dir / "accelerator").mkdir(exist_ok=True, parents=True)
     accelerator = Accelerator(
         gradient_accumulation_steps=train_config.gradient_accumulation_steps,
         mixed_precision=(
@@ -1294,7 +1295,7 @@ def setup_accelerator(train_config: TrainConfig) -> Accelerator:
         log_with=list(filter(lambda s: s != "", train_config.loggers)),
         project_config=ProjectConfiguration(
             project_dir=str(train_config.output_dir),
-            logging_dir=str(train_config.logging_dir),
+            logging_dir=str(train_config.logging_dir / "accelerator"),
         ),
         kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)],
     )
@@ -1358,14 +1359,11 @@ def setup_accelerator(train_config: TrainConfig) -> Accelerator:
         import wandb
 
         if accelerator.is_local_main_process:
+            (train_config.logging_dir / "wandb").mkdir(exist_ok=True, parents=True)
             wandb.init(
                 project=train_config.wandb_project or os.getenv("WANDB_PROJECT"),
                 entity=train_config.wandb_entity or os.getenv("WANDB_ENTITY"),
-                dir=(
-                    train_config.logging_dir
-                    if train_config.logging_dir
-                    else get_env("WANDB_DIR")
-                ),
+                dir=train_config.logging_dir / "wandb",
                 group=train_config.wandb_group or os.getenv("WANDB_GROUP"),
                 reinit=True,
                 config=train_config.model_dump(),
@@ -1606,7 +1604,6 @@ def main() -> None:
         #    train_config.global_step % train_config.checkpointing_steps == 0
         # ):
         if accelerator.is_main_process:
-            # TODO: Replace best
             if train_config.checkpoint_strategy == "best" and is_metric_improved(
                 train_config.checkpoint_metric,
                 train_state.best_saved_metric,

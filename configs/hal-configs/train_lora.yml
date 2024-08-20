@@ -27,7 +27,7 @@ loggers: []
 
 
 diffusion_config:
-  type: "cn"
+  type: "sd"
   noise_strength: 0.1
   num_inference_steps: 50
 
@@ -39,7 +39,6 @@ diffusion_config:
 
   models_to_train_lora:
     - unet
-    - controlnet
 
   lora_base_ranks:
     unet: 4
@@ -52,6 +51,9 @@ dataset_configs:
   dataset_name: pandaset
   sample_start: '00'
   sample_end: '79'
+
+  dataset_dir: data/pandaset
+  nerf_output_dir: data/nerf_outputs
 
   conditioning:
     - ray
