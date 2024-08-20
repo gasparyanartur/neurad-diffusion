@@ -1253,49 +1253,45 @@ def validate_model(
             step=train_state.global_step,
         )
 
-    imgs_to_log = {}
-    if val_renders:
-        imgs_to_log.update(
-            pack_images_for_wandb(
-                [
-                    f"{run_prefix}_ground_truth",
-                    f"{run_prefix}_diffusion_output",
-                    f"noisy_{run_prefix}_ground_truth",
-                ],
-                [
-                    val_renders["rgb_gt"],
-                    val_renders["rgb_out"],
-                    val_renders["rgb_noisy"],
-                ],
-                val_renders["meta"],
-            )
-        )
-    if ref_renders:
-        imgs_to_log.update(
-            pack_images_for_wandb(
-                [
-                    f"{run_prefix}_reference_ground_truth",
-                    f"{run_prefix}_reference_nvs_output",
-                    f"{run_prefix}_reference_diffusion_output",
-                ],
-                [
-                    ref_renders["ref_gt"],
-                    ref_renders["ref_nvs_out"],
-                    ref_renders["ref_gen_out"],
-                ],
-                ref_renders["ref_meta"],
-            )
-        )
-
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
             raise NotImplementedError
 
         elif tracker.name == "wandb":
-            tracker.log_images(
-                imgs_to_log,
-                step=train_state.global_step,
-            )
+            if val_renders:
+                tracker.log_images(
+                    pack_images_for_wandb(
+                        [
+                            f"{run_prefix}_ground_truth",
+                            f"{run_prefix}_diffusion_output",
+                            f"noisy_{run_prefix}_ground_truth",
+                        ],
+                        [
+                            val_renders["rgb_gt"],
+                            val_renders["rgb_out"],
+                            val_renders["rgb_noisy"],
+                        ],
+                        val_renders["meta"],
+                    ),
+                    step=train_state.global_step,
+                )
+            if ref_renders:
+                tracker.log_images(
+                    pack_images_for_wandb(
+                        [
+                            f"{run_prefix}_reference_ground_truth",
+                            f"{run_prefix}_reference_nvs_output",
+                            f"{run_prefix}_reference_diffusion_output",
+                        ],
+                        [
+                            ref_renders["ref_gt"],
+                            ref_renders["ref_nvs_out"],
+                            ref_renders["ref_gen_out"],
+                        ],
+                        ref_renders["ref_meta"],
+                    ),
+                    step=train_state.global_step,
+                )
 
 
 def setup_accelerator(train_config: TrainConfig) -> Accelerator:
