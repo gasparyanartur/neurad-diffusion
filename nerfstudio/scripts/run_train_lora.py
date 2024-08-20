@@ -369,6 +369,7 @@ class TrainConfig(BaseSettings):
     wandb_project: str = "diffusion-nerf"
     wandb_entity: str = "arturruiqi"
     wandb_group: str = "finetune-lora"
+    train_log_freq: int = 4
 
     push_to_hub: bool = False  # Not Implemented
     hub_token: Optional[str] = None
@@ -1162,11 +1163,8 @@ def train_epoch(
             loss_window = 100
             running_loss = np.mean(train_state.loss_history[-loss_window:])
 
-            accelerator.log({"train_loss": train_loss}, step=train_state.global_step)
-            accelerator.log(
-                {"train_loss (100 steps)": running_loss},
-                step=train_state.global_step,
-            )
+            if (train_state.global_step > 0) and (train_state.global_step % train_config.train_log_freq == 0):
+                accelerator.log({"train_loss": train_loss, "train_loss (100 steps)": running_loss}, step=train_state.global_step)
 
             logs = {
                 "epoch": train_state.epoch,
