@@ -1,0 +1,6 @@
+diffusion:
+    - better diffusion performance -> worse refernce lpips, better on every other metric
+    - hypothesis: it generates clearer picture of the wrong thing
+    - therefore, the hope is that it will average out, but this could very well not be the case
+    - raw diffusion: 0.43 lpips, after few epochs, best model : 0.42, eventually 0.45
+    - the smallest models make small difference, 
