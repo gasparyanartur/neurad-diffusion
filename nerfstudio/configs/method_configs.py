@@ -445,13 +445,14 @@ method_configs["diffusion-nerf"] = TrainerConfig(
         diffusion_model=DiffusionModelConfig(
             type=DiffusionModelType.sd,
             id=DiffusionModelId.sd_v2_1,
+            dtype="fp16",
             lora_weights=None,
             noise_strength=0.1,
             num_inference_steps=50,
             conditioning_scale=0.8,
             conditioning_signals=("ray",),
         ),
-        augment_phase_step=1000,
+        augment_phase_step=0,
         augment_strategy="partial_linear",
     ),
     optimizers={

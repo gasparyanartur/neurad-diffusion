@@ -1,6 +1,12 @@
 
 {"entries": [
     {
+        "keys": ["dataset_configs.scene"],
+        "values": [
+            ["001"]
+        ]
+    },
+    {
         "keys": ["learning_rate"],
         "values": [
             [0.0001, 0.0002, 0.003]

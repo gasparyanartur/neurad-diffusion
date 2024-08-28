@@ -240,38 +240,6 @@
         "--config-output-dir=/home/s0001899/dev/neurad_output/2024-05-23_091132/",
       ]
     },
-
-
-    {
-      "name": "Python: ImagineDriving CPU",
-      "type": "python",
-      "request": "launch",
-      "program": "nerfstudio/scripts/train.py",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "env": {"PYTORCH_ENABLE_MPS_FALLBACK": "1"},
-      "args": [
-        "imaginedriving",
-        "--pipeline.model.eval_num_rays_per_chunk=2048",
-        "--pipeline.model.implementation=torch",
-        "--pipeline.model.sampling.proposal_field_1.grid.actor.use_4d_hashgrid=False",
-        "--pipeline.model.sampling.proposal_field_2.grid.actor.use_4d_hashgrid=False",
-        "--pipeline.model.field.grid.actor.use_4d_hashgrid=False",
-        "--machine.device-type=mps",
-        "--mixed_precision=False",
-        "--pipeline.datamanager.num_processes=0",
-        "--pipeline.datamanager.train-num-lidar-rays-per-batch=128",
-        "--pipeline.datamanager.eval-num-lidar-rays-per-batch=128",
-        "--pipeline.datamanager.train_num_rays_per_batch=16384",
-        "--pipeline.datamanager.eval_num_rays_per_batch=16384",
-        "--vis=tensorboard",
-        "pandaset-data",
-        "--data=./data/pandaset",
-        "--dataset_end_fraction=0.2",
-        "--cameras=front",
-        "--pipeline.diffusion-config-path=configs/mock_model_configs.yml"
-      ]
-    },
     {
       "name": "Python: Splatfacto PandaSet",
       "type": "python",
@@ -286,30 +254,6 @@
         "--data=./data/pandaset",
         "--dataset_end_fraction=1.0",
       ]
-    },
-    {
-      "name": "Python: train controlnet pandaset local debug",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "nerfstudio/scripts/run_train_lora.py",
-      "env": {
-          "PYTHONPATH":"${workspaceFolder}",
-      },
-      "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "args": "configs/local-configs/train-controlnet-pandaset-local-debug.yml"
-    },
-    {
-        "name": "Python: train diffusion pandaset local debug",
-        "type": "debugpy",
-        "request": "launch",
-        "program": "nerfstudio/scripts/run_train_lora.py",
-        "env": {
-            "PYTHONPATH":"${workspaceFolder}",
-        },
-        "cwd": "${workspaceFolder}",
-        "console": "integratedTerminal",
-        "args": "configs/local-configs/train-diffusion-pandaset-local-debug.yml"
     },
     {
       "name": "Python: train sd pandaset",

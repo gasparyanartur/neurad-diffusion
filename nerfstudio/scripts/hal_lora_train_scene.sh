@@ -29,7 +29,7 @@ mixed_precision=${MIXED_PRECISION:-"no"}
 job_id=${SLURM_JOB_ID:-"000000"}
 task_id=${SLURM_ARRAY_TASK_ID:-"0"}
 
-array_param_path=${ARRAY_PARAM_PATH:-nerfstudio/scripts/train_lora-array_param-rank_lr.json}
+array_param_path=${ARRAY_PARAM_PATH:-nerfstudio/scripts/params/train_lora_rank_lr.json}
 
 array_params_count=$(
     singularity exec \

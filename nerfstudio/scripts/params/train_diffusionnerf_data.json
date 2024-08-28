@@ -1,0 +1,16 @@
+
+{"entries": [
+    {
+        "keys": ["--scene"],
+        "values": [
+            ["001"]
+        ]
+    },
+    {
+        "keys": ["--cameras"],
+        "values": [
+            ["front"]
+        ]
+    }
+
+]}

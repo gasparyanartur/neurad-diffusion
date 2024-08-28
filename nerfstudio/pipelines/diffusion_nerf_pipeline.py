@@ -22,6 +22,7 @@ import random
 from copy import deepcopy
 import typing
 
+from pydantic import BaseModel
 import torch
 from torch import Tensor, FloatTensor
 from PIL import Image
@@ -53,6 +54,39 @@ from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.cameras.cameras import Cameras
 
 
+import math
+
+DEG_TO_RAD = math.pi / 180
+
+
+class PoseConfig(BaseModel):
+    pos_x: float = 0.0
+    pos_y: float = 0.0
+    pos_z: float = 0.0
+    rot_x: float = 0.0
+    rot_y: float = 0.0
+    rot_z: float = 0.0
+
+    @property
+    def tensor_deg(self) -> Tensor:
+        return torch.tensor(
+            [self.pos_x, self.pos_y, self.pos_z, self.rot_x, self.rot_y, self.rot_z]
+        )
+
+    @property
+    def tensor_rad(self) -> Tensor:
+        return torch.tensor(
+            [
+                self.pos_x,
+                self.pos_y,
+                self.pos_z,
+                self.rot_x * DEG_TO_RAD,
+                self.rot_y * DEG_TO_RAD,
+                self.rot_z * DEG_TO_RAD,
+            ]
+        )
+
+
 @dataclass
 class DiffusionNerfConfig(VanillaPipelineConfig):
     """Configuration for pipeline instantiation"""
@@ -66,6 +100,9 @@ class DiffusionNerfConfig(VanillaPipelineConfig):
 
     nerf_checkpoint: Optional[str] = None
     """Checkpoint path of the NeRF model."""
+
+    note: str = ""
+    """Note to add to the experiment name."""
 
     calc_fid_steps: Tuple[int, ...] = (
         5000,
@@ -94,24 +131,14 @@ class DiffusionNerfConfig(VanillaPipelineConfig):
     """ Which diffusion augmentation strategy to use.
         Can choose between `none`, `partial_const`, `partial_linear`.
     """
-    augment_probs: Tuple[float, float, float, float, float, float] = (
-        0.3333,
-        0,
-        0,
-        0,
-        0,
-        0.3333,
-    )
-    """Probability of augmenting each dimension if using `full_prob` (Px, Py, Pz, Rx, Ry, Rz)"""
-    # Note: shift left/right is Px, horizontal rotation is Rz
 
-    augment_max_strength: Tuple[float, float, float, float, float, float] = (
-        5.0,
-        0,
-        0,
-        0,
-        0,
-        45,
+    augment_max_strength: PoseConfig = PoseConfig(
+        pos_x=5.0,
+        pos_y=0,
+        pos_z=0,
+        rot_x=0,
+        rot_y=0,
+        rot_z=45,
     )
     """The range in which shifts and rotations get uniformly sampled from. (-x, x)"""
 
@@ -278,8 +305,7 @@ class DiffusionNerfPipeline(VanillaPipeline):
         if event is None:
             event = torch.ones(6, dtype=torch.bool)
 
-        max_strength = torch.tensor(self.config.augment_max_strength)
-        max_strength[3:] = torch.deg2rad(max_strength[3:])
+        max_strength = self.config.augment_max_strength.tensor_rad
 
         if (
             self.config.augment_strategy == "partial_linear"
