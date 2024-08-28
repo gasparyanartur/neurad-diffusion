@@ -43,13 +43,13 @@ execute="singularity exec \
 
 array_param_path=${ARRAY_PARAM_PATH:-nerfstudio/scripts/params/train_lora_rank_lr.json}
 
-array_params_count=$($execute python3.10 nerfstudio/scripts/slurm_array_var_parser.py $array_param_path -s)
+array_params_count=$($execute python3.10 nerfstudio/scripts/param_parser.py $array_param_path -s)
 if [[ $array_param_count -gt $SLURM_ARRAY_TASK_MAX ]]; then
     echo "Array parameter count $array_param_count is greater than SLURM_ARRAY_TASK_MAX $SLURM_ARRAY_TASK_MAX - exiting"
     exit 1
 fi
 
-array_params=$($execute python3.10 nerfstudio/scripts/slurm_array_var_parser.py $array_param_path -i $task_id)
+array_params=$($execute python3.10 nerfstudio/scripts/param_parser.py $array_param_path -i $task_id)
 if [[ -z ${array_params} ]]; then 
     echo "No array parameters found for task $task_id - exiting"
     exit 1
