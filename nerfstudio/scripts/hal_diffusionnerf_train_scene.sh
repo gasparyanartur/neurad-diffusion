@@ -87,7 +87,7 @@ echo "Method: $method"
 experiment_name=${EXPERIMENT_NAME:-$(date +%Y%m%d_%H%M%S_%job_id)}
 nerf_checkpoint_path=${NERF_CHECKPOINT_PATH:-""}
 
-singularity $execute python3.10 -u nerfstudio/scripts/train.py \
+$execute python3.10 -u nerfstudio/scripts/train.py \
     $method \
     --output-dir $output_dir \
     --vis wandb \

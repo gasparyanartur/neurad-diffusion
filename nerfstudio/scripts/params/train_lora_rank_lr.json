@@ -1,6 +1,12 @@
 
 {"entries": [
     {
+        "keys": ["train_config.diffusion_config.type"],
+        "values": [
+            ["sd", "cn"]
+        ]
+    },
+    {
         "keys": ["dataset_configs.scene"],
         "values": [
             ["001"]
@@ -9,7 +15,7 @@
     {
         "keys": ["learning_rate"],
         "values": [
-            [0.0001, 0.0002, 0.003]
+            [0.0001, 0.0002, 0.0003]
         ]
     },
     {
