@@ -165,14 +165,17 @@ cython_debug/
 outputs/
 exports/
 renders/
+logs/
 *.mp4
 *.gif
 *.zip
 # tensorboard log files
 events.out.*
+wandb
 
 # Data
 /data
+data/
 
 # Misc
 old/
@@ -193,3 +196,10 @@ camera_paths/
 */**/._.DS_Store
 masks/
 *.sif
+
+# diffusion nerf related
+neurad-env/*
+venv
+logs
+outputs
+containers

@@ -860,6 +860,8 @@ class DatasetRender(BaseRender):
     """Override path to the dataset."""
     config_output_dir: Optional[Path] = None
     """Override the config output dir. Used to load the model."""
+    cameras: Optional[Tuple[str, ...]] = None
+    """Override the cameras loaded in the dataset."""
     downscale_factor: Optional[float] = None
     """Scaling factor to apply to the camera image resolution."""
     rendered_output_names: List[str] = field(default_factory=lambda: ["all"])
@@ -908,6 +910,10 @@ class DatasetRender(BaseRender):
                 setattr(data_manager_config.dataparser, "downscale_factor", self.downscale_factor)
             # Remove any frame limit on the the dataparser
             config.pipeline.datamanager.dataparser.max_eval_frames = None
+
+            if self.cameras:    # Override cameras if specified
+                config.pipeline.datamanager.dataparser.cameras=self.cameras
+
             return config
 
         config, pipeline, _, _ = eval_setup(

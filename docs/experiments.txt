@@ -1,0 +1,53 @@
+Diffusion:
+
+    Add textual inversion before diffusion
+
+    Benchmark:
+        Trained vs Untrained
+        Shifted NeuRAD outputs (where we have ground truth - Front Left / Front )
+        Ground Truths
+
+        Metrics:
+            FID
+            PSNR
+            SSIM
+
+    Hyperparameter sweep:
+        Sweep parameters:
+            Strength
+            Num Steps
+            Train vs Untrained
+        
+        Across:
+            NeuRAD outputs
+            Ground truths
+
+
+    Training:
+        Rank
+        Noise Strength
+        Conditioning
+        Scene Specific LoRA
+
+NeuRAD:
+    (note: Disable Camera Optimization)
+
+    Base NeuRAD vs Base Diffusion vs Diffusion Lora (vs Diffusion ControlNet Lora)  (plot metrics over time)
+
+    Noise scheudling during trianing (less towards end !)
+
+    Generate Plots for different
+        Image + Metrics
+        - Ground Truth
+        - Diffusion Output (shifted 0m 2m 4m 6m 8m)
+        - NeuRAD Output (shifted 0m 2m 4m 6m 8m)
+
+    When to Introduce diffusion
+        Across augment_phase
+        What strength
+        What scheme (constant vs stochastic)
+
+    Key question:
+        retain old neurad info vs learn new diffusion info
+            retrain: keep metrics high on ground truth
+            learn: improve metrics high for shifted 

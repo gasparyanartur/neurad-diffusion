@@ -124,14 +124,14 @@ def test_orthophoto_camera():
     """Test that the orthographic camera model works."""
     c2w = torch.eye(4)[None, :3, :]
     # apply R and T.
-    R = torch.Tensor(
+    R = torch.tensor(
         [
             [0.5, -0.14644661, 0.85355339],
             [0.5, 0.85355339, -0.14644661],
             [-0.70710678, 0.5, 0.5],
         ]
     ).unsqueeze(0)
-    T = torch.Tensor([[0.5, 0, -0.5]])
+    T = torch.tensor([[0.5, 0, -0.5]])
     c2w[..., :3, :3] = R
     c2w[..., :3, 3] = T
 
@@ -155,12 +155,12 @@ def test_multi_camera_type():
     # here we test two different camera types.
     num_cams = [2]
     c2w = torch.eye(4)[None, :3, :].broadcast_to(*num_cams, 3, 4)
-    cx = torch.Tensor([20]).broadcast_to(*num_cams, 1)
-    cy = torch.Tensor([10]).broadcast_to(*num_cams, 1)
-    fx = torch.Tensor([10]).broadcast_to(*num_cams, 1)
-    fy = torch.Tensor([10]).broadcast_to(*num_cams, 1)
-    h = torch.Tensor([40]).long().broadcast_to(*num_cams, 1)
-    w = torch.Tensor([20]).long().broadcast_to(*num_cams, 1)
+    cx = torch.tensor([20]).broadcast_to(*num_cams, 1)
+    cy = torch.tensor([10]).broadcast_to(*num_cams, 1)
+    fx = torch.tensor([10]).broadcast_to(*num_cams, 1)
+    fy = torch.tensor([10]).broadcast_to(*num_cams, 1)
+    h = torch.tensor([40]).long().broadcast_to(*num_cams, 1)
+    w = torch.tensor([20]).long().broadcast_to(*num_cams, 1)
     camera_type = [CameraType.PERSPECTIVE, CameraType.ORTHOPHOTO]
     multitype_cameras = Cameras(c2w, fx, fy, cx, cy, w, h, camera_type=camera_type)
 

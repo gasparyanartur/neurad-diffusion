@@ -63,7 +63,7 @@ dependencies = [
     "xatlas",
     "trimesh>=3.20.2",
     "timm==0.6.7",
-    "gsplat>=0.1.9",
+    "gsplat==0.1.11",
     "pytorch-msssim",
     "pathos",
     "packaging",
@@ -76,6 +76,7 @@ dependencies = [
 
 # Generative related dependencies
 gen = [
+    "peft>=0.10.0",
     "diffusers>=0.22.0",
     "transformers>=4.29.2",
     "accelerate>=0.19.0",
@@ -96,8 +97,11 @@ dev = [
     "diffusers>=0.22.0",
     "opencv-stubs==0.0.7",
     "transformers>=4.29.2",
+    "peft>=0.10.0",
     # pin torch to <=2.1 to fix https://github.com/pytorch/pytorch/issues/118736
     "torch>=1.13.1,<2.2",
+    "pydantic",
+    "pydantic-settings"
 ]
 
 # Documentation related packages
@@ -117,18 +121,18 @@ docs = [
     "sphinxext-opengraph==0.6.3"
 ]
 
-[project.scripts]
+#[project.scripts]
 # Note, add entrypoint name to nerfstudio/scripts/completions/install.py to include CLI completion
-ns-install-cli = "nerfstudio.scripts.completions.install:entrypoint"
-ns-process-data = "nerfstudio.scripts.process_data:entrypoint"
-ns-download-data = "nerfstudio.scripts.downloads.download_data:entrypoint"
-ns-train = "nerfstudio.scripts.train:entrypoint"
-ns-viewer = "nerfstudio.scripts.viewer.run_viewer:entrypoint"
-ns-eval = "nerfstudio.scripts.eval:entrypoint"
-ns-render = "nerfstudio.scripts.render:entrypoint"
-ns-export = "nerfstudio.scripts.exporter:entrypoint"
-ns-dev-test = "nerfstudio.scripts.github.run_actions:entrypoint"
-ns-dev-sync-viser-message-defs = "nerfstudio.scripts.viewer.sync_viser_message_defs:entrypoint"
+#ns-install-cli = "nerfstudio.scripts.completions.install:entrypoint"
+#ns-process-data = "nerfstudio.scripts.process_data:entrypoint"
+#ns-download-data = "nerfstudio.scripts.downloads.download_data:entrypoint"
+#ns-train = "nerfstudio.scripts.train:entrypoint"
+#ns-viewer = "nerfstudio.scripts.viewer.run_viewer:entrypoint"
+#ns-eval = "nerfstudio.scripts.eval:entrypoint"
+#ns-render = "nerfstudio.scripts.render:entrypoint"
+#ns-export = "nerfstudio.scripts.exporter:entrypoint"
+#ns-dev-test = "nerfstudio.scripts.github.run_actions:entrypoint"
+#ns-dev-sync-viser-message-defs = "nerfstudio.scripts.viewer.sync_viser_message_defs:entrypoint"
 
 [tool.setuptools.packages.find]
 include = ["nerfstudio*"]

@@ -1,0 +1,61 @@
+Update Data and Conditioning
+- Add the ExtraArgument to each DataGetter [x]
+- Add preprocessing logic to RGBDataGetter [x]
+- Add RayGetter (maybe merge with camera getter) [x]
+- Add all preprocessing logit to datagetters [x]
+- Create dataspec constructor [x]
+- Update dynamic dataset [x]
+- Make datatree statically typed [x]
+- Remove prepare preprocessing [x]
+- Update TrainState to use DynamicDataset [x]
+- Refactor TrainState to use Pydantic [x]
+- Add diffusion config to train state [x]
+- Update run_train_lora with new dynamic dataset [x]
+- Move dynamic fields out from train_state [x]
+- Add meta by default to DynamicDataset  [x]
+- Add random and center crop to training loop (dynamic dataset?) [x]
+- Replace "best" metric to be dynamic [x]
+- Test refactor [x]
+- Debug training [x]
+- Fix save path bug [x]
+- Add command line args [x]
+
+
+Start ControlNet
+- Add conditioning signals [x]
+- Test new signals [x]
+- Create controlnet model [x]
+- Make conditioning signals work with controlnet [x]
+- Add conditioning for evaluation [x]
+- Update inference with controlnet [x]
+- Update training with controlnet [x]
+- Make pydantic work with yaml files [x]
+- Fix dimension bugs [x]
+- Test controlnets [x]
+- Train small sd model on one image [x]
+
+
+Merge with NeuRAD
+- Refactor dataset configs to factory type [x]
+- Bugfix new dataset configs [x]
+- Update NeuRAD code with new pipeline [x]
+- Make new argparser for neurad training [#]
+- Build new Singularity image [x]
+- Change code to be compatible with Tyro [x]
+- Fix broken changes to lora configs across code [x]
+- Update neurad configs [x]
+- Update vscode launch scripts for diffusion training [x]
+- bugfix: Interpolate ray conditioning between rays (128,128)->(512,512) [x]
+- bugfix: Fix bugs in NeuRAD [x]
+- rsync image to other PC [x]
+- Create SLURM single LoRA [x]
+- Setup HAL directories [x]
+- Train SLURM single LoRA on HAL [x]
+- Create SLURM lora batch [x]
+- Change batch to use array instead [x]
+- Create SLURM neurad []
+- Add new pipeline to training
+- Test new pipeline
+- Train small cn model
+- Add controlnet support to neurad
+- Test controlnet

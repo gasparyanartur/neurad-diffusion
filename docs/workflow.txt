@@ -1,0 +1,36 @@
+NeuRAD:
+
+    ad_datamanager:
+        inherits from image_lidar_datamanager
+
+    image_lidar_datamanger:
+        calls raybundle by using image_lidar_dataprocesor
+
+    input_dataset:
+        keeps track of images, and metadata about images, such as cameras.
+        Uses a specific dataparser for each dataset
+
+    image_lidar_dataprocessor:
+        Internally stores a set of cached images, and a set of cameras
+        The cached images come from image_dataset
+        When called, creates a batch of indexes from a set of sampled images (using pixel_sampler)
+        It then uses ray_generator to convert indexes to rays (combined with camera information)
+
+    pixel_sampler:
+        ray_indices: <batch_size, 3>, where the 3 is [camera_index, row_index, col_index] 
+        samples this (with some minor modifications for camera projections, discard OOB, etc.)
+
+    ray_generator:
+        uses the indices from pixel_sampler, 
+            selects c, x, y, 
+            gets coordinates from (x, y),   # not sure how image_coordinates differ from x, y
+            passes camera indexes + coords to self.cameras.generate_rays
+
+
+Modifying for ImagineDriving:
+    In the image_lidar_dataprocessor, there are two methods: get_image_batch_and_ray_bundle and get_lidar_batch_and_ray_bundle
+    in each one, we can sample the rays using our sampler, 
+        then modify the self.ray_generator.cameras.cam_to_world to match our desired shift / rotation
+        (a new cam matrix needs to be computed first)
+        then put the camera back to how it was at the end
+    Note that this creates race conditions, but I don't know how else we can do it
