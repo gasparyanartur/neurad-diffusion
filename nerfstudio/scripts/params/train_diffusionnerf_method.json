@@ -1,11 +1,29 @@
 
 {"entries": [
     {
-        "keys": ["pipeline.augment_strategy", "pipeline.nerf-checkpoint", "pipeline.note"],
+        "keys": ["pipeline.diffusion_model.lora_weights", "pipeline.diffusion_model.models_to_load_lora", "pipeline.note"],
         "values": [
-            ["none", "partial_linear", "partial_linear", "partial_linear", "partial_linear", "partial_linear"],
-            ["none", "none", "outputs/train_lora/355688", "outputs/train_lora/355757", "outputs/train_lora/355693", "outputs/train_lora/355762"],
-            ["base-neurad", "base-diffusion", "sd4", "sd4_cn4",  "sd128", "sd128_cn128"]
+            [
+                "null",
+                "outputs/train_lora/355688/final_weights",
+                "outputs/train_lora/355757/final_weights",
+                "outputs/train_lora/355693/final_weights",
+                "outputs/train_lora/355762/final_weights"
+            ],
+            [
+                "[]",
+                "[sd]",
+                "[sd,cn]", 
+                "[sd]", 
+                "[sd,cn]"
+            ],
+            [
+                "base-diffusion",
+                "sd4", 
+                "sd4_cn4",  
+                "sd128", 
+                "sd128_cn128"
+            ]
         ]
     },
     {

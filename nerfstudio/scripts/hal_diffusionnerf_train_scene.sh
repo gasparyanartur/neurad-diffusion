@@ -4,7 +4,7 @@
 #SBATCH -c 32
 #SBATCH --mem 100G
 #SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/train_diffusionnerf/slurm/%j.out
-#SBATCH --array=1
+#SBATCH --array=0
 #SBATCH --job-name=train_diffusionnerf
 #SBATCH --partition zprodlow
 
@@ -89,13 +89,16 @@ echo "Array parameters data: $array_params_data"
 echo "Method: $method"
 
 experiment_name=${EXPERIMENT_NAME:-$(date +%Y%m%d_%H%M%S_%job_id)}
-experiment_name=${EXPERIMENT_NAME}_$note
+experiment_name=${experiment_name}_$note
 
-if [ -z ${NERF_CHECKPOINT_PATH} ]; then
+nerf_checkpoint_path=${NERF_CHECKPOINT_PATH}
+if [ -z ${nerf_checkpoint_path} ]; then
     checkpoint_cmd=""
 else
-    checkpoint_cmd="--load-checkpoint $NERF_CHECKPOINT_PATH"
+    checkpoint_cmd="--pipeline.nerf_checkpoint $nerf_checkpoint_path"
 fi
+
+augment_strategy=${AUGMENT_STRATEGY:-"partial_linear"}
 
 
 $execute python3.10 -u nerfstudio/scripts/train.py \
@@ -105,6 +108,7 @@ $execute python3.10 -u nerfstudio/scripts/train.py \
     --experiment-name $experiment_name \
     $checkpoint_cmd \
     --pipeline.diffusion_model.dtype "fp16" \
+    --pipeline.augment_strategy $augment_strategy \
     $array_params \
     ${@:2} \
     ${dataset}-data \
