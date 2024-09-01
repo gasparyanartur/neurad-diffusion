@@ -4,12 +4,12 @@
 #SBATCH -c 32
 #SBATCH --mem 100G
 #SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/train_diffusionnerf/slurm/%j.out
-#SBATCH --array=0
+#SBATCH --array=0-15
 #SBATCH --job-name=train_diffusionnerf
 #SBATCH --partition zprodlow
 
-wandb_api_key=${WANDB_API_KEY}
-if [ -z ${wandb_api_key} ]; then
+source .env
+if [ -z ${WANDB_API_KEY} ]; then
     echo "WANDB_API_KEY not set. Exiting."
     exit 1;
 fi
@@ -36,7 +36,7 @@ execute="singularity exec \
             --bind /staging:/staging \
             --bind /workspaces:/workspaces \
             --bind /datasets:/datasets \
-            --env WANDB_API_KEY=$wandb_api_key \
+            --env WANDB_API_KEY=$WANDB_API_KEY \
             $image_path"
 
 array_params_count=$(
@@ -88,10 +88,10 @@ echo "Array parameters: $array_params"
 echo "Array parameters data: $array_params_data"
 echo "Method: $method"
 
-experiment_name=${EXPERIMENT_NAME:-$(date +%Y%m%d_%H%M%S_%job_id)}
+experiment_name=${EXPERIMENT_NAME:-$(date +%Y%m%d_%H%M%S)_$job_id}
 experiment_name=${experiment_name}_$note
 
-nerf_checkpoint_path=${NERF_CHECKPOINT_PATH}
+nerf_checkpoint_path=${NERF_CHECKPOINT_PATH:-"outputs/train_diffusionnerf/20240901_000000_358156_base-neurad/diffusion-nerf/2024-09-01_145604/nerfstudio_models/step-000020000.ckpt"}
 if [ -z ${nerf_checkpoint_path} ]; then
     checkpoint_cmd=""
 else
@@ -110,7 +110,7 @@ $execute python3.10 -u nerfstudio/scripts/train.py \
     --pipeline.diffusion_model.dtype "fp16" \
     --pipeline.augment_strategy $augment_strategy \
     $array_params \
-    ${@:2} \
+    $@ \
     ${dataset}-data \
     --data $dataset_root \
     $array_params_data

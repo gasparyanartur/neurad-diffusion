@@ -19,7 +19,10 @@
         ]
     },
     {
-        "keys": ["diffusion_config.lora_ranks.unet", "diffusion_config.lora_ranks.controlnet"],
+        "keys": [
+            "diffusion_config.lora_ranks.unet", 
+            "diffusion_config.lora_ranks.controlnet"
+        ],
         "values": [
             [4, 8, 16, 32, 64, 128], 
             [4, 8, 16, 32, 64, 128]
