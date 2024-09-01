@@ -174,7 +174,7 @@ class DiffusionNerfPipeline(VanillaPipeline):
 
         self.fid = None
 
-        if self.config.nerf_checkpoint:
+        if self.config.nerf_checkpoint and self.config.nerf_checkpoint.strip().lower() != "none": 
             self.load_nerf_checkpoint(self.config.nerf_checkpoint)
 
     def load_nerf_checkpoint(self, checkpoint_path: Union[Path, str]):

@@ -1,7 +1,7 @@
 
 {"entries": [
     {
-        "keys": ["train_config.diffusion_config.type"],
+        "keys": ["diffusion_config.type"],
         "values": [
             ["sd", "cn"]
         ]

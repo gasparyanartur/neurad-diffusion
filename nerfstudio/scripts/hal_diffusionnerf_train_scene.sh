@@ -27,8 +27,8 @@ task_id=${SLURM_ARRAY_TASK_ID:-"1"}
 data_task_id=0      # TODO: Some sort of index
 image_path=${IMAGE_PATH:-"containers/neurad_140824.sif"}
 
-array_param_path=${ARRAY_PARAM_PATH:-nerfstudio/scripts/params/$name_method.json}
-array_param_data_path=${ARRAY_PARAM_DATA_PATH:-nerfstudio/scripts/params/$name_data.json}
+array_param_path=${ARRAY_PARAM_PATH:-nerfstudio/scripts/params/${name}_method.json}
+array_param_data_path=${ARRAY_PARAM_DATA_PATH:-nerfstudio/scripts/params/${name}_data.json}
 
 execute="singularity exec \
             --nv \
@@ -63,7 +63,11 @@ if [[ -z ${array_params_data} ]]; then
     exit 1
 fi
 
-output_dir=${OUTPUT_DIR:="outputs/$name/$job_id"}
+note=$(
+    $execute python3.10 nerfstudio/scripts/param_reader.py --pipeline.note $array_params
+)
+
+output_dir=${OUTPUT_DIR:="outputs/$name"}
 mkdir -p $output_dir
 
 if [ "$dataset" == "zod" ]; then
@@ -85,14 +89,21 @@ echo "Array parameters data: $array_params_data"
 echo "Method: $method"
 
 experiment_name=${EXPERIMENT_NAME:-$(date +%Y%m%d_%H%M%S_%job_id)}
-nerf_checkpoint_path=${NERF_CHECKPOINT_PATH:-""}
+experiment_name=${EXPERIMENT_NAME}_$note
+
+if [ -z ${NERF_CHECKPOINT_PATH} ]; then
+    checkpoint_cmd=""
+else
+    checkpoint_cmd="--load-checkpoint $NERF_CHECKPOINT_PATH"
+fi
+
 
 $execute python3.10 -u nerfstudio/scripts/train.py \
     $method \
     --output-dir $output_dir \
     --vis wandb \
-    --experiment-name $job_id \
-    --load-checkpoint $nerf_checkpoint_path \
+    --experiment-name $experiment_name \
+    $checkpoint_cmd \
     --pipeline.diffusion_model.dtype "fp16" \
     $array_params \
     ${@:2} \

@@ -6,7 +6,7 @@
 #SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/train_lora/slurm/%j.out
 #SBATCH --partition=zprodlow
 #SBATCH --job-name=finetune
-#SBATCH --array=0-20
+#SBATCH --array=0
 
 if [ -z ${WANDB_API_KEY} ]; then
     echo "WANDB_API_KEY not set. Exiting."

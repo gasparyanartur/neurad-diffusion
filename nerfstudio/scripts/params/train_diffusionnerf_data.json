@@ -1,13 +1,13 @@
 
 {"entries": [
     {
-        "keys": ["--scene"],
+        "keys": ["sequence"],
         "values": [
             ["001"]
         ]
     },
     {
-        "keys": ["--cameras"],
+        "keys": ["cameras"],
         "values": [
             ["front"]
         ]
