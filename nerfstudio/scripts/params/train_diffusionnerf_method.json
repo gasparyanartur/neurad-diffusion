@@ -11,11 +11,11 @@
                 "outputs/train_lora/355762/final_weights"
             ],
             [
-                "[]",
-                "[sd]",
-                "[sd,cn]", 
-                "[sd]", 
-                "[sd,cn]"
+                "",
+                "sd",
+                "sd cn", 
+                "sd", 
+                "sd cn"
             ],
             [
                 "base-diffusion",
