@@ -203,3 +203,6 @@ venv
 logs
 outputs
 containers
+models
+nerf_output
+renders
