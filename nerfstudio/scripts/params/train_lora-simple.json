@@ -1,0 +1,31 @@
+
+{"entries": [
+    {
+        "keys": ["diffusion_config.type"],
+        "values": [
+            ["sd", "cn"]
+        ]
+    },
+    {
+        "keys": ["dataset_configs.scene"],
+        "values": [
+            ["001"]
+        ]
+    },
+    {
+        "keys": ["learning_rate"],
+        "values": [
+            [0.0001]
+        ]
+    },
+    {
+        "keys": [
+            "diffusion_config.lora_ranks.unet", 
+            "diffusion_config.lora_ranks.controlnet"
+        ],
+        "values": [
+            [4], 
+            [4]
+        ]
+    }
+]}
