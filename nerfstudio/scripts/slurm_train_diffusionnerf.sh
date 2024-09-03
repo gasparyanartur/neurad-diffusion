@@ -1,12 +1,12 @@
 #!/bin/bash
+
+#SBATCH --job-name=train_diffusionnerf
 #SBATCH --nodes 1
 #SBATCH --gpus 1
-#SBATCH -c 32
+#SBATCH --cpus-per-task 32
 #SBATCH --mem 100G
-#SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/train_diffusionnerf/slurm/%j.out
+#SBATCH --output logs/%x/slurm/%j.out
 #SBATCH --array=0
-#SBATCH --job-name=train_diffusionnerf
-#SBATCH --partition zprodlow
 
 wandb_api_key=${WANDB_API_KEY}
 if [ -z ${wandb_api_key} ]; then

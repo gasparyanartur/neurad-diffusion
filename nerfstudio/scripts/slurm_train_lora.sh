@@ -1,11 +1,11 @@
 #!/bin/bash
 
+#SBATCH --job-name=train_lora
 #SBATCH --nodes 1
 #SBATCH --gpus 1
-#SBATCH --cpus-per-task 8
-#SBATCH --output /staging/agp/masterthesis/nerf-thesis-shared/logs/train_lora/slurm/%j.out
-#SBATCH --partition=zprodlow
-#SBATCH --job-name=finetune
+#SBATCH --cpus-per-task 32
+#SBATCH --mem 100G
+#SBATCH --output logs/%x/slurm/%j.out
 #SBATCH --array=0
 
 if [ -z ${WANDB_API_KEY} ]; then
