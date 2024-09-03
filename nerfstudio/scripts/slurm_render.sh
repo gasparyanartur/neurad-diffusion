@@ -71,11 +71,34 @@ if [[ -z ${load_config} ]]; then
     echo "No load config found for task $task_id - exiting"
     exit 1
 fi
+load_config_parent=$(dirname "$load_config")
+load_config_name=$(basename "$load_config")
+if [[ $load_config_name != "config.yml"]]; then 
+    echo "Load config must be named config.yml - exiting"
+    exit 1
+fi
+
+scene=$(basename "$load_config_parent")
+if [[ -z ${scene} ]]; then 
+    echo "No scene found for task $task_id - exiting"
+    exit 1
+fi
+if [[ "$scene" =~ ^\d{3}$ ]]; then 
+    echo "expected scene to be parent of config - exiting"
+    exit 1
+fi
+
+scene_parent=$(dirname "$load_config_parent")
+model_name=$(basename "$scene_parent")
+
+
 if [[ -z ${x_shift} ]]; then 
     echo "No x-shift found for task $task_id - exiting"
     exit 1
 fi
-output_path=$output_dir/${x_shift}m/${job_id}_${run_name}
+
+
+output_path=$output_dir/$model_name/$scene/$cameras/${x_shift}m/${job_id}_${run_name}
 mkdir -p $output_path
 
 echo "Starting renderings with job_id ${job_id}"

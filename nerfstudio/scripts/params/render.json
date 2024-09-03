@@ -3,7 +3,7 @@
         {
             "keys": ["load-config", "run-name"],
             "values": [
-                ["models/diffusionnerf/base-neurad/config.yml"],
+                ["models/diffusionnerf/base-neurad/001/config.yml"],
                 ["base-neurad"]
             ]
         },
