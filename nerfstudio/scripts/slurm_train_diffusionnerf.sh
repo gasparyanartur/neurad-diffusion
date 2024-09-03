@@ -30,12 +30,15 @@ image_path=${IMAGE_PATH:-"containers/neurad_140824.sif"}
 array_param_path=${ARRAY_PARAM_PATH:-nerfstudio/scripts/params/${name}_method.json}
 array_param_data_path=${ARRAY_PARAM_DATA_PATH:-nerfstudio/scripts/params/${name}_data.json}
 
+#BIND_CMD="--bind /staging:/staging --bind /workspaces:/workspaces --bind /datasets:/datasets"
+BIND_CMD="--bind /proj:/proj --bind /home:/home"
+
 execute="singularity exec \
             --nv \
+            $BIND_CMD \
+            --home /nerfstudio \
             --bind $PWD:/nerfstudio \
-            --bind /staging:/staging \
-            --bind /workspaces:/workspaces \
-            --bind /datasets:/datasets \
+            --env PYTHONPATH=/nerfstudio \
             --env WANDB_API_KEY=$WANDB_API_KEY \
             $image_path"
 

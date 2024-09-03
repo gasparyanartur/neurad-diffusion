@@ -30,16 +30,17 @@ mixed_precision=${MIXED_PRECISION:-"no"}
 job_id=${SLURM_JOB_ID:-"000000"}
 task_id=${SLURM_ARRAY_TASK_ID:-"0"}
 
+#BIND_CMD="--bind /staging:/staging --bind /workspaces:/workspaces --bind /datasets:/datasets"
+BIND_CMD="--bind /proj:/proj --bind /home:/home"
+
 execute="singularity exec \
             --nv \
+            $BIND_CMD \
             --bind $PWD:/nerfstudio \
-            --bind /staging:/staging \
-            --bind /workspaces:/workspaces \
-            --bind /datasets:/datasets \
+            --home /nerfstudio \
             --env PYTHONPATH=/nerfstudio \
             --env WANDB_API_KEY=$WANDB_API_KEY \
             --env LORA_TRAIN_CONFIG=$lora_train_config \
-            --home /nerfstudio \
             $image_path"
 
 array_param_path=${ARRAY_PARAM_PATH:-nerfstudio/scripts/params/train_lora.json}
