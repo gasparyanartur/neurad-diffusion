@@ -91,7 +91,7 @@ $execute python3.10 -u nerfstudio/scripts/render.py \
     --cameras $cameras \
     --output-path $output_path \
     --shift $x_shift 0 0 \
-    --load_config $array_params \
+    --load_config $load_config \
     $@ 
 
 chmod 775 -R $output_path
