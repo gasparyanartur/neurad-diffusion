@@ -14,7 +14,7 @@ if [ -z ${WANDB_API_KEY} ]; then
     exit 1;
 fi
 
-lora_train_config=${LORA_TRAIN_CONFIG:-"configs/hal-configs/train_lora.yml"}
+lora_train_config=${LORA_TRAIN_CONFIG:-"configs/slurm-configs/train_lora.yml"}
 image_path=${IMAGE_PATH:-"containers/neurad_140824.sif"}
 
 main_process_port=${MAIN_PROCESS_PORT:-29500}

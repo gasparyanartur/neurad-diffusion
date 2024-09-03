@@ -70,14 +70,9 @@ note=$(
 output_dir=${OUTPUT_DIR:="outputs/$name"}
 mkdir -p $output_dir
 
-if [ "$dataset" == "zod" ]; then
-    dataset_root="/staging/dataset_donation/round_2"
-elif [ "$dataset" == "nuscenes" ]; then
-    dataset_root="/datasets/nuscenes/v1.0"
-elif [ "$dataset" == "pandaset" ]; then
-    dataset_root="/staging/agp/datasets/pandaset"
-else
-    echo "Dataset must be either zod or nuscenes or pandaset, got $dataset"
+dataset_root={DATASET_ROOT:-data/$dataset}
+if [ ! -d $dataset_root ]; then
+    echo "Dataset root $dataset_root does not exist. Exiting."
     exit 1
 fi
 
