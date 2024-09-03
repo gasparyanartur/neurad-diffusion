@@ -61,7 +61,7 @@ fi
 x_shift=$(
     $execute python3.10 nerfstudio/scripts/param_reader.py --x-shift $array_params
 )
-output_path=$output_dir/$x_shift/$job_id
+output_path=$output_dir/${x_shift}m/$job_id
 mkdir -p $output_path
 
 echo "Starting renderings with job_id $job_id"
@@ -76,6 +76,7 @@ $execute python3.10 -u nerfstudio/scripts/render.py \
     --calculate_and_save_metrics True \
     --cameras $cameras \
     --output-path $output_path \
+    $array_params \
     $@ 
 
 chmod 775 -R $output_path
