@@ -4,7 +4,6 @@
   // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
   "version": "0.2.0",
   "configurations": [
-  
     {
       "name": "Launch Chrome against localhost",
       "request": "launch",
@@ -82,7 +81,9 @@
       "program": "nerfstudio/scripts/train.py",
       "console": "integratedTerminal",
       "justMyCode": false,
-      "env": {"PYTORCH_ENABLE_MPS_FALLBACK": "1"},
+      "env": {
+        "PYTORCH_ENABLE_MPS_FALLBACK": "1"
+      },
       "args": [
         "neurad",
         "--pipeline.model.eval_num_rays_per_chunk=2048",
@@ -123,9 +124,12 @@
         "--pipeline.datamanager.eval_num_rays_per_batch=16384",
         "--pipeline.datamanager.num_processes=0",
         "pandaset-data",
-        "--data", "./data/pandaset",
-        "--cameras", "front",
-        "--sequence", "001"
+        "--data",
+        "./data/pandaset",
+        "--cameras",
+        "front",
+        "--sequence",
+        "001"
       ]
     },
     {
@@ -138,41 +142,62 @@
       "args": [
         "diffusion-nerf",
         "--vis=tensorboard",
-        "--pipeline.diffusion_model.type", "sd",
-        "--pipeline.diffusion_model.dtype", "fp16",
-        "--pipeline.diffusion_model.lora_weights", "outputs/finetune/sd/0/final_weights",
-        "--pipeline.diffusion_model.conditioning_signals", "ray",
+        "--pipeline.diffusion_model.type",
+        "sd",
+        "--pipeline.diffusion_model.dtype",
+        "fp16",
+        "--pipeline.diffusion_model.lora_weights",
+        "outputs/finetune/sd/0/final_weights",
+        "--pipeline.diffusion_model.conditioning_signals",
+        "ray",
         //"--pipeline.nerf_checkpoint", "outputs/imaginedriving/imaginedriving-001-331982-1/imaginedriving/2024-05-25_130744/nerfstudio_models/step-000020000.ckpt",
-        "--pipeline.augment_phase_step", "0",
-        "--pipeline.model.eval_num_rays_per_chunk", "2048",
-        "--pipeline.model.field.grid.static.hashgrid_dim", "2",
-        "--pipeline.model.field.grid.static.num_levels", "4",
-        "--pipeline.model.field.grid.static.log2_hashmap_size", "15",
-        "--pipeline.model.field.grid.actor.hashgrid_dim", "2",
-        "--pipeline.model.field.grid.actor.num_levels", "2",
-        "--pipeline.model.field.grid.actor.log2_hashmap_size", "11",
-        "--pipeline.datamanager.num_processes", "0",
-        "--pipeline.datamanager.train-num-lidar-rays-per-batch", "1280",
-        "--pipeline.datamanager.eval-num-lidar-rays-per-batch", "128",
-        "--pipeline.datamanager.train-num-rays-per_batch", "16384",
-        "--pipeline.datamanager.eval-num-rays_per_batch", "16384",
+        "--pipeline.augment_phase_step",
+        "0",
+        "--pipeline.model.eval_num_rays_per_chunk",
+        "2048",
+        "--pipeline.model.field.grid.static.hashgrid_dim",
+        "2",
+        "--pipeline.model.field.grid.static.num_levels",
+        "4",
+        "--pipeline.model.field.grid.static.log2_hashmap_size",
+        "15",
+        "--pipeline.model.field.grid.actor.hashgrid_dim",
+        "2",
+        "--pipeline.model.field.grid.actor.num_levels",
+        "2",
+        "--pipeline.model.field.grid.actor.log2_hashmap_size",
+        "11",
+        "--pipeline.datamanager.num_processes",
+        "0",
+        "--pipeline.datamanager.train-num-lidar-rays-per-batch",
+        "1280",
+        "--pipeline.datamanager.eval-num-lidar-rays-per-batch",
+        "128",
+        "--pipeline.datamanager.train-num-rays-per_batch",
+        "16384",
+        "--pipeline.datamanager.eval-num-rays_per_batch",
+        "16384",
         "pandaset-data",
-        "--data", "./data/pandaset",
-        "--cameras", "front",
-        "--sequence", "001"
+        "--data",
+        "./data/pandaset",
+        "--cameras",
+        "front",
+        "--sequence",
+        "001"
       ]
     },
     {
-    "name": "Python: diffusion-nerf arg",
-    "type": "python",
-    "request": "launch",
-    "program": "nerfstudio/scripts/train-diffusion-nerf.py",
-    "console": "integratedTerminal",
-    "justMyCode": false,
-    "args": [
-      "--method", "diffusion-nerf",
-    ]
-  },
+      "name": "Python: diffusion-nerf arg",
+      "type": "python",
+      "request": "launch",
+      "program": "nerfstudio/scripts/train-diffusion-nerf.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "--method",
+        "diffusion-nerf",
+      ]
+    },
     {
       "name": "Python: diffusion-nerf local-checkpoint",
       "type": "python",
@@ -183,22 +208,37 @@
       "args": [
         "diffusion-nerf",
         "--vis=tensorboard",
-        "--pipeline.diffusion_model.low_mem_mode", "True",
-        "--pipeline.diffusion_model.compile_model", "False",
-        "--pipeline.diffusion_model.dtype", "fp16",
-        "--pipeline.diffusion_model.lora_weights", "/home/gasparyanartur/dev/outputs/finetune/331982/finetune/final_weights/pytorch_lora_weights.safetensors",
-        "--pipeline.augment_strategy", "partial_const",
-        "--pipeline.augment_phase_step", "0",
-        "--pipeline.nerf_checkpoint", "/home/gasparyanartur/dev/outputs/imaginedriving/imaginedriving-001-331982-1/imaginedriving/2024-05-25_130744/nerfstudio_models/step-000020000.ckpt",
-        "--pipeline.datamanager.num_processes", "0",
-        "--pipeline.datamanager.train-num-lidar-rays-per-batch", "1280",
-        "--pipeline.datamanager.eval-num-lidar-rays-per-batch", "128",
-        "--pipeline.datamanager.train-num-rays-per_batch", "16384",
-        "--pipeline.datamanager.eval-num-rays_per_batch", "16384",
+        "--pipeline.diffusion_model.low_mem_mode",
+        "True",
+        "--pipeline.diffusion_model.compile_model",
+        "False",
+        "--pipeline.diffusion_model.dtype",
+        "fp16",
+        "--pipeline.diffusion_model.lora_weights",
+        "/home/gasparyanartur/dev/outputs/finetune/331982/finetune/final_weights/pytorch_lora_weights.safetensors",
+        "--pipeline.augment_strategy",
+        "partial_const",
+        "--pipeline.augment_phase_step",
+        "0",
+        "--pipeline.nerf_checkpoint",
+        "/home/gasparyanartur/dev/outputs/imaginedriving/imaginedriving-001-331982-1/imaginedriving/2024-05-25_130744/nerfstudio_models/step-000020000.ckpt",
+        "--pipeline.datamanager.num_processes",
+        "0",
+        "--pipeline.datamanager.train-num-lidar-rays-per-batch",
+        "1280",
+        "--pipeline.datamanager.eval-num-lidar-rays-per-batch",
+        "128",
+        "--pipeline.datamanager.train-num-rays-per_batch",
+        "16384",
+        "--pipeline.datamanager.eval-num-rays_per_batch",
+        "16384",
         "pandaset-data",
-        "--data", "./data/pandaset",
-        "--cameras", "front",
-        "--sequence", "001"
+        "--data",
+        "./data/pandaset",
+        "--cameras",
+        "front",
+        "--sequence",
+        "001"
       ]
     },
     {
@@ -213,7 +253,6 @@
         "--help"
       ]
     },
-    
     {
       "name": "Python: neurad render help",
       "type": "python",
@@ -235,7 +274,7 @@
       "justMyCode": true,
       "args": [
         "dataset",
-        "--load-config=./nerfstudio/scripts/config.yml", 
+        "--load-config=./nerfstudio/scripts/config.yml",
         "--data=/home/s0001899/dev/pandaset",
         "--config-output-dir=/home/s0001899/dev/neurad_output/2024-05-23_091132/",
       ]
@@ -261,14 +300,14 @@
       "request": "launch",
       "program": "nerfstudio/scripts/run_train_lora.py",
       "env": {
-          "PYTHONPATH":"${workspaceFolder}",
-          "LORA_TRAIN_CONFIG": "configs/local-configs/train_lora.yml"
+        "PYTHONPATH": "${workspaceFolder}",
+        "LORA_TRAIN_CONFIG": "configs/local-configs/train_lora.yml"
       },
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "args": [
-        "--diffusion_config.type", "sd",
-        "--loggers", "wandb",
+        "--loggers",
+        "wandb",
       ]
     },
     {
@@ -277,14 +316,12 @@
       "request": "launch",
       "program": "nerfstudio/scripts/run_train_lora.py",
       "env": {
-          "PYTHONPATH":"${workspaceFolder}",
-          "LORA_TRAIN_CONFIG": "configs/local-configs/train-cn-pandaset-debug.yml"
+        "PYTHONPATH": "${workspaceFolder}",
+        "LORA_TRAIN_CONFIG": "configs/local-configs/train-cn-pandaset-debug.yml"
       },
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "args": [
-        "--diffusion_config.type", "cn"
-      ]
+      "args": []
     },
   ]
 }

@@ -404,7 +404,7 @@ class TrainConfig(BaseSettings):
         num_inference_steps=50,
         enable_progress_bar=False,
         lora_weights=None,
-        models_to_train_lora=("unet",),
+        models_to_train_lora=("unet", "controlnet"),
         models_to_load_lora=(),
         use_dora=True,
         lora_model_prefix="lora_",
@@ -1085,7 +1085,6 @@ def train_epoch(
             unet_kwargs = {}
 
             if diffusion_model.using_controlnet:
-
                 conditioning = combine_conditioning_info(
                     batch, diffusion_model.conditioning_signals
                 ).to(noisy_model_input.device)

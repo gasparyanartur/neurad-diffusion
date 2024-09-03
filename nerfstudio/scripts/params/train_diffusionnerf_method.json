@@ -1,7 +1,12 @@
 
 {"entries": [
     {
-        "keys": ["pipeline.diffusion_model.lora_weights", "pipeline.diffusion_model.models_to_load_lora", "pipeline.note"],
+        "keys": [
+            "pipeline.diffusion_model.lora_weights", 
+            "pipeline.diffusion_model.type", 
+            "pipeline.diffusion_model.models_to_load",
+            "pipeline.note"
+        ],
         "values": [
             [
                 "null",
@@ -11,11 +16,18 @@
                 "outputs/train_lora/355762/final_weights"
             ],
             [
-                "",
                 "sd",
-                "sd cn", 
+                "sd",
+                "cn", 
                 "sd", 
-                "sd cn"
+                "cn"
+            ],
+            [
+                "",
+                "unet",
+                "unet controlnet",
+                "unet",
+                "unet controlnet"
             ],
             [
                 "base-diffusion",
@@ -35,7 +47,13 @@
     {
         "keys": ["pipeline.augment-max-strength.rot-z"],
         "values": [
-            [45, 90, 180]
+            [45]
+        ]
+    },
+    {
+        "keys": ["pipeline.augment_loss_mult"],
+        "values": [
+            [10, 20, 40]
         ]
     }
 ]}

@@ -8,6 +8,7 @@
 #SBATCH --output logs/%x/slurm/%j.out
 #SBATCH --array=0
 
+source .env
 if [ -z ${WANDB_API_KEY} ]; then
     echo "WANDB_API_KEY not set. Exiting."
     exit 1;
@@ -36,12 +37,12 @@ execute="singularity exec \
             --bind /workspaces:/workspaces \
             --bind /datasets:/datasets \
             --env PYTHONPATH=/nerfstudio \
-            --env WANDB_API_KEY=$wandb_api_key \
+            --env WANDB_API_KEY=$WANDB_API_KEY \
             --env LORA_TRAIN_CONFIG=$lora_train_config \
             --home /nerfstudio \
             $image_path"
 
-array_param_path=${ARRAY_PARAM_PATH:-nerfstudio/scripts/params/train_lora_rank_lr.json}
+array_param_path=${ARRAY_PARAM_PATH:-nerfstudio/scripts/params/train_lora.json}
 
 array_params_count=$($execute python3.10 nerfstudio/scripts/param_parser.py $array_param_path -s)
 if [[ $array_param_count -gt $SLURM_ARRAY_TASK_MAX ]]; then
@@ -64,4 +65,4 @@ $execute accelerate launch \
     nerfstudio/scripts/train_lora.py \
         --job_id $job_id \
         $array_params \
-        ${@:1} 
+        $@
