@@ -73,7 +73,7 @@ if [[ -z ${load_config} ]]; then
 fi
 load_config_parent=$(dirname "$load_config")
 load_config_name=$(basename "$load_config")
-if [[ $load_config_name != "config.yml"]]; then 
+if [[ $load_config_name != "config.yml" ]]; then 
     echo "Load config must be named config.yml - exiting"
     exit 1
 fi
