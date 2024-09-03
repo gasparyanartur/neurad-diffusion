@@ -61,10 +61,24 @@ fi
 x_shift=$(
     $execute python3.10 nerfstudio/scripts/param_reader.py --x-shift $array_params
 )
-output_path=$output_dir/${x_shift}m/$job_id
+run_name=$(
+    $execute python3.10 nerfstudio/scripts/param_reader.py --run-name $array_params
+)
+load_config=$(
+    $execute python3.10 nerfstudio/scripts/param_reader.py --load-config $array_params
+)
+if [[ -z ${load_config} ]]; then 
+    echo "No load config found for task $task_id - exiting"
+    exit 1
+fi
+if [[ -z ${x_shift} ]]; then 
+    echo "No x-shift found for task $task_id - exiting"
+    exit 1
+fi
+output_path=$output_dir/${x_shift}m/${job_id}_${run_name}
 mkdir -p $output_path
 
-echo "Starting renderings with job_id $job_id"
+echo "Starting renderings with job_id ${job_id}"
 echo "Subcommand: $subcommand"
 echo "Output path: $output_path"
 echo "Array parameters: $array_params"
@@ -76,7 +90,8 @@ $execute python3.10 -u nerfstudio/scripts/render.py \
     --calculate_and_save_metrics True \
     --cameras $cameras \
     --output-path $output_path \
-    $array_params \
+    --shift $x_shift 0 0 \
+    --load_config $array_params \
     $@ 
 
 chmod 775 -R $output_path
