@@ -204,5 +204,5 @@ logs
 outputs
 containers
 models
-nerf_output
+nerf_outputs
 renders
