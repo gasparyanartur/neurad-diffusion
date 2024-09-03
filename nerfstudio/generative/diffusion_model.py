@@ -569,15 +569,14 @@ class StableDiffusionModel:
         self.text_encoder.requires_grad_(False)
         self.text_encoder.to(device=device, dtype=dtype)  # type: ignore
 
-        if self.using_controlnet:
-            if "controlnet" not in models:
-                models["controlnet"] = ControlNetModel.from_unet(
-                    unet=self.unet,
-                    conditioning_channels=self.conditioning_channels,
-                )
+        if "controlnet" not in models:
+            models["controlnet"] = ControlNetModel.from_unet(
+                unet=self.unet,
+                conditioning_channels=self.conditioning_channels,
+            )
 
-            self.controlnet.requires_grad_(False)
-            self.controlnet.to(device=device, dtype=dtype)
+        self.controlnet.requires_grad_(False)
+        self.controlnet.to(device=device, dtype=dtype)
 
         self.diffusion_metrics = {
             metric_name: _make_metric(metric_name, device)
