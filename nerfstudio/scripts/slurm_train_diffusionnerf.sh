@@ -73,7 +73,7 @@ note=$(
 output_dir=${OUTPUT_DIR:="outputs/$name"}
 mkdir -p $output_dir
 
-dataset_root={DATASET_ROOT:-data/$dataset}
+dataset_root=${DATASET_ROOT:-data/$dataset}
 if [ ! -d $dataset_root ]; then
     echo "Dataset root $dataset_root does not exist. Exiting."
     exit 1
