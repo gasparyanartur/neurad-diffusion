@@ -98,7 +98,7 @@ if [[ -z ${x_shift} ]]; then
 fi
 
 
-output_path=$output_dir/$model_name/$scene/${cameras}_camera/${x_shift}m/${job_id}_${run_name}
+output_path=$output_dir/${job_id}_${run_name}/$model_name/$scene/${cameras}_camera/${x_shift}m
 mkdir -p $output_path
 
 echo "Starting renderings with job_id ${job_id}"
