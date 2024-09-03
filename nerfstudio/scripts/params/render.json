@@ -1,0 +1,16 @@
+{
+    "entries": [
+        {
+            "keys": ["load-config"],
+            "values": [
+                ["models/diffusionnerf/base-neurad/config.yml"]
+            ]
+        },
+        {
+            "keys": ["x-shift"],
+            "values": [
+                [0, 2, 4, 6, 8]
+            ]
+        }
+    ]
+}
