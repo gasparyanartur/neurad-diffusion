@@ -89,7 +89,7 @@ echo "Method: $method"
 experiment_name=${EXPERIMENT_NAME:-$(date +%Y%m%d_%H%M%S)_$job_id}
 experiment_name=${experiment_name}_$note
 
-nerf_checkpoint_path=${NERF_CHECKPOINT_PATH:-"outputs/train_diffusionnerf/20240901_000000_358156_base-neurad/diffusion-nerf/2024-09-01_145604/nerfstudio_models/step-000020000.ckpt"}
+nerf_checkpoint_path=${NERF_CHECKPOINT_PATH:-"none"}
 if [ -z ${nerf_checkpoint_path} ]; then
     checkpoint_cmd=""
 else
