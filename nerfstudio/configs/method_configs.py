@@ -21,7 +21,9 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from copy import deepcopy
-from typing import Dict, Union
+from dataclasses import dataclass
+from dataclasses import field
+from typing import Dict, Optional, Type, Union
 
 import tyro
 
@@ -46,7 +48,11 @@ from nerfstudio.engine.optimizers import (
     RAdamOptimizerConfig,
 )
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
-from nerfstudio.engine.trainer import TrainerConfig
+from nerfstudio.engine.trainer import (
+    DisabledMetricTrackerConfig,
+    MetricTrackerConfig,
+    TrainerConfig,
+)
 from nerfstudio.generative.diffusion_model import (
     ConditioningSignalInfo,
     DiffusionModelConfig,
@@ -490,6 +496,7 @@ method_configs["diffusion-nerf"] = TrainerConfig(
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
     vis="wandb",
     logging=LoggingConfig(steps_per_log=100),
+    early_stopping_tracker=DisabledMetricTrackerConfig(),
 )
 
 

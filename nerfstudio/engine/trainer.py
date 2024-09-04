@@ -121,6 +121,38 @@ class MetricTracker:
 
 
 @dataclass
+class DisabledMetricTrackerConfig(MetricTrackerConfig):
+    """Configuration for the metric tracker, used for early stopping and checkpoint saving."""
+
+    _target: Type = field(default_factory=lambda: DisabledMetricTracker)
+    """target class to instantiate"""
+    metric: Optional[str] = "none"
+    """The metric to track for early stopping and checkpoint saving."""
+    higher_is_better: bool = True
+    """Whether a higher value of the metric is better."""
+    margin: float = 0.0
+    """Margin for comparison (0.1 = 10%)"""
+
+
+class DisabledMetricTracker(MetricTracker):
+    """Class to track a metric to detect degradation."""
+
+    def __init__(self, config: MetricTrackerConfig) -> None:
+        super().__init__(config)
+
+    def did_degrade(self, fallback: bool = False) -> bool:
+        return False
+
+    def reset_latest(self) -> None: ...
+
+    def update(self, metrics: Dict[str, float]) -> None: ...
+
+    def _is_new_better(self, old: float, new: float) -> bool:
+        """Check if new is better than old."""
+        return True
+
+
+@dataclass
 class TrainerConfig(ExperimentConfig):
     """Configuration for training regimen"""
 
