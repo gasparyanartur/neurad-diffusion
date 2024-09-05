@@ -67,7 +67,7 @@ def batch_if_not_iterable(
         return item
 
     if isinstance(item, (torch.Tensor, np.ndarray)):
-        if len(item) == single_dim:
+        if len(item.shape) == single_dim:
             item = item[None, ...]
 
         return item
