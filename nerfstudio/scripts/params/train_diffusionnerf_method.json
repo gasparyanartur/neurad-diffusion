@@ -9,28 +9,24 @@
         ],
         "values": [
             [
-                "null",
-                "outputs/train_lora/355688/final_weights",
-                "outputs/train_lora/355757/final_weights",
-                "outputs/train_lora/355693/final_weights",
-                "outputs/train_lora/355762/final_weights"
+                "models/lora/diffusion_un4",
+                "models/lora/diffusion_un4cn4",
+                "models/lora/diffusion_un128",
+                "models/lora/diffusion_un128cn128"
             ],
             [
-                "sd",
                 "sd",
                 "cn", 
                 "sd", 
                 "cn"
             ],
             [
-                "",
                 "unet",
                 "unet controlnet",
                 "unet",
                 "unet controlnet"
             ],
             [
-                "base-diffusion",
                 "sd4", 
                 "sd4_cn4",  
                 "sd128", 
@@ -41,13 +37,13 @@
     {
         "keys": ["pipeline.augment-max-strength.pos-x"],
         "values": [
-            [4]
+            [4, 8]
         ]
     },
     {
         "keys": ["pipeline.augment-max-strength.rot-z"],
         "values": [
-            [45]
+            [45, 90]
         ]
     },
     {
