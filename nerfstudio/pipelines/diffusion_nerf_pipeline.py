@@ -305,42 +305,22 @@ class DiffusionNerfPipeline(VanillaPipeline):
         return model_outputs, loss_dict, metrics_dict
 
     def _get_pose_augmentation(self, step, event: Optional[Tensor] = None) -> Tensor:
-        if event is None:
-            event = torch.ones(6, dtype=torch.bool)
-
-        max_strength = self.config.augment_max_strength.tensor_rad
-
-        if (
-            self.config.augment_strategy == "partial_linear"
-            and step < self.config.max_aug_phase_step
-        ):
-            # Should be a linear ramp
-            max_strength *= step / self.config.max_aug_phase_step
-
-        strength = max_strength - 2 * torch.rand_like(max_strength) * max_strength
-        strength *= event
-
-        return 1.0 * strength
+        return get_pose_augmentation(
+            step,
+            self.config.augment_max_strength,
+            self.config.max_aug_phase_step,
+            event,
+            self.config.augment_strategy,
+        )
 
     def _get_diffusion_strength(self, step: int) -> float:
-        start_strength: float = typing.cast(
-            float, self.diffusion_model.config.noise_strength
+        return get_diffusion_strength(
+            step,
+            self.config.diffusion_model.noise_strength,
+            self.config.noise_start_phase_step,
+            self.config.noise_end_phase_step,
+            self.config.diffusion_model.num_inference_steps,
         )
-
-        if step < self.config.noise_start_phase_step:
-            return start_strength
-
-        if step >= self.config.noise_end_phase_step:
-            return 0.0
-
-        scalar = (step - self.config.noise_start_phase_step) / (
-            self.config.noise_end_phase_step - self.config.noise_start_phase_step
-        )
-
-        # There will be at least one step to avoid issues with diffusion
-        min_noise = 1 / self.config.diffusion_model.num_inference_steps + 1e-10
-
-        return max((1 - scalar) * start_strength, min_noise)
 
     def _is_augment_phase(self, step: int) -> bool:
         return step >= self.config.augment_phase_step
@@ -823,3 +803,56 @@ def make_ray_signal(
     assert ray.shape[1] * ray.shape[2] == origins.shape[0] * upsample_factor**2
 
     return ray
+
+
+def get_diffusion_strength(
+    step: int,
+    start_strength: float,
+    noise_drop_start_step: int,
+    noise_drop_end_step: int,
+    num_inference_steps: int,
+) -> float:
+    min_noise = 1 / num_inference_steps + 1e-10
+
+    if step < noise_drop_start_step:
+        return start_strength
+
+    if step >= noise_drop_end_step:
+        return min_noise
+
+    scalar = (step - noise_drop_start_step) / (
+        noise_drop_end_step - noise_drop_start_step
+    )
+
+    # There will be at least one step to avoid issues with diffusion
+
+    return max((1 - scalar) * start_strength, min_noise)
+
+
+def get_pose_augmentation(
+    step: int,
+    augment_max_strength: PoseConfig,
+    max_aug_step: int,
+    event: Optional[Tensor] = None,
+    augment_strategy: str = "partial_linear",
+    rng: Optional[torch.Generator] = None,
+) -> Tensor:
+    if rng is None:
+        rng = torch.default_generator
+
+    if event is None:
+        event = torch.ones(6, dtype=torch.bool)
+
+    max_strength = augment_max_strength.tensor_rad
+
+    if augment_strategy == "partial_linear" and step < max_aug_step:
+        # Linear ramp starting at 0
+        max_strength *= step / max_aug_step
+
+    rel_aug = torch.empty_like(max_strength).uniform_(-1, 1, generator=rng)
+
+    augmentation = (
+        rel_aug * max_strength * event
+    )  # Uniform in [-max_strength, max_strength], zeroed out if event is False
+
+    return augmentation
