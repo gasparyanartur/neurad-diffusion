@@ -764,6 +764,7 @@ class StableDiffusionModel:
         self,
         sample: Dict[str, Any],
         rgb_key: str = "rgb",
+        nan_to_zero: bool = True,
         **kwargs,
     ) -> Dict[str, Any]:
         """Denoise image with diffusion model.
@@ -856,6 +857,9 @@ class StableDiffusionModel:
 
             if not channel_first:
                 image = image.permute(0, 2, 3, 1)
+
+            if nan_to_zero:
+                image[image.isnan()] = 0
 
         return {"rgb": image}
 
