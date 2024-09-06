@@ -9,6 +9,7 @@
         ],
         "values": [
             [
+                "null",
                 "models/lora/diffusion_un4",
                 "models/lora/diffusion_un4cn4",
                 "models/lora/diffusion_un128",
@@ -16,17 +17,20 @@
             ],
             [
                 "sd",
+                "sd",
                 "cn", 
                 "sd", 
                 "cn"
             ],
             [
+                "",
                 "unet",
                 "unet controlnet",
                 "unet",
                 "unet controlnet"
             ],
             [
+                "base-diffusion",
                 "sd4", 
                 "sd4_cn4",  
                 "sd128", 
@@ -37,13 +41,13 @@
     {
         "keys": ["pipeline.augment-max-strength.pos-x"],
         "values": [
-            [4, 8]
+            [4]
         ]
     },
     {
         "keys": ["pipeline.augment-max-strength.rot-z"],
         "values": [
-            [45, 90]
+            [45]
         ]
     },
     {
