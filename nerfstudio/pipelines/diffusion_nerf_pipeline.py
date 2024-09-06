@@ -174,7 +174,10 @@ class DiffusionNerfPipeline(VanillaPipeline):
 
         self.fid = None
 
-        if self.config.nerf_checkpoint and self.config.nerf_checkpoint.strip().lower() != "none": 
+        if (
+            self.config.nerf_checkpoint
+            and self.config.nerf_checkpoint.strip().lower() != "none"
+        ):
             self.load_nerf_checkpoint(self.config.nerf_checkpoint)
 
     def load_nerf_checkpoint(self, checkpoint_path: Union[Path, str]):
@@ -311,7 +314,8 @@ class DiffusionNerfPipeline(VanillaPipeline):
             self.config.augment_strategy == "partial_linear"
             and step < self.config.max_aug_phase_step
         ):
-            max_strength *= step / self.config.max_steps
+            # Should be a linear ramp
+            max_strength *= step / self.config.max_aug_phase_step
 
         strength = max_strength - 2 * torch.rand_like(max_strength) * max_strength
         strength *= event
@@ -319,17 +323,24 @@ class DiffusionNerfPipeline(VanillaPipeline):
         return 1.0 * strength
 
     def _get_diffusion_strength(self, step: int) -> float:
-        if step < self.config.noise_start_phase_step:
-            return 1.0
-
         start_strength: float = typing.cast(
             float, self.diffusion_model.config.noise_strength
         )
 
-        return max(
-            start_strength * (1 - step / self.config.max_steps),
-            1 / self.config.diffusion_model.num_inference_steps + 1e-10,
+        if step < self.config.noise_start_phase_step:
+            return start_strength
+
+        if step >= self.config.noise_end_phase_step:
+            return 0.0
+
+        scalar = (step - self.config.noise_start_phase_step) / (
+            self.config.noise_end_phase_step - self.config.noise_start_phase_step
         )
+
+        # There will be at least one step to avoid issues with diffusion
+        min_noise = 1 / self.config.diffusion_model.num_inference_steps + 1e-10
+
+        return max((1 - scalar) * start_strength, min_noise)
 
     def _is_augment_phase(self, step: int) -> bool:
         return step >= self.config.augment_phase_step
