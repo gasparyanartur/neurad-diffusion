@@ -373,9 +373,6 @@ class DiffusionModelConfig(BaseModel):
     revision: str = "main"
     use_safetensors: bool = True
 
-    low_mem_mode: bool = False
-    """If applicable, prioritize options which lower GPU memory requirements at the expense of performance."""
-
     compile_models: Tuple[str, ...] = ()
     """If applicable, compile Diffusion pipeline using available torch backend."""
 

@@ -216,7 +216,6 @@ class DiffusionNerfPipeline(VanillaPipeline):
                 step,
                 cameras,
                 use_actor_shift=True,
-                num_rays=self.config.datamanager.train_num_rays_per_batch,
             )
         else:
             raise ValueError(
@@ -253,7 +252,6 @@ class DiffusionNerfPipeline(VanillaPipeline):
         batch,
         step: int,
         cameras: Cameras,
-        num_rays: int,
         use_actor_shift: bool = False,
     ):
         model_outputs, loss_dict, metrics_dict = self._strategy_augment_none(
@@ -271,11 +269,10 @@ class DiffusionNerfPipeline(VanillaPipeline):
 
         for signal_name in self.diffusion_model.config.conditioning_signals:
             if signal_name == "ray":
-                diffusion_input[signal_name] = make_ray_signal(
-                    aug_ray_bundle.origins[:num_rays],
-                    aug_ray_bundle.directions[:num_rays],
+                diffusion_input[signal_name] = get_ray_signal_from_ray_bundle(
+                    aug_ray_bundle,
                     self.config.ray_patch_size,
-                    upsample_factor=self.model.config.rgb_upsample_factor,
+                    self.model.rgb_upsample_factor,
                 )
 
             else:
@@ -744,6 +741,8 @@ def transform_ray_bundle(
     )  # In case ground truth needs original ray_bundle
     device = new_ray_bundle.origins.device
 
+    # TODO: Investigate every parameter of the ray bundle
+
     # TODO: Considering using a different one for each camera.
     aug_translation = pose_offset[..., :3].to(device=device)  # 3
     aug_rotation = pose_offset[..., 3:].to(device=device)  # 3
@@ -774,35 +773,54 @@ def transform_ray_bundle(
     return new_ray_bundle
 
 
-def make_ray_signal(
-    origins: Tensor,
-    directions: Tensor,
+def is_cam_ray(ray_bundle: RayBundle) -> Tensor:
+    return ~ray_bundle.metadata["is_lidar"].flatten()
+
+
+def unfold_ray_vec(ray: Tensor, patch_size: Tuple[int, int]) -> Tensor:
+    assert len(ray.shape) == 2
+    assert ray.shape[0] % (patch_size[0] * patch_size[1]) == 0
+
+    C = ray.shape[1]
+    B = ray.shape[0] // (patch_size[0] * patch_size[1])
+    return ray.view(B, patch_size[0], patch_size[1], C).permute(0, 3, 1, 2)
+
+
+def get_cam_rays_from_bundle(
+    ray_bundle: RayBundle, patch_size: Tuple[int, int]
+) -> Tuple[Tensor, Tensor]:
+    is_cam = is_cam_ray(ray_bundle)
+    origins = unfold_ray_vec(ray_bundle.origins[is_cam], patch_size)
+    directions = unfold_ray_vec(ray_bundle.directions[is_cam], patch_size)
+
+    return origins, directions
+
+
+def upsample_rays(rays: Tensor, upsample_factor: int) -> Tensor:
+    assert len(rays.shape) == 4
+
+    rays = torch.nn.functional.interpolate(
+        rays, scale_factor=upsample_factor, mode="bilinear", align_corners=False
+    )
+
+    return rays
+
+
+def get_ray_signal_from_ray_bundle(
+    ray_bundle: RayBundle,
     patch_size: Tuple[int, int],
     upsample_factor: int = 4,
 ) -> Tensor:
-    assert origins.shape == directions.shape
-    assert origins.shape[0] == patch_size[0] * patch_size[1]
-
-    ray = (
-        torch.concat([origins, directions], dim=-1)
-        .reshape(
-            *patch_size,
-            -1,
-        )
-        .permute(2, 0, 1)
+    origins, directions = get_cam_rays_from_bundle(
+        ray_bundle,
+        patch_size,
     )
 
-    ray = torch.nn.functional.interpolate(
-        ray.unsqueeze(0),
-        scale_factor=upsample_factor,
-        mode="bilinear",
-        align_corners=False,
-    ).squeeze(0)
+    origins = upsample_rays(origins, upsample_factor)
+    directions = upsample_rays(directions, upsample_factor)
 
-    assert ray.shape[0] == (origins.shape[-1] + directions.shape[-1])
-    assert ray.shape[1] * ray.shape[2] == origins.shape[0] * upsample_factor**2
-
-    return ray
+    rays = torch.cat([origins, directions], dim=1)
+    return rays
 
 
 def get_diffusion_strength(

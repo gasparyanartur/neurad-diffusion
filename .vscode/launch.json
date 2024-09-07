@@ -211,7 +211,7 @@
         "--pipeline.diffusion_model.dtype",
         "fp16",
         "--pipeline.diffusion_model.type",
-        "cn",
+        "sd",
         "--pipeline.augment_strategy",
         "partial_linear",
         "--pipeline.augment_phase_step",
