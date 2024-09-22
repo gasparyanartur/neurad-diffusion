@@ -855,9 +855,6 @@ class StableDiffusionModel:
             if not channel_first:
                 image = image.permute(0, 2, 3, 1)
 
-            if nan_to_zero:
-                image[image.isnan()] = 0
-
         return {"rgb": image}
 
     def get_diffusion_metrics(

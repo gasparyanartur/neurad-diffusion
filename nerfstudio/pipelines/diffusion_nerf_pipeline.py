@@ -280,10 +280,11 @@ class DiffusionNerfPipeline(VanillaPipeline):
 
         diffusion_model = cast(StableDiffusionModel, self.diffusion_model)
 
-        diffusion_output = diffusion_model.get_diffusion_output(
-            diffusion_input,
-            pipeline_kwargs={"strength": self._get_diffusion_strength(step)},
-        )
+        with torch.autograd.detect_anomaly():
+            diffusion_output = diffusion_model.get_diffusion_output(
+                diffusion_input,
+                pipeline_kwargs={"strength": self._get_diffusion_strength(step)},
+            )
 
         aug_metrics_dict = diffusion_model.get_diffusion_metrics(
             diffusion_input, diffusion_output
