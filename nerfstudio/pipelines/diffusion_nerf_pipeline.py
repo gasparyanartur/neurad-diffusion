@@ -272,7 +272,7 @@ class DiffusionNerfPipeline(VanillaPipeline):
                 diffusion_input[signal_name] = get_ray_signal_from_ray_bundle(
                     aug_ray_bundle,
                     self.config.ray_patch_size,
-                    self.model.rgb_upsample_factor,
+                    self.config.model.rgb_upsample_factor,
                 )
 
             else:
