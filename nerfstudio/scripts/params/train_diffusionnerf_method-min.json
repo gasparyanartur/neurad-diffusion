@@ -25,15 +25,10 @@
         ]
     },
     {
-        "keys": ["pipeline.augment-max-strength.pos-x"],
+        "keys": ["pipeline.augment-max-strength.pos-x", "pipeline.augment-max-strength.rot-z"],
         "values": [
-            [4]
-        ]
-    },
-    {
-        "keys": ["pipeline.augment-max-strength.rot-z"],
-        "values": [
-            [0, 45]
+            [4, 0, 0],
+            [0, 45, 0]
         ]
     },
     {
@@ -45,8 +40,8 @@
     {
         "keys": ["pipeline.max_aug_phase_step", "pipeline.noise_start_phase_step"],
         "values": [
-            [10000, 0],
-            [10000, 0]
+            [10000, 0, 10000],
+            [10000, 0, 0]
         ]
     }
 ]}
