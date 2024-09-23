@@ -106,7 +106,7 @@ $execute python3.10 -u nerfstudio/scripts/train.py \
     --vis wandb \
     --experiment-name $experiment_name \
     $checkpoint_cmd \
-    --pipeline.diffusion_model.dtype "fp16" \
+    --pipeline.diffusion_model.dtype "fp32" \
     --pipeline.augment_strategy $augment_strategy \
     $array_params \
     $@ \

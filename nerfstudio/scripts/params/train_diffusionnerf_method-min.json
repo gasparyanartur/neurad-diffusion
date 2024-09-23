@@ -33,7 +33,7 @@
     {
         "keys": ["pipeline.augment-max-strength.rot-z"],
         "values": [
-            [45]
+            [0]
         ]
     },
     {
