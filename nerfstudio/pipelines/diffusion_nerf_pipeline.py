@@ -262,10 +262,12 @@ class DiffusionNerfPipeline(VanillaPipeline):
 
         pose_aug = self._get_pose_augmentation(step)
         aug_ray_bundle = transform_ray_bundle(ray_bundle, pose_aug, cameras)
+
+        # TODO: Add detect anomaly
         aug_outputs = self.model(aug_ray_bundle, patch_size=self.config.ray_patch_size)
 
         assert len(aug_outputs["rgb"].shape) == 4
-        diffusion_input = {"rgb": aug_outputs["rgb"].permute(0, 3, 1, 2)}
+        diffusion_input = {"rgb": aug_outputs["rgb"].permute(0, 3, 1, 2).detach()}
 
         for signal_name in self.diffusion_model.config.conditioning_signals:
             if signal_name == "ray":
@@ -762,6 +764,8 @@ def transform_ray_bundle(
         @ rotate_around(aug_rotation[1], 1)
         @ rotate_around(aug_rotation[0], 0)
     ).to(device)
+
+    # POSSIBLE BUG - INVESTIGATE
     direction = ray_bundle.directions[is_cam.flatten()] @ rotation.T
 
     new_ray_bundle.origins[is_cam.flatten()] += translation.to(
