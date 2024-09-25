@@ -744,9 +744,6 @@ def transform_ray_bundle(
     )  # In case ground truth needs original ray_bundle
     device = new_ray_bundle.origins.device
 
-    # TODO: Investigate every parameter of the ray bundle
-
-    # TODO: Considering using a different one for each camera.
     aug_translation = pose_offset[..., :3].to(device=device)  # 3
     aug_rotation = pose_offset[..., 3:].to(device=device)  # 3
 
@@ -754,26 +751,35 @@ def transform_ray_bundle(
 
     cam_idxs = ray_bundle.camera_indices[is_cam, 0].cpu()  # Bc
     c2w = cameras.camera_to_worlds[cam_idxs].to(device=device)  # Bc, 3, 4
-    c2w[..., :3, :3] = c2w[..., :3, :3] @ torch.from_numpy(OPENCV_TO_NERFSTUDIO).to(
-        dtype=torch.float32, device=c2w.device
-    )
+
     translation = c2w[..., :3] @ aug_translation
 
-    rotation = (  # Chain together rotations, X -> Y -> Z
+    # opencv_to_nerfstudio = torch.from_numpy(OPENCV_TO_NERFSTUDIO).to(
+    #    dtype=torch.float32, device=c2w.device
+    # )
+    # c2w_rot = c2w[..., :3, :3]
+
+    local_rotation = (  # Chain together rotations, X -> Y -> Z
         rotate_around(aug_rotation[2], 2)
         @ rotate_around(aug_rotation[1], 1)
         @ rotate_around(aug_rotation[0], 0)
     ).to(device)
 
-    # POSSIBLE BUG - INVESTIGATE
-    direction = ray_bundle.directions[is_cam.flatten()] @ rotation.T
+    # Each direction is in world space
+    # We want to apply the rotation in camera space and then transform back to world space
+    # We first transform to camera space with c2w^-1
+    # Then apply the local rotation in camera space
+    # Then transform back to world space with c2w
+    # Since matrix multiplication is associative, we can combine these into one matrix
+    # We then use einsum to apply multiplication across batches
+    # direction_transform = c2w_rot @ local_rotation @ torch.inverse(c2w_rot)
 
-    new_ray_bundle.origins[is_cam.flatten()] += translation.to(
-        new_ray_bundle.origins.dtype
+    direction = torch.einsum(
+        "bij,bj->bi", local_rotation[None, ...], ray_bundle.directions[is_cam]
     )
-    new_ray_bundle.directions[is_cam.flatten()] = direction.to(
-        new_ray_bundle.directions.dtype
-    )
+
+    new_ray_bundle.origins[is_cam] += translation.to(new_ray_bundle.origins.dtype)
+    new_ray_bundle.directions[is_cam] = direction.to(new_ray_bundle.directions.dtype)
 
     return new_ray_bundle
 

@@ -3,7 +3,9 @@ import math
 from typing import cast
 
 import torch
+
 from nerfstudio.cameras.rays import RayBundle
+from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.pipelines.diffusion_nerf_pipeline import (
     PoseConfig,
     get_cam_rays_from_bundle,
@@ -96,3 +98,11 @@ def test_upsample_rays():
 
     rays = torch.zeros((B, 3, H, W))
     assert upsample_rays(rays, F).shape == (B, 3, H * F, W * F)
+
+
+def test_transform_ray_bundle():
+    with open(f"tests/mock_data/ray_bundle-B{B}_H{H}_W{W}.pkl", "rb") as f:
+        ray_bundle = cast(RayBundle, pickle.load(f))
+
+    with open(f"test/mock_data/cameras.pkl", "rb") as f:
+        cameras = cast(Cameras, pickle.load(f))
