@@ -819,7 +819,7 @@ class StableDiffusionModel:
                 self.device,
             )
             noisy_latent = add_noise_to_latent(
-                latent, timesteps[0], self.noise_scheduler
+                latent, timesteps[0], self.noise_scheduler, seed=kwargs.get("seed")
             )
 
             prompt_embeds = encode_tokens(self.text_encoder, input_ids, True)

@@ -53,9 +53,21 @@ Merge with NeuRAD
 - Train SLURM single LoRA on HAL [x]
 - Create SLURM lora batch [x]
 - Change batch to use array instead [x]
-- Create SLURM neurad []
-- Add new pipeline to training
-- Test new pipeline
-- Train small cn model
-- Add controlnet support to neurad
-- Test controlnet
+- Create SLURM neurad [x]
+- Migrate to Berzelius [x]
+- Rebuild image [x]
+- Create SLURM batch for neurad
+- Add new pipeline to training [x]
+- Test new pipeline [x]
+- Train small cn model [x]
+- Add controlnet support to neurad [x]
+- Test controlnet [x]
+
+
+Debug NeuRAD Integration
+- Add anomaly detection to diffusion output [x]
+- Detach neurad output gradient [x]
+- Investigate transform ray bundle [x]
+- Add anomaly detection to neurad [x]
+- Fix diffusion seed [x]
+- Log images during training [x]

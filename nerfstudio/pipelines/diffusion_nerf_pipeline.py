@@ -45,7 +45,7 @@ from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManage
 from nerfstudio.data.dataparsers.ad_dataparser import OPENCV_TO_NERFSTUDIO
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
-from nerfstudio.utils import profiler
+from nerfstudio.utils import profiler, writer
 from nerfstudio.generative.diffusion_model import (
     StableDiffusionModel,
     DiffusionModelConfig,
@@ -110,6 +110,7 @@ class DiffusionNerfConfig(VanillaPipelineConfig):
         15000,
         20000,
     )  # NOTE: must also be an eval step for this to work
+
     eval_shift_distances_horizontal: Tuple[int, ...] = (0, 2, 4, 6, 8)
     eval_shift_distances_vertical: Tuple[int, ...] = (1,)
     """Whether to calculate FID for lane shifted images."""
@@ -118,6 +119,8 @@ class DiffusionNerfConfig(VanillaPipelineConfig):
 
     diffusion_model: DiffusionModelConfig = field(default_factory=DiffusionModelConfig)
     """Configuration for the diffusion model used for augmentation."""
+
+    diffusion_seed: int = 0
 
     augment_phase_step: int = 0
     max_aug_phase_step: int = 10000
@@ -143,6 +146,7 @@ class DiffusionNerfConfig(VanillaPipelineConfig):
     """The range in which shifts and rotations get uniformly sampled from. (-x, x)"""
 
     max_steps: int = 20001
+    debug_image_interval: int = 10
 
     def __post_init__(self) -> None:
         assert (
@@ -263,8 +267,10 @@ class DiffusionNerfPipeline(VanillaPipeline):
         pose_aug = self._get_pose_augmentation(step)
         aug_ray_bundle = transform_ray_bundle(ray_bundle, pose_aug, cameras)
 
-        # TODO: Add detect anomaly
-        aug_outputs = self.model(aug_ray_bundle, patch_size=self.config.ray_patch_size)
+        with torch.autograd.detect_anomaly():
+            aug_outputs = self.model(
+                aug_ray_bundle, patch_size=self.config.ray_patch_size
+            )
 
         assert len(aug_outputs["rgb"].shape) == 4
         diffusion_input = {"rgb": aug_outputs["rgb"].permute(0, 3, 1, 2).detach()}
@@ -285,7 +291,10 @@ class DiffusionNerfPipeline(VanillaPipeline):
         with torch.autograd.detect_anomaly():
             diffusion_output = diffusion_model.get_diffusion_output(
                 diffusion_input,
-                pipeline_kwargs={"strength": self._get_diffusion_strength(step)},
+                pipeline_kwargs={
+                    "strength": self._get_diffusion_strength(step),
+                    "seed": self.config.diffusion_seed,
+                },
             )
 
         aug_metrics_dict = diffusion_model.get_diffusion_metrics(
@@ -297,6 +306,24 @@ class DiffusionNerfPipeline(VanillaPipeline):
         aug_loss_dict = {
             k: v * self.config.augment_loss_mult for k, v in aug_loss_dict.items()
         }
+
+        if (
+            (self.config.debug_image_interval is not None)
+            and (step > 0)
+            and (step % self.config.debug_image_interval == 0)
+        ):
+            image_dict = {
+                "gt": batch["image"],
+                "nerf": model_outputs["rgb"],
+                "aug": aug_outputs["rgb"],
+                "diffusion": diffusion_output["rgb"].permute(0, 2, 3, 1),
+            }
+            for image_name, image in image_dict.items():
+                writer.put_image(
+                    name="Debug Images" + "/" + image_name,
+                    image=image[0].detach(),
+                    step=step,
+                )
 
         model_outputs.update({("aug_" + k): v for k, v in aug_outputs.items()})
         loss_dict.update({("aug_" + k): v for k, v in aug_loss_dict.items()})

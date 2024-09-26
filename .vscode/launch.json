@@ -207,7 +207,7 @@
       "justMyCode": false,
       "args": [
         "diffusion-nerf",
-        "--vis=tensorboard",
+        "--vis=wandb",
         "--pipeline.diffusion_model.dtype",
         "fp16",
         "--pipeline.diffusion_model.type",
