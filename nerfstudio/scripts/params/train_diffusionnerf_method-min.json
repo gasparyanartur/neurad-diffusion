@@ -34,7 +34,7 @@
     {
         "keys": ["pipeline.augment_loss_mult"],
         "values": [
-            [1, 2]
+            [3, 5, 10]
         ]
     },
     {
