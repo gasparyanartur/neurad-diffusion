@@ -321,7 +321,7 @@ class DiffusionNerfPipeline(VanillaPipeline):
             for image_name, image in image_dict.items():
                 writer.put_image(
                     name="Debug Images" + "/" + image_name,
-                    image=image[0].detach().float().cpu().numpy(),
+                    image=image[0].detach().float().cpu(),
                     step=step,
                 )
 
