@@ -145,6 +145,15 @@ class DiffusionNerfConfig(VanillaPipelineConfig):
     )
     """The range in which shifts and rotations get uniformly sampled from. (-x, x)"""
 
+    augment_direction: PoseConfig = PoseConfig(
+        pos_x=-1,
+        pos_y=1,
+        pos_z=1,
+        rot_x=-1,
+        rot_y=1,
+        rot_z=1,
+    )
+
     max_steps: int = 20001
     debug_image_interval: int = 10
 
@@ -335,6 +344,7 @@ class DiffusionNerfPipeline(VanillaPipeline):
         return get_pose_augmentation(
             step,
             self.config.augment_max_strength,
+            self.config.augment_direction,
             self.config.max_aug_phase_step,
             event,
             self.config.augment_strategy,
@@ -888,6 +898,7 @@ def get_diffusion_strength(
 def get_pose_augmentation(
     step: int,
     augment_max_strength: PoseConfig,
+    augment_direction: PoseConfig,
     max_aug_step: int,
     event: Optional[Tensor] = None,
     augment_strategy: str = "partial_linear",
@@ -899,13 +910,13 @@ def get_pose_augmentation(
     if event is None:
         event = torch.ones(6, dtype=torch.bool)
 
-    max_strength = augment_max_strength.tensor_rad
+    max_strength = augment_max_strength.tensor_rad * augment_direction.tensor_deg
 
     if augment_strategy == "partial_linear" and step < max_aug_step:
         # Linear ramp starting at 0
         max_strength *= step / max_aug_step
 
-    rel_aug = torch.empty_like(max_strength).uniform_(-1, 1, generator=rng)
+    rel_aug = torch.empty_like(max_strength).uniform_(0, 1, generator=rng)
 
     augmentation = (
         rel_aug * max_strength * event
