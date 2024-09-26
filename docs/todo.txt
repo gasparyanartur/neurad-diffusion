@@ -71,3 +71,6 @@ Debug NeuRAD Integration
 - Add anomaly detection to neurad [x]
 - Fix diffusion seed [x]
 - Log images during training [x]
+- Fix augmentation to one side (0 - D instead of -D - D)
+- Train more augmentation losses
+- Train with finetuned diffusion
