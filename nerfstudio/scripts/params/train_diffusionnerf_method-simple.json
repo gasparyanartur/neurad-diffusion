@@ -1,45 +1,62 @@
-
-{"entries": [
-    {
-        "keys": [
-            "pipeline.diffusion_model.lora_weights", 
-            "pipeline.diffusion_model.type", 
-            "pipeline.diffusion_model.models_to_load_lora",
-            "pipeline.note"
-        ],
-        "values": [
-            [
-                "null"
-
+{
+    "entries": [
+        {
+            "keys": [
+                "pipeline.diffusion_model.lora_weights",
+                "pipeline.diffusion_model.type",
+                "pipeline.diffusion_model.models_to_load_lora",
+                "pipeline.note"
             ],
-            [
-                "sd"
-
-            ],
-            [
-                ""
-            ],
-            [
-                "base-diffusion"
+            "values": [
+                [
+                    "null"
+                ],
+                [
+                    "sd"
+                ],
+                [
+                    ""
+                ],
+                [
+                    "base-diffusion"
+                ]
             ]
-        ]
-    },
-    {
-        "keys": ["pipeline.augment-max-strength.pos-x"],
-        "values": [
-            [4, 8]
-        ]
-    },
-    {
-        "keys": ["pipeline.augment-max-strength.rot-z"],
-        "values": [
-            [45, 90]
-        ]
-    },
-    {
-        "keys": ["pipeline.augment_loss_mult"],
-        "values": [
-            [10, 20, 40]
-        ]
-    }
-]}
+        },
+        {
+            "keys": [
+                "pipeline.augment-max-strength.pos-x"
+            ],
+            "values": [
+                [
+                    0,
+                    4,
+                    8
+                ]
+            ]
+        },
+        {
+            "keys": [
+                "pipeline.augment-max-strength.rot-z"
+            ],
+            "values": [
+                [
+                    0,
+                    45,
+                    90
+                ]
+            ]
+        },
+        {
+            "keys": [
+                "pipeline.augment_loss_mult"
+            ],
+            "values": [
+                [
+                    10,
+                    20,
+                    40
+                ]
+            ]
+        }
+    ]
+}
