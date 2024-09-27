@@ -1,0 +1,47 @@
+
+{"entries": [
+    {
+        "keys": [
+            "pipeline.diffusion_model.lora_weights", 
+            "pipeline.diffusion_model.type", 
+            "pipeline.diffusion_model.models_to_load_lora",
+            "pipeline.note"
+        ],
+        "values": [
+            [
+                "null"
+
+            ],
+            [
+                "sd"
+
+            ],
+            [
+                ""
+            ],
+            [
+                "base-diffusion"
+            ]
+        ]
+    },
+    {
+        "keys": ["pipeline.augment-max-strength.pos-x", "pipeline.augment-max-strength.rot-z"],
+        "values": [
+            [4],
+            [0]
+        ]
+    },
+    {
+        "keys": ["pipeline.augment_loss_mult"],
+        "values": [
+            [10]
+        ]
+    },
+    {
+        "keys": ["pipeline.max_aug_phase_step", "pipeline.noise_start_phase_step"],
+        "values": [
+            [0],
+            [10000]
+        ]
+    }
+]}
