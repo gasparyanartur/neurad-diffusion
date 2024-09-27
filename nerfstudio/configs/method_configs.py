@@ -446,7 +446,7 @@ method_configs["diffusion-nerf"] = TrainerConfig(
         model=NeuRADModelConfig(
             eval_num_rays_per_chunk=1 << 15,
             camera_optimizer=CameraOptimizerConfig(
-                mode="off", trans_l2_penalty=0, rot_l2_penalty=0
+                mode="off"
             ),  # SO3xR3
             rgb_upsample_factor=4,
         ),
