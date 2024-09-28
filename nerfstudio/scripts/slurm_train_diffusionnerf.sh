@@ -25,11 +25,10 @@ dataset=${DATASET:-pandaset}
 
 job_id=${SLURM_JOB_ID:-"000000"}
 task_id=${SLURM_ARRAY_TASK_ID:-"1"}
-data_task_id=0      # TODO: Some sort of index
+data_task_id=${DATA_TASK_ID:"0"}
 image_path=${IMAGE_PATH:-"containers/neurad_140824.sif"}
 
-array_param_path=${ARRAY_PARAM_PATH:-nerfstudio/scripts/params/${name}_method.json}
-array_param_data_path=${ARRAY_PARAM_DATA_PATH:-nerfstudio/scripts/params/${name}_data.json}
+
 
 #BIND_CMD="--bind /staging:/staging --bind /workspaces:/workspaces --bind /datasets:/datasets"
 BIND_CMD="--bind /proj:/proj --bind /home:/home"
@@ -43,33 +42,43 @@ execute="singularity exec \
             --env WANDB_API_KEY=$WANDB_API_KEY \
             $image_path"
 
-array_params_count=$(
-    $execute python3.10 nerfstudio/scripts/param_parser.py $array_param_path -s
-)
-if [[ $array_param_count -gt $SLURM_ARRAY_TASK_MAX ]]; then
-    echo "Array parameter count $array_param_count is greater than SLURM_ARRAY_TASK_MAX $SLURM_ARRAY_TASK_MAX - exiting"
-    exit 1
+
+if [[ -z ${ARRAY_PARAM_PATH} ]]; then
+    array_params=""
+    note=""
+else
+    array_params_count=$(
+        $execute python3.10 nerfstudio/scripts/param_parser.py $ARRAY_PARAM_PATH -s
+    )
+    if [[ $array_param_count -gt $SLURM_ARRAY_TASK_MAX ]]; then
+        echo "Array parameter count $array_param_count is greater than SLURM_ARRAY_TASK_MAX $SLURM_ARRAY_TASK_MAX - exiting"
+        exit 1
+    fi
+
+    array_params=$(
+        $execute python3.10 nerfstudio/scripts/param_parser.py $ARRAY_PARAM_PATH -i $task_id
+    )
+    if [[ -z ${array_params} ]]; then 
+        echo "No array parameters found for task $task_id - exiting"
+        exit 1
+    fi
+
+    note=$(
+        $execute python3.10 nerfstudio/scripts/param_reader.py --pipeline.note $array_params
+    )
 fi
 
-array_params=$(
-    $execute python3.10 nerfstudio/scripts/param_parser.py $array_param_path -i $task_id
-)
-if [[ -z ${array_params} ]]; then 
-    echo "No array parameters found for task $task_id - exiting"
-    exit 1
+if [[ -z ${ARRAY_PARAM_DATA_PATH} ]]; then
+    array_params_data="--sequence 001 --cameras front"
+else
+    array_params_data=$(
+        $execute python3.10 nerfstudio/scripts/param_parser.py $ARRAY_PARAM_DATA_PATH -i $data_task_id     
+    )
+    if [[ -z ${array_params_data} ]]; then 
+        echo "No array parameters found for task $data_task_id - exiting"
+        exit 1
+    fi
 fi
-
-array_params_data=$(
-    $execute python3.10 nerfstudio/scripts/param_parser.py $array_param_data_path -i $data_task_id     
-)
-if [[ -z ${array_params_data} ]]; then 
-    echo "No array parameters found for task $data_task_id - exiting"
-    exit 1
-fi
-
-note=$(
-    $execute python3.10 nerfstudio/scripts/param_reader.py --pipeline.note $array_params
-)
 
 output_dir=${OUTPUT_DIR:="outputs/$name"}
 mkdir -p $output_dir
