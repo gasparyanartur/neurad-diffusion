@@ -25,7 +25,7 @@ dataset=${DATASET:-pandaset}
 
 job_id=${SLURM_JOB_ID:-"000000"}
 task_id=${SLURM_ARRAY_TASK_ID:-"1"}
-data_task_id=${DATA_TASK_ID:"0"}
+data_task_id=${DATA_TASK_ID:-"0"}
 image_path=${IMAGE_PATH:-"containers/neurad_140824.sif"}
 
 
