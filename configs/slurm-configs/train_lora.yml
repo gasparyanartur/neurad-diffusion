@@ -5,7 +5,7 @@ project_name: train-lora
 train_batch_size: 1
 dataloader_num_workers: 8
 
-n_epochs: 100
+n_epochs: 200
 val_freq: 1
 
 train_noise_strength: 0.1

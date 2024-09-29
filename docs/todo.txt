@@ -77,7 +77,10 @@ Debug NeuRAD Integration
 
 
 Run experiments
-- Train base neurad across 5 scenes
-- Sweep augment loss (3), augment_peak (2), noise_start (2), noise (3),  (base diffusion)
-- Finetune optimal diffusion models across scenes (5) for each config (4)
-- Use optimal parameters, sweep finetuned diffusion models (un4, uncn4, un128, uncn128)
+- Update launch scripts with correct parameters [x]
+- Train base neurad across 5 scenes []
+- Generate new reference renders
+- Update lora weights symlinks
+- Sweep augment loss (3), augment_peak (2), noise_start (2), noise (3),  (base diffusion) []
+- Finetune diffusion models across scenes (5) for each config (4)   []
+- Use optimal parameters, sweep finetuned diffusion models (un4, uncn4, un128, uncn128) []

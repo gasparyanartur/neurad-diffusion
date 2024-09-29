@@ -1,61 +1,200 @@
 
 {"entries": [
     {
-        "keys": [
-            "pipeline.diffusion_model.lora_weights", 
-            "pipeline.diffusion_model.type", 
-            "pipeline.diffusion_model.models_to_load_lora",
-            "pipeline.note"
-        ],
+        "keys": ["--pipeline.augment-max-strength.pos-x", "--pipeline.augment-max-strength.rot-z"],
         "values": [
-            [
-                "null",
-                "models/lora/diffusion_un4",
-                "models/lora/diffusion_un4cn4",
-                "models/lora/diffusion_un128",
-                "models/lora/diffusion_un128cn128"
-            ],
-            [
-                "sd",
-                "sd",
-                "cn",
-                "sd",
-                "cn"
-            ],
-            [
-                "",
-                "unet",
-                "unet controlnet",
-                "unet",
-                "unet controlnet"
-            ],
-            [
-                "base-diffusion",
-                "un4",
-                "un4cn4",
-                "un128",
-                "un128cn128"
-            ]
-        ]
-    },
-    {
-        "keys": ["pipeline.augment-max-strength.pos-x", "pipeline.augment-max-strength.rot-z"],
-        "values": [
-            [4],
+            [8],
             [45]
         ]
     },
     {
-        "keys": ["pipeline.augment_loss_mult"],
+        "keys": ["--pipeline.augment_loss_mult"],
         "values": [
             [5]
         ]
     },
     {
-        "keys": ["pipeline.max_aug_phase_step", "pipeline.noise_start_phase_step"],
+        "keys": ["--pipeline.max_aug_phase_step", "--pipeline.noise_start_phase_step"],
         "values": [
             [10000],
             [0]
+        ]
+    },
+    {
+        "keys": [
+            "--pipeline.diffusion_model.lora_weights", 
+            "--pipeline.diffusion_model.type", 
+            "--pipeline.diffusion_model.models_to_load_lora",
+            "--pipeline.note",
+            "",
+            "--cameras",
+            "--sequence"
+        ],
+        "values": [
+            [
+                "models/lora/diffusion_un4/001",
+                "models/lora/diffusion_un4/011",
+                "models/lora/diffusion_un4/016",
+                "models/lora/diffusion_un4/028",
+                "models/lora/diffusion_un4/053",
+                "models/lora/diffusion_un4cn4/001",
+                "models/lora/diffusion_un4cn4/011",
+                "models/lora/diffusion_un4cn4/016",
+                "models/lora/diffusion_un4cn4/028",
+                "models/lora/diffusion_un4cn4/053",
+                "models/lora/diffusion_un128/001",
+                "models/lora/diffusion_un128/011",
+                "models/lora/diffusion_un128/016",
+                "models/lora/diffusion_un128/028",
+                "models/lora/diffusion_un128/053",
+                "models/lora/diffusion_un128cn128/001",
+                "models/lora/diffusion_un128cn128/011",
+                "models/lora/diffusion_un128cn128/016",
+                "models/lora/diffusion_un128cn128/028",
+                "models/lora/diffusion_un128cn128/053"
+            ],
+            [
+                "sd",
+                "sd",
+                "sd",
+                "sd",
+                "sd",
+                "cn",
+                "cn",
+                "cn",
+                "cn",
+                "cn",
+                "sd",
+                "sd",
+                "sd",
+                "sd",
+                "sd",
+                "cn",
+                "cn",
+                "cn",
+                "cn",
+                "cn"
+            ],
+            [
+                "unet",
+                "unet",
+                "unet",
+                "unet",
+                "unet",
+                "unet controlnet",
+                "unet controlnet",
+                "unet controlnet",
+                "unet controlnet",
+                "unet controlnet",
+                "unet",
+                "unet",
+                "unet",
+                "unet",
+                "unet",
+                "unet controlnet",
+                "unet controlnet",
+                "unet controlnet",
+                "unet controlnet",
+                "unet controlnet"
+            ],
+            [
+                "base-diffusion",
+                "base-diffusion",
+                "base-diffusion",
+                "base-diffusion",
+                "base-diffusion",
+                "un4",
+                "un4",
+                "un4",
+                "un4",
+                "un4",
+                "un4cn4",
+                "un4cn4",
+                "un4cn4",
+                "un4cn4",
+                "un4cn4",
+                "un128",
+                "un128",
+                "un128",
+                "un128",
+                "un128",
+                "un128cn128",
+                "un128cn128",
+                "un128cn128",
+                "un128cn128",
+                "un128cn128"
+            ],
+            [
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data",
+                "pandaset-data"
+            ],
+            [
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front",
+                "front"
+            ],
+            [
+                "001",
+                "011",
+                "016",
+                "028",
+                "053",
+                "001",
+                "011",
+                "016",
+                "028",
+                "053",
+                "001",
+                "011",
+                "016",
+                "028",
+                "053",
+                "001",
+                "011",
+                "016",
+                "028",
+                "053",
+                "001",
+                "011",
+                "016",
+                "028",
+                "053"
+            ]
         ]
     }
 ]}

@@ -1,0 +1,52 @@
+
+{"entries": [
+    {
+        "keys": ["--pipeline.augment-max-strength.pos-x"],
+        "values": [
+            [8]
+        ]
+    },
+    {
+        "keys": ["--pipeline.augment-max-strength.rot-z"],
+        "values": [
+            [45]
+        ]
+    },
+    {
+        "keys": ["--pipeline.augment_loss_mult"],
+        "values": [
+            [20, 40, 60]
+        ]
+    },
+    {
+        "keys": ["--pipeline.augment-phase-step"],
+        "values": [
+            ["0", "20000"]
+        ]
+    },
+    {
+        "keys": ["--pipeline.noise-start-phase-step"],
+        "values": [
+            ["0", "20000"]
+        ]
+    },
+    {
+        "keys": ["--pipeline.diffusion-model.noise-strength"],
+        "values": [
+            [0.1, 0.2, 0.3]
+        ]
+    },
+    {
+        "keys": ["", "--cameras"],
+        "values": [
+            ["pandaset-data"],
+            ["front"]
+        ]
+    },
+    {
+        "keys": ["--sequence"],
+        "values": [
+            ["001"]
+        ]
+    }
+]}

@@ -45,7 +45,6 @@ execute="singularity exec \
 
 if [[ -z ${ARRAY_PARAM_PATH} ]]; then
     array_params=""
-    note=""
 else
     array_params_count=$(
         $execute python3.10 nerfstudio/scripts/param_parser.py $ARRAY_PARAM_PATH -s
@@ -63,9 +62,6 @@ else
         exit 1
     fi
 
-    note=$(
-        $execute python3.10 nerfstudio/scripts/param_reader.py --pipeline.note $array_params
-    )
 fi
 
 if [[ -z ${ARRAY_PARAM_DATA_PATH} ]]; then
@@ -97,7 +93,7 @@ echo "Array parameters data: $array_params_data"
 echo "Method: $method"
 
 experiment_name=${EXPERIMENT_NAME:-$(date +%Y%m%d_%H%M%S)_$job_id}
-experiment_name=${experiment_name}_$note
+experiment_name=${experiment_name}
 
 if [ -z ${NERF_CHECKPOINT_PATH} ]; then
     checkpoint_cmd=""

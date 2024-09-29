@@ -459,6 +459,9 @@ method_configs["diffusion-nerf"] = TrainerConfig(
             conditioning_signals=("ray",),
         ),
         augment_phase_step=0,
+        max_aug_phase_step=20001,
+        noise_start_phase_step=20001,
+        noise_end_phase_step=40001,
         augment_strategy="partial_linear",
     ),
     optimizers={

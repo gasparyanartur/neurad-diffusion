@@ -30,7 +30,7 @@ def verify_entry(entry: SlurmArrayEntry):
 
 
 def combine_joined_parameters(
-    arg_names: List[str], arg_values: List[List[str]]
+    arg_names: List[str], arg_values: List[List[str]], arg_prefix: str = ""
 ) -> List[str]:
     joined_params = []
 
@@ -38,20 +38,20 @@ def combine_joined_parameters(
         params: List[str] = []
 
         for arg_name, arg_value in zip(arg_names, arg_values):
-            params.append(f"--{arg_name} {arg_value[i_arg]}")
+            params.append(f"{arg_prefix}{arg_name} {arg_value[i_arg]}")
 
         joined_params.append(" ".join(params))
 
     return joined_params
 
 
-def parse_param_list(config: SlurmArrayConfig) -> List[str]:
+def parse_param_list(config: SlurmArrayConfig, arg_prefix: str = "") -> List[str]:
     all_params = []
 
     for entry in config.entries:
         verify_entry(entry)
 
-        joined_params = combine_joined_parameters(entry.keys, entry.values)
+        joined_params = combine_joined_parameters(entry.keys, entry.values, arg_prefix)
         all_params.append(joined_params)
 
     combined_parameters = list(it.product(*all_params))
@@ -77,13 +77,20 @@ def main():
         action="store_true",
         required=False,
     )
+    parser.add_argument(
+        "-p",
+        "--prefix",
+        help="The prefix to add to the arguments",
+        required=False,
+        default="",
+    )
 
     args = parser.parse_args()
     with open(args.config_path, "r") as f:
         file_content = f.read()
 
     config = SlurmArrayConfig.model_validate_json(file_content)
-    param_list = parse_param_list(config)
+    param_list = parse_param_list(config, args.prefix)
 
     arg_size = len(param_list)
 

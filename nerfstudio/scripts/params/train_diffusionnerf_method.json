@@ -2,10 +2,10 @@
 {"entries": [
     {
         "keys": [
-            "pipeline.diffusion_model.lora_weights", 
-            "pipeline.diffusion_model.type", 
-            "pipeline.diffusion_model.models_to_load_lora",
-            "pipeline.note"
+            "--pipeline.diffusion_model.lora_weights", 
+            "--pipeline.diffusion_model.type", 
+            "--pipeline.diffusion_model.models_to_load_lora",
+            "--pipeline.note"
         ],
         "values": [
             [
@@ -39,21 +39,34 @@
         ]
     },
     {
-        "keys": ["pipeline.augment-max-strength.pos-x"],
+        "keys": ["--pipeline.augment-max-strength.pos-x"],
         "values": [
             [4]
         ]
     },
     {
-        "keys": ["pipeline.augment-max-strength.rot-z"],
+        "keys": ["--pipeline.augment-max-strength.rot-z"],
         "values": [
             [45]
         ]
     },
     {
-        "keys": ["pipeline.augment_loss_mult"],
+        "keys": ["--pipeline.augment_loss_mult"],
         "values": [
             [10, 20, 40]
+        ]
+    },
+    {
+        "keys": ["", "--cameras"],
+        "values": [
+            ["pandaset-data"],
+            ["front"]
+        ]
+    },
+    {
+        "keys": ["--sequence"],
+        "values": [
+            ["001"]
         ]
     }
 ]}
