@@ -59,13 +59,13 @@ if [[ -z ${array_params} ]]; then
 fi
 
 x_shift=$(
-    $execute python3.10 nerfstudio/scripts/param_reader.py --x-shift $array_params
+    $execute python3.10 nerfstudio/scripts/param_reader.py x-shift $array_params
 )
 run_name=$(
-    $execute python3.10 nerfstudio/scripts/param_reader.py --run-name $array_params
+    $execute python3.10 nerfstudio/scripts/param_reader.py run-name $array_params
 )
 load_config=$(
-    $execute python3.10 nerfstudio/scripts/param_reader.py --load-config $array_params
+    $execute python3.10 nerfstudio/scripts/param_reader.py load-config $array_params
 )
 if [[ -z ${load_config} ]]; then 
     echo "No load config found for task $task_id - exiting"

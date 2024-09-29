@@ -1,16 +1,39 @@
 {
     "entries": [
         {
-            "keys": ["load-config", "run-name"],
+            "keys": [
+                "load-config",
+                "run-name"
+            ],
             "values": [
-                ["models/diffusionnerf/base-neurad/001/config.yml"],
-                ["base-neurad"]
+                [
+                    "models/diffusionnerf/base-neurad/001/config.yml",
+                    "models/diffusionnerf/base-neurad/011/config.yml",
+                    "models/diffusionnerf/base-neurad/016/config.yml",
+                    "models/diffusionnerf/base-neurad/028/config.yml",
+                    "models/diffusionnerf/base-neurad/053/config.yml"
+                ],
+                [
+                    "base-neurad/001",
+                    "base-neurad/011",
+                    "base-neurad/016",
+                    "base-neurad/028",
+                    "base-neurad/053"
+                ]
             ]
         },
         {
-            "keys": ["x-shift"],
+            "keys": [
+                "x-shift"
+            ],
             "values": [
-                [0, 2, 4, 6, 8]
+                [
+                    0,
+                    2,
+                    4,
+                    6,
+                    8
+                ]
             ]
         }
     ]
