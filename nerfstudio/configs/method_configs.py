@@ -430,13 +430,13 @@ method_configs["neurad"] = TrainerConfig(
 method_configs["diffusion-nerf"] = TrainerConfig(
     method_name="diffusion-nerf",
     steps_per_eval_batch=1000,
-    steps_per_eval_all_images=3000,
-    steps_per_save=3000,
-    max_num_iterations=30001,
+    steps_per_eval_all_images=5000,
+    steps_per_save=5000,
+    max_num_iterations=40001,
     mixed_precision=True,
     pipeline=DiffusionNerfConfig(
-        max_steps=30001,
-        calc_fid_steps=tuple(range(0, 30001, 3000)),
+        max_steps=40001,
+        calc_fid_steps=tuple(range(0, 40001, 5000)),
         ray_patch_size=(128, 128),
         datamanager=ADDataManagerConfig(
             dataparser=PandaSetDataParserConfig(add_missing_points=True),
@@ -465,31 +465,31 @@ method_configs["diffusion-nerf"] = TrainerConfig(
         "trajectory_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
             "scheduler": ExponentialDecaySchedulerConfig(
-                lr_final=1e-4, max_steps=30001, warmup_steps=2500
+                lr_final=1e-4, max_steps=40001, warmup_steps=2500
             ),
         },
         "cnn": {
             "optimizer": AdamWOptimizerConfig(lr=1e-3, eps=1e-15, weight_decay=1e-6),
             "scheduler": ExponentialDecaySchedulerConfig(
-                lr_final=1e-4, max_steps=30001, warmup_steps=2500
+                lr_final=1e-4, max_steps=40001, warmup_steps=2500
             ),
         },
         "fields": {
             "optimizer": AdamWOptimizerConfig(lr=1e-2, eps=1e-15, weight_decay=1e-7),
             "scheduler": ExponentialDecaySchedulerConfig(
-                lr_final=1e-3, max_steps=30001, warmup_steps=500
+                lr_final=1e-3, max_steps=40001, warmup_steps=500
             ),
         },
         "hashgrids": {
             "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
             "scheduler": ExponentialDecaySchedulerConfig(
-                lr_final=1e-3, max_steps=30001, warmup_steps=500
+                lr_final=1e-3, max_steps=40001, warmup_steps=500
             ),
         },
         "camera_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
             "scheduler": ExponentialDecaySchedulerConfig(
-                lr_final=1e-5, max_steps=30001, warmup_steps=2500
+                lr_final=1e-5, max_steps=40001, warmup_steps=2500
             ),
         },
     },
