@@ -25,7 +25,6 @@ dataset=${DATASET:-pandaset}
 
 job_id=${SLURM_JOB_ID:-"000000"}
 task_id=${SLURM_ARRAY_TASK_ID:-"1"}
-data_task_id=${DATA_TASK_ID:-"0"}
 image_path=${IMAGE_PATH:-"containers/neurad_140824.sif"}
 
 
@@ -64,18 +63,6 @@ else
 
 fi
 
-if [[ -z ${ARRAY_PARAM_DATA_PATH} ]]; then
-    array_params_data="--sequence 001 --cameras front"
-else
-    array_params_data=$(
-        $execute python3.10 nerfstudio/scripts/param_parser.py $ARRAY_PARAM_DATA_PATH -i $data_task_id     
-    )
-    if [[ -z ${array_params_data} ]]; then 
-        echo "No array parameters found for task $data_task_id - exiting"
-        exit 1
-    fi
-fi
-
 output_dir=${OUTPUT_DIR:="outputs/$name"}
 mkdir -p $output_dir
 
@@ -112,12 +99,8 @@ $execute python3.10 -u nerfstudio/scripts/train.py \
     $checkpoint_cmd \
     --pipeline.diffusion_model.dtype "fp32" \
     --pipeline.augment_strategy $augment_strategy \
-    $array_params \
     $@ \
-    ${dataset}-data \
-    --data $dataset_root \
-    $array_params_data
-    $DATAPARSER_ARGS
+    $array_params 
 
 chmod 775 -R $output_dir
 
