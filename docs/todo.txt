@@ -78,7 +78,8 @@ Debug NeuRAD Integration
 
 Run experiments
 - Update launch scripts with correct parameters [x]
-- Train base neurad across 5 scenes []
+- Train base neurad across 5 scenes [x]
+- Update base model symlinks
 - Generate new reference renders
 - Update lora weights symlinks
 - Sweep augment loss (3), augment_peak (2), noise_start (2), noise (3),  (base diffusion) []
