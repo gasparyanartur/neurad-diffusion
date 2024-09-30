@@ -40,7 +40,7 @@
         },
         {
             "keys": [
-                "--pipeline.diffusion_model.noise_strength",
+                "--pipeline.diffusion_model.noise_strength"
             ],
             "values": [
                 0.3
