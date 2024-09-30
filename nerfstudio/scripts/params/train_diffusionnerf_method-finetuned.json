@@ -43,7 +43,9 @@
                 "--pipeline.diffusion_model.noise_strength"
             ],
             "values": [
-                0.3
+                [
+                    0.3
+                ]
             ]
         },
         {
