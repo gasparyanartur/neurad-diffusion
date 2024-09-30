@@ -75,18 +75,18 @@
                 "unet controlnet"
             ],
             [
-                "models/diffusionnerf/base-neurad/001",
-                "models/diffusionnerf/base-neurad/016",
-                "models/diffusionnerf/base-neurad/053",
-                "models/diffusionnerf/base-neurad/001",
-                "models/diffusionnerf/base-neurad/016",
-                "models/diffusionnerf/base-neurad/053",
-                "models/diffusionnerf/base-neurad/001",
-                "models/diffusionnerf/base-neurad/016",
-                "models/diffusionnerf/base-neurad/053",
-                "models/diffusionnerf/base-neurad/001",
-                "models/diffusionnerf/base-neurad/016",
-                "models/diffusionnerf/base-neurad/053"
+                "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
+                "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
+                "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt",
+                "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
+                "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
+                "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt",
+                "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
+                "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
+                "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt",
+                "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
+                "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
+                "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt"
             ],
             [
                 "un4",
