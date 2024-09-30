@@ -25,7 +25,7 @@
             "--pipeline.diffusion_model.lora_weights", 
             "--pipeline.diffusion_model.type", 
             "--pipeline.diffusion_model.models_to_load_lora",
-            "--pipeline.diffusion_model.nerf_checkpoint",
+            "--pipeline.nerf_checkpoint",
             "--pipeline.note",
             "",
             "--cameras",
