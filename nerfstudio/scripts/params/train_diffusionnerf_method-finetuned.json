@@ -33,18 +33,18 @@
         ],
         "values": [
             [
-                "models/lora/001/s03",
-                "models/lora/016/s03",
-                "models/lora/053/s03",
-                "models/lora/001/s03",
-                "models/lora/016/s03",
-                "models/lora/053/s03",
-                "models/lora/001/s03",
-                "models/lora/016/s03",
-                "models/lora/053/s03",
-                "models/lora/001/s03",
-                "models/lora/016/s03",
-                "models/lora/053/s03"
+                "models/lora/001/s03/un4",
+                "models/lora/016/s03/un4",
+                "models/lora/053/s03/un4",
+                "models/lora/001/s03/un4cn4",
+                "models/lora/016/s03/un4cn4",
+                "models/lora/053/s03/un4cn4",
+                "models/lora/001/s03/un128",
+                "models/lora/016/s03/un128",
+                "models/lora/053/s03/un128",
+                "models/lora/001/s03/un128cn128",
+                "models/lora/016/s03/un128cn128",
+                "models/lora/053/s03/un128cn128"
             ],
             [
                 "sd",
