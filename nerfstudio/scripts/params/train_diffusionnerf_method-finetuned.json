@@ -1,149 +1,176 @@
-
-{"entries": [
-    {
-        "keys": ["--pipeline.augment-max-strength.pos-x", "--pipeline.augment-max-strength.rot-z"],
-        "values": [
-            [8],
-            [45]
-        ]
-    },
-    {
-        "keys": ["--pipeline.augment_loss_mult"],
-        "values": [
-            [40]
-        ]
-    },
-    {
-        "keys": ["--pipeline.max_aug_phase_step", "--pipeline.noise_start_phase_step"],
-        "values": [
-            [0],
-            [20000]
-        ]
-    },
-    {
-        "keys": [
-            "--pipeline.diffusion_model.lora_weights", 
-            "--pipeline.diffusion_model.type", 
-            "--pipeline.diffusion_model.models_to_load_lora",
-            "--pipeline.nerf_checkpoint",
-            "--pipeline.note",
-            "",
-            "--cameras",
-            "--sequence"
-        ],
-        "values": [
-            [
-                "models/lora/001/s03/un4",
-                "models/lora/016/s03/un4",
-                "models/lora/053/s03/un4",
-                "models/lora/001/s03/un4cn4",
-                "models/lora/016/s03/un4cn4",
-                "models/lora/053/s03/un4cn4",
-                "models/lora/001/s03/un128",
-                "models/lora/016/s03/un128",
-                "models/lora/053/s03/un128",
-                "models/lora/001/s03/un128cn128",
-                "models/lora/016/s03/un128cn128",
-                "models/lora/053/s03/un128cn128"
+{
+    "entries": [
+        {
+            "keys": [
+                "--pipeline.augment-max-strength.pos-x",
+                "--pipeline.augment-max-strength.rot-z"
             ],
-            [
-                "sd",
-                "sd",
-                "sd",
-                "cn",
-                "cn",
-                "cn",
-                "sd",
-                "sd",
-                "sd",
-                "cn",
-                "cn",
-                "cn"
-            ],
-            [
-                "unet",
-                "unet",
-                "unet",
-                "unet controlnet",
-                "unet controlnet",
-                "unet controlnet",
-                "unet",
-                "unet",
-                "unet",
-                "unet controlnet",
-                "unet controlnet",
-                "unet controlnet"
-            ],
-            [
-                "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
-                "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
-                "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt",
-                "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
-                "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
-                "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt",
-                "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
-                "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
-                "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt",
-                "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
-                "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
-                "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt"
-            ],
-            [
-                "un4",
-                "un4",
-                "un4",
-                "un4cn4",
-                "un4cn4",
-                "un4cn4",
-                "un128",
-                "un128",
-                "un128",
-                "un128cn128",
-                "un128cn128",
-                "un128cn128"
-            ],
-            [
-                "pandaset-data",
-                "pandaset-data",
-                "pandaset-data",
-                "pandaset-data",
-                "pandaset-data",
-                "pandaset-data",
-                "pandaset-data",
-                "pandaset-data",
-                "pandaset-data",
-                "pandaset-data",
-                "pandaset-data",
-                "pandaset-data"
-            ],
-            [
-                "front",
-                "front",
-                "front",
-                "front",
-                "front",
-                "front",
-                "front",
-                "front",
-                "front",
-                "front",
-                "front",
-                "front"
-            ],
-            [
-                "001",
-                "016",
-                "053",
-                "001",
-                "016",
-                "053",
-                "001",
-                "016",
-                "053",
-                "001",
-                "016",
-                "053"
+            "values": [
+                [
+                    8
+                ],
+                [
+                    45
+                ]
             ]
-        ]
-    }
-]}
+        },
+        {
+            "keys": [
+                "--pipeline.augment_loss_mult"
+            ],
+            "values": [
+                [
+                    40
+                ]
+            ]
+        },
+        {
+            "keys": [
+                "--pipeline.max_aug_phase_step",
+                "--pipeline.noise_start_phase_step"
+            ],
+            "values": [
+                [
+                    0
+                ],
+                [
+                    20000
+                ]
+            ]
+        },
+        {
+            "keys": [
+                "--pipeline.diffusion_model.noise_strength",
+            ],
+            "values": [
+                0.3
+            ]
+        },
+        {
+            "keys": [
+                "--pipeline.diffusion_model.lora_weights",
+                "--pipeline.diffusion_model.type",
+                "--pipeline.diffusion_model.models_to_load_lora",
+                "--pipeline.nerf_checkpoint",
+                "--pipeline.note",
+                "",
+                "--cameras",
+                "--sequence"
+            ],
+            "values": [
+                [
+                    "models/lora/001/s03/un4",
+                    "models/lora/016/s03/un4",
+                    "models/lora/053/s03/un4",
+                    "models/lora/001/s03/un4cn4",
+                    "models/lora/016/s03/un4cn4",
+                    "models/lora/053/s03/un4cn4",
+                    "models/lora/001/s03/un128",
+                    "models/lora/016/s03/un128",
+                    "models/lora/053/s03/un128",
+                    "models/lora/001/s03/un128cn128",
+                    "models/lora/016/s03/un128cn128",
+                    "models/lora/053/s03/un128cn128"
+                ],
+                [
+                    "sd",
+                    "sd",
+                    "sd",
+                    "cn",
+                    "cn",
+                    "cn",
+                    "sd",
+                    "sd",
+                    "sd",
+                    "cn",
+                    "cn",
+                    "cn"
+                ],
+                [
+                    "unet",
+                    "unet",
+                    "unet",
+                    "unet controlnet",
+                    "unet controlnet",
+                    "unet controlnet",
+                    "unet",
+                    "unet",
+                    "unet",
+                    "unet controlnet",
+                    "unet controlnet",
+                    "unet controlnet"
+                ],
+                [
+                    "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt"
+                ],
+                [
+                    "un4",
+                    "un4",
+                    "un4",
+                    "un4cn4",
+                    "un4cn4",
+                    "un4cn4",
+                    "un128",
+                    "un128",
+                    "un128",
+                    "un128cn128",
+                    "un128cn128",
+                    "un128cn128"
+                ],
+                [
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data"
+                ],
+                [
+                    "front",
+                    "front",
+                    "front",
+                    "front",
+                    "front",
+                    "front",
+                    "front",
+                    "front",
+                    "front",
+                    "front",
+                    "front",
+                    "front"
+                ],
+                [
+                    "001",
+                    "016",
+                    "053",
+                    "001",
+                    "016",
+                    "053",
+                    "001",
+                    "016",
+                    "053",
+                    "001",
+                    "016",
+                    "053"
+                ]
+            ]
+        }
+    ]
+}
