@@ -498,7 +498,7 @@ method_configs["diffusion-nerf"] = TrainerConfig(
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
     vis="wandb",
-    logging=LoggingConfig(steps_per_log=100),
+    logging=LoggingConfig(steps_per_log=250, max_buffer_size=40),
     early_stopping_tracker=DisabledMetricTrackerConfig(),
 )
 

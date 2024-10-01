@@ -84,4 +84,4 @@ Run experiments
 - Sweep augment loss (3), augment_peak (2), noise_start (2), noise (3),  (base diffusion)  [x]
 - Finetune diffusion models across scenes (5) for each config (4) [x]
 - Update lora weights symlinks [x]
-- Use optimal parameters, sweep finetuned diffusion models (un4, uncn4, un128, uncn128) 
+- Use optimal parameters, sweep finetuned diffusion models (un4, uncn4, un128, uncn128) []

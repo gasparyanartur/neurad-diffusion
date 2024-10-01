@@ -270,16 +270,17 @@ class DiffusionNerfPipeline(VanillaPipeline):
         model_outputs, loss_dict, metrics_dict = self._strategy_augment_none(
             ray_bundle.to(ray_bundle.origins.device), batch, use_actor_shift
         )
+        model_outputs = nan_to_num_batch(model_outputs)
+
         if not self._is_augment_phase(step):
             return model_outputs, loss_dict, metrics_dict
 
         pose_aug = self._get_pose_augmentation(step)
         aug_ray_bundle = transform_ray_bundle(ray_bundle, pose_aug, cameras)
 
-        with torch.autograd.detect_anomaly():
-            aug_outputs = self.model(
-                aug_ray_bundle, patch_size=self.config.ray_patch_size
-            )
+        # with torch.autograd.detect_anomaly():
+        aug_outputs = self.model(aug_ray_bundle, patch_size=self.config.ray_patch_size)
+        aug_outputs = nan_to_num_batch(aug_outputs)
 
         assert len(aug_outputs["rgb"].shape) == 4
         diffusion_input = {"rgb": aug_outputs["rgb"].permute(0, 3, 1, 2).detach()}
@@ -297,14 +298,15 @@ class DiffusionNerfPipeline(VanillaPipeline):
 
         diffusion_model = cast(StableDiffusionModel, self.diffusion_model)
 
-        with torch.autograd.detect_anomaly():
-            diffusion_output = diffusion_model.get_diffusion_output(
-                diffusion_input,
-                pipeline_kwargs={
-                    "strength": self._get_diffusion_strength(step),
-                    "seed": self.config.diffusion_seed,
-                },
-            )
+        # with torch.autograd.detect_anomaly():
+        diffusion_output = diffusion_model.get_diffusion_output(
+            diffusion_input,
+            pipeline_kwargs={
+                "strength": self._get_diffusion_strength(step),
+                "seed": self.config.diffusion_seed,
+            },
+        )
+        diffusion_output = nan_to_num_batch(diffusion_output)
 
         aug_metrics_dict = diffusion_model.get_diffusion_metrics(
             diffusion_input, diffusion_output
@@ -819,6 +821,13 @@ def transform_ray_bundle(
     new_ray_bundle.directions[is_cam] = direction.to(new_ray_bundle.directions.dtype)
 
     return new_ray_bundle
+
+def nan_to_num_batch(batch: Dict[str, Any], nan: float = 0, posinf: float = 1, neginf: float = 0) -> Dict[str, Any]:
+    return {
+        k: v.nan_to_num(posinf=posinf, neginf=neginf, nan=nan)
+        for k, v in batch.items()
+        if (v is not None) and isinstance(v, Tensor)
+    }
 
 
 def is_cam_ray(ray_bundle: RayBundle) -> Tensor:
