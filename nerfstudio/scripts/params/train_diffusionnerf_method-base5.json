@@ -1,0 +1,52 @@
+{
+    "entries": [
+        {
+            "keys": [
+                "--pipeline.augment_strategy",
+                "--pipeline.nerf_checkpoint",
+                "--pipeline.note",
+                "",
+                "--cameras",
+                "--sequence"
+            ],
+            "values": [
+                ["none", "none", "none", "none", "none"],
+                [
+                    "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/011/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/028/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt"
+                ],
+                [
+                    "base-neurad",
+                    "base-neurad",
+                    "base-neurad",
+                    "base-neurad",
+                    "base-neurad"
+                ],
+                [
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data"
+                ],
+                [
+                    "front",
+                    "front",
+                    "front",
+                    "front",
+                    "front"
+                ],
+                [
+                    "001",
+                    "011",
+                    "016",
+                    "028",
+                    "053"
+                ]
+            ]
+        }
+    ]
+}
