@@ -13,7 +13,7 @@
                     "none"
                 ]
             ]
-        }
+        },
         {
             "keys": [
                 "--pipeline.augment-max-strength.pos-x",
