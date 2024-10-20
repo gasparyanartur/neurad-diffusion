@@ -1,0 +1,108 @@
+{
+    "entries": [
+        {
+            "keys": [
+                "--pipeline.augment_strategy",
+                "--pipeline.diffusion_model.lora_weights"
+            ],
+            "values": [
+                [
+                    "partial_linear"
+                ],
+                [
+                    "none"
+                ]
+            ]
+        }
+        {
+            "keys": [
+                "--pipeline.augment-max-strength.pos-x",
+                "--pipeline.augment-max-strength.rot-z"
+            ],
+            "values": [
+                [
+                    8
+                ],
+                [
+                    45
+                ]
+            ]
+        },
+        {
+            "keys": [
+                "--pipeline.augment_loss_mult"
+            ],
+            "values": [
+                [
+                    40
+                ]
+            ]
+        },
+        {
+            "keys": [
+                "--pipeline.max_aug_phase_step",
+                "--pipeline.noise_start_phase_step"
+            ],
+            "values": [
+                [
+                    0
+                ],
+                [
+                    20000
+                ]
+            ]
+        },
+        {
+            "keys": [
+                "--pipeline.diffusion_model.noise_strength"
+            ],
+            "values": [
+                [
+                    0.3
+                ]
+            ]
+        },
+        {
+            "keys": [
+                "--pipeline.diffusion_model.type",
+                "--pipeline.nerf_checkpoint",
+                "--pipeline.note",
+                "",
+                "--cameras",
+                "--sequence"
+            ],
+            "values": [
+                [
+                    "sd",
+                    "sd",
+                    "sd"
+                ],
+                [
+                    "models/diffusionnerf/base-neurad/001/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt",
+                    "models/diffusionnerf/base-neurad/053/nerfstudio_models/step-000040000.ckpt"
+                ],
+                [
+                    "base-diffusion",
+                    "base-diffusion",
+                    "base-diffusion"
+                ],
+                [
+                    "pandaset-data",
+                    "pandaset-data",
+                    "pandaset-data"
+                ],
+                [
+                    "front",
+                    "front",
+                    "front"
+                ],
+                [
+                    "001",
+                    "016",
+                    "053"
+                ]
+            ]
+        }
+    ]
+}
