@@ -1,0 +1,32 @@
+{
+    "entries": [
+        {
+            "keys": [
+                "--pipeline.augment_strategy",
+                "--pipeline.nerf_checkpoint",
+                "--pipeline.note",
+                "",
+                "--cameras",
+                "--sequence"
+            ],
+            "values": [
+                ["none"],
+                [
+                    "models/diffusionnerf/base-neurad/016/nerfstudio_models/step-000040000.ckpt"
+                ],
+                [
+                    "base-neurad"
+                ],
+                [
+                    "pandaset-data"
+                ],
+                [
+                    "front"
+                ],
+                [
+                    "016"
+                ]
+            ]
+        }
+    ]
+}
