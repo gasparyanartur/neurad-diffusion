@@ -25,10 +25,6 @@ fi
 BIND_CMD="--bind /proj:/proj --bind /home:/home"
 
 execute="singularity exec \
-            --nodes 1 \
-            --gpus 1 \
-            --cpus-per-task 32 \
-            --mem 100G \
             --nv \
             $BIND_CMD \
             --home /nerfstudio \
