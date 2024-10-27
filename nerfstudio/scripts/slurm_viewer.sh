@@ -8,6 +8,7 @@
 #SBATCH --output logs/%x/slurm/%j.out
 #SBATCH --array=0
 #SBATCH --time 2-00:00:00
+#SBATCH --account=berzelius-2024-347
 
 source .env
 
