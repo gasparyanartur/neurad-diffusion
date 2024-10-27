@@ -25,6 +25,10 @@ fi
 BIND_CMD="--bind /proj:/proj --bind /home:/home"
 
 execute="singularity exec \
+            --nodes 1 \
+            --gpus 1 \
+            --cpus-per-task 32 \
+            --mem 100G \
             --nv \
             $BIND_CMD \
             --home /nerfstudio \
@@ -37,7 +41,6 @@ $execute python3.10 -u nerfstudio/scripts/viewer/run_viewer.py \
     --load-config $NERF_CONFIG_PATH \
     $@ 
 
-chmod 775 -R $output_path
 
 #
 #EOF
