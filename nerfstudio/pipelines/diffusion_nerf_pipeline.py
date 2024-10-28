@@ -822,7 +822,10 @@ def transform_ray_bundle(
 
     return new_ray_bundle
 
-def nan_to_num_batch(batch: Dict[str, Any], nan: float = 0, posinf: float = 1, neginf: float = 0) -> Dict[str, Any]:
+
+def nan_to_num_batch(
+    batch: Dict[str, Any], nan: float = 0, posinf: float = 1, neginf: float = 0
+) -> Dict[str, Any]:
     return {
         k: v.nan_to_num(posinf=posinf, neginf=neginf, nan=nan)
         for k, v in batch.items()

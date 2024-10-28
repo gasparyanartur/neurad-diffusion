@@ -18,7 +18,7 @@ def get_device():
         return torch.device("cpu")
 
 
-def show_img(img: Tensor, save_path: Optional[Path] = None):
+def show_img(img: Tensor, save_path: Optional[Path] = None) -> None:
     if isinstance(img, (list, tuple, dict, set)):
         img = list(img)
         for i in range(len(img)):
