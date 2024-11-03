@@ -120,7 +120,7 @@ class DiffusionNerfConfig(VanillaPipelineConfig):
     diffusion_model: DiffusionModelConfig = field(default_factory=DiffusionModelConfig)
     """Configuration for the diffusion model used for augmentation."""
 
-    diffusion_seed: int = 0
+    diffusion_seed: Optional[None] = None
 
     augment_phase_step: int = 0
     max_aug_phase_step: int = 10000
