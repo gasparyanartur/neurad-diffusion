@@ -877,7 +877,6 @@ class StableDiffusionModel:
         self,
         batch_pred: Dict[str, Any],
         batch_gt: Dict[str, Any],
-        metrics_dict: Dict[str, Any],
         pred_rgb_key="rgb",
         gt_rgb_key="rgb",
     ) -> Dict[str, Any]:
@@ -887,10 +886,6 @@ class StableDiffusionModel:
 
         loss_dict = {}
         for loss_name, loss in self.diffusion_losses.items():
-            if loss_name in metrics_dict:
-                loss_dict[loss_name] = metrics_dict[loss_name]
-                continue
-
             loss_dict[loss_name] = loss(rgb_pred, rgb_gt)
 
         return loss_dict

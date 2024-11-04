@@ -307,12 +307,13 @@ class DiffusionNerfPipeline(VanillaPipeline):
             },
         )
         diffusion_output = nan_to_num_batch(diffusion_output)
+        diffusion_output["rgb"] = diffusion_output["rgb"].detach()
 
         aug_metrics_dict = diffusion_model.get_diffusion_metrics(
             diffusion_input, diffusion_output
         )
         aug_loss_dict = diffusion_model.get_diffusion_losses(
-            diffusion_input, diffusion_output, aug_metrics_dict
+            diffusion_input, diffusion_output
         )
         aug_loss_dict = {
             k: v * self.config.augment_loss_mult for k, v in aug_loss_dict.items()
