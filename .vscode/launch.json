@@ -208,6 +208,7 @@
       "args": [
         "diffusion-nerf",
         "--vis=wandb",
+        "--log_gradients=True",
         "--pipeline.diffusion_model.dtype",
         "fp16",
         "--pipeline.diffusion_model.type",

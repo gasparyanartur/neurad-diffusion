@@ -827,11 +827,10 @@ def transform_ray_bundle(
 def nan_to_num_batch(
     batch: Dict[str, Any], nan: float = 0, posinf: float = 1, neginf: float = 0
 ) -> Dict[str, Any]:
-    return {
-        k: v.nan_to_num(posinf=posinf, neginf=neginf, nan=nan)
-        for k, v in batch.items()
-        if (v is not None) and isinstance(v, Tensor)
-    }
+    for k, v in batch.items():
+        if (v is not None) and isinstance(v, Tensor):
+            batch[k] = v.nan_to_num(posinf=posinf, neginf=neginf, nan=nan)
+    return batch
 
 
 def is_cam_ray(ray_bundle: RayBundle) -> Tensor:
