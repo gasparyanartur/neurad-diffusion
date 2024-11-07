@@ -298,7 +298,6 @@ class DiffusionNerfPipeline(VanillaPipeline):
 
         diffusion_model = cast(StableDiffusionModel, self.diffusion_model)
 
-        # with torch.autograd.detect_anomaly():
         with torch.no_grad():
             diffusion_output = diffusion_model.get_diffusion_output(
                 diffusion_input,
