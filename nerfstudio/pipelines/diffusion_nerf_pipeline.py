@@ -283,7 +283,7 @@ class DiffusionNerfPipeline(VanillaPipeline):
         aug_outputs = nan_to_num_batch(aug_outputs)
 
         assert len(aug_outputs["rgb"].shape) == 4
-        diffusion_input = {"rgb": aug_outputs["rgb"].permute(0, 3, 1, 2).detach()}
+        diffusion_input = {"rgb": aug_outputs["rgb"].permute(0, 3, 1, 2)}
 
         for signal_name in self.diffusion_model.config.conditioning_signals:
             if signal_name == "ray":
@@ -299,15 +299,15 @@ class DiffusionNerfPipeline(VanillaPipeline):
         diffusion_model = cast(StableDiffusionModel, self.diffusion_model)
 
         # with torch.autograd.detect_anomaly():
-        diffusion_output = diffusion_model.get_diffusion_output(
-            diffusion_input,
-            pipeline_kwargs={
-                "strength": self._get_diffusion_strength(step),
-                "seed": self.config.diffusion_seed,
-            },
-        )
+        with torch.no_grad():
+            diffusion_output = diffusion_model.get_diffusion_output(
+                diffusion_input,
+                pipeline_kwargs={
+                    "strength": self._get_diffusion_strength(step),
+                    "seed": self.config.diffusion_seed,
+                },
+            )
         diffusion_output = nan_to_num_batch(diffusion_output)
-        diffusion_output["rgb"] = diffusion_output["rgb"].detach()
 
         aug_metrics_dict = diffusion_model.get_diffusion_metrics(
             diffusion_input, diffusion_output
