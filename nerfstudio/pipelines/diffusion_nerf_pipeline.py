@@ -301,10 +301,8 @@ class DiffusionNerfPipeline(VanillaPipeline):
         with torch.no_grad():
             diffusion_output = diffusion_model.get_diffusion_output(
                 diffusion_input,
-                pipeline_kwargs={
-                    "strength": self._get_diffusion_strength(step),
-                    "seed": self.config.diffusion_seed,
-                },
+                strength=self._get_diffusion_strength(step),
+                seed=self.config.diffusion_seed,
             )
         diffusion_output = nan_to_num_batch(diffusion_output)
 

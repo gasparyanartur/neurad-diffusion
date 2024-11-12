@@ -979,7 +979,11 @@ def add_noise_to_latent(
         size=latent.shape,
         device=latent.device,
         dtype=latent.dtype,
-        generator=torch.manual_seed(seed) if (seed is not None) else None,
+        generator=(
+            torch.Generator(device=latent.device).manual_seed(seed)
+            if (seed is not None)
+            else None
+        ),
     )
 
     timesteps = torch.tensor([timestep], device=latent.device, dtype=torch.int)
